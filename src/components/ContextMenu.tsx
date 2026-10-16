@@ -163,7 +163,7 @@ export default function ContextMenu({
       ref={menu}
       role="menu"
       aria-label={label}
-      className="fixed z-[1000] min-w-36 max-w-[calc(100vw-16px)] overflow-auto rounded border border-white/15 bg-[#17191d] p-1 text-sm text-white shadow-xl"
+      className="fixed z-[1000] min-w-36 max-w-[calc(100vw-16px)] overflow-auto rounded border border-white/15 bg-[#17191d] p-1 text-sm text-white shadow-xl select-none"
       style={{
         left: position.left,
         top: position.top,

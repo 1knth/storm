@@ -394,7 +394,7 @@ export default function TabBar({
         onDrop={(event) => {
           if (!dropOnTab(event)) dropTab(event, null, null);
         }}
-        className="relative flex h-7 min-h-7 min-w-0 shrink-0 items-stretch gap-0 overflow-x-auto overflow-y-hidden overscroll-y-none rounded-xl bg-black/50"
+        className="relative flex h-7 min-h-7 min-w-0 shrink-0 items-stretch gap-0 overflow-x-auto overflow-y-hidden overscroll-y-none rounded-xl bg-black/50 select-none"
       >
         {groups.map((group) => {
           const members = tabs.filter(
@@ -514,7 +514,7 @@ export default function TabBar({
             role="dialog"
             aria-modal="true"
             aria-labelledby="tab-group-title"
-            className="w-full max-w-xs rounded-lg border border-white/15 bg-[#202124] p-4 text-white shadow-xl"
+            className="w-full max-w-xs rounded-lg border border-white/15 bg-[#202124] p-4 text-white shadow-xl select-none"
             onSubmit={(event) => {
               event.preventDefault();
               submitGroup();
@@ -533,7 +533,7 @@ export default function TabBar({
                   setDialog({ ...dialog, value: event.target.value });
                   setError('');
                 }}
-                className="mt-1 w-full rounded border border-white/20 bg-black/30 px-2 py-1.5 text-sm"
+                className="mt-1 w-full rounded border border-white/20 bg-black/30 px-2 py-1.5 text-sm select-text"
               />
             </label>
             {error && (

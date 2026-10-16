@@ -30,7 +30,8 @@ export function sanitizeSvgReferences(svg: string): string {
 
     for (const attribute of Array.from(element.attributes)) {
       if (
-        (attribute.name.toLowerCase() === 'style' || /url\s*\(/i.test(attribute.value)) &&
+        (attribute.name.toLowerCase() === 'style' ||
+          /url\s*\(/i.test(attribute.value)) &&
         hasExternalCssReference(attribute.value)
       ) {
         element.removeAttribute(attribute.name);

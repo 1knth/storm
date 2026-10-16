@@ -1,9 +1,23 @@
+import React, { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import {
+  markdownMathRemarkPlugin,
+  markdownMathRehypePlugin,
+} from './markdownMath';
+import 'katex/dist/katex.min.css';
 import MermaidBlock from './MermaidBlock';
 import NumericChart from './NumericChart';
 import { VaultImage } from './VaultImage';
+import { remarkTaskOffsets } from './markdownTasks';
+import type { TaskTogglePayload } from './markdownTasks';
 
-type Props = { markdown: string; vaultId: string; notePath: string };
+type Props = {
+  markdown: string;
+  vaultId: string;
+  notePath: string;
+  onToggleTask?: (payload: TaskTogglePayload) => void;
+};
 
 // Runs on Markdown text nodes only, leaving inline and fenced code literal.
 function remarkWikiImages() {
@@ -18,14 +32,29 @@ function remarkWikiImages() {
           let start = 0;
           let match: RegExpExecArray | null;
           while ((match = pattern.exec(text.value))) {
-            if (match.index > start) children.push({ type: 'text', value: text.value.slice(start, match.index) });
+            if (match.index > start)
+              children.push({
+                type: 'text',
+                value: text.value.slice(start, match.index),
+              });
             const [target, size] = match[1].split('|', 2);
             const width = size?.match(/^(\d+)$/)?.[1];
-            children.push({ type: 'image', url: target.trim(), alt: size && !width ? size.trim() : '', data: { hProperties: { 'data-vault-kind': 'wiki', ...(width ? { width: Number(width) } : {}) } } });
+            children.push({
+              type: 'image',
+              url: target.trim(),
+              alt: size && !width ? size.trim() : '',
+              data: {
+                hProperties: {
+                  'data-vault-kind': 'wiki',
+                  ...(width ? { width: Number(width) } : {}),
+                },
+              },
+            });
             start = pattern.lastIndex;
           }
           if (start) {
-            if (start < text.value.length) children.push({ type: 'text', value: text.value.slice(start) });
+            if (start < text.value.length)
+              children.push({ type: 'text', value: text.value.slice(start) });
           } else children.push(child);
         } else {
           if (child.type !== 'code') visit(child);
@@ -38,26 +67,105 @@ function remarkWikiImages() {
   };
 }
 
-export default function MarkdownPreview({ markdown, vaultId, notePath }: Props) {
+function MarkdownPre({ children }: { children?: React.ReactNode }) {
+  const child = Array.isArray(children) ? children[0] : children;
+  if (child && typeof child === 'object' && 'props' in child) {
+    const props = child.props as {
+      className?: string;
+      children?: unknown;
+    };
+    const source = String(props.children ?? '').replace(/\n$/, '');
+    if (props.className?.split(/\s+/).includes('language-mermaid'))
+      return <MermaidBlock source={source} />;
+    if (props.className?.split(/\s+/).includes('language-chart'))
+      return <NumericChart source={source} />;
+  }
+  return <pre>{children}</pre>;
+}
+
+function MarkdownPreview({ markdown, vaultId, notePath, onToggleTask }: Props) {
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-white/10">
-      <h2 className="shrink-0 px-4 py-3 text-xs font-medium text-white/50">Preview</h2>
-      <div className="min-h-0 flex-1 overflow-auto px-5 pb-6 text-sm leading-7 text-white/85 [&_a]:text-sky-300 [&_blockquote]:border-l-2 [&_blockquote]:border-white/20 [&_blockquote]:pl-4 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-6 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/15 [&_li]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-black/40 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_ul]:list-disc [&_ul]:pl-6 [&_img]:max-w-full">
-        <ReactMarkdown remarkPlugins={[remarkWikiImages]} components={{
-          a: ({ children }) => <a href="#" onClick={(event) => event.preventDefault()} aria-disabled="true">{children}</a>,
-          img: ({ src, alt, width, node }) => <VaultImage vaultId={vaultId} notePath={notePath} src={String(src ?? '')} alt={alt} width={typeof width === 'number' ? width : undefined} kind={node?.properties['data-vault-kind'] === 'wiki' ? 'wiki' : 'markdown'} />,
-          pre: ({ children }) => {
-            const child = Array.isArray(children) ? children[0] : children;
-            if (child && typeof child === 'object' && 'props' in child) {
-              const props = child.props as { className?: string; children?: unknown };
-              const source = String(props.children ?? '').replace(/\n$/, '');
-              if (props.className?.split(/\s+/).includes('language-mermaid')) return <MermaidBlock source={source} />;
-              if (props.className?.split(/\s+/).includes('language-chart')) return <NumericChart source={source} />;
-            }
-            return <pre>{children}</pre>;
-          },
-        }}>{markdown}</ReactMarkdown>
+      <h2 className="shrink-0 px-4 py-3 text-xs font-medium text-white/50">
+        Preview
+      </h2>
+      <div className="min-h-0 flex-1 overflow-auto px-5 pb-6 text-sm leading-7 text-white/85 [&_.katex-display]:max-w-full [&_.katex-display]:overflow-x-auto [&_.katex]:text-inherit [&_a]:text-sky-300 [&_blockquote]:border-l-2 [&_blockquote]:border-white/20 [&_blockquote]:pl-4 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-6 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/15 [&_li]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-black/40 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-white/20 [&_th]:px-3 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-white/20 [&_td]:px-3 [&_td]:py-1 [&_ul]:list-disc [&_ul]:pl-6 [&_img]:max-w-full">
+        <ReactMarkdown
+          remarkPlugins={[
+            markdownMathRemarkPlugin,
+            remarkGfm,
+            () => remarkTaskOffsets(markdown),
+            remarkWikiImages,
+          ]}
+          rehypePlugins={[markdownMathRehypePlugin]}
+          components={{
+            table: ({ children, ...props }) => (
+              <div className="my-4 max-w-full overflow-x-auto">
+                <table {...props}>{children}</table>
+              </div>
+            ),
+            li: ({ children, checked, node, ...props }: any) => {
+              const offset = node?.properties['data-task-offset'];
+              if (typeof checked !== 'boolean' || typeof offset !== 'number')
+                return <li {...props}>{children}</li>;
+              const expected = markdown[offset];
+
+              return (
+                <li {...props} className={`${props.className ?? ''} list-none`}>
+                  <label className="inline-flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      aria-label={
+                        checked ? 'Mark task incomplete' : 'Mark task complete'
+                      }
+                      className="mt-2 accent-sky-400"
+                      onChange={() =>
+                        onToggleTask?.({
+                          vaultId,
+                          notePath,
+                          source: markdown,
+                          offset,
+                          expected,
+                        })
+                      }
+                    />
+                    <span>{children}</span>
+                  </label>
+                </li>
+              );
+            },
+            a: ({ children }) => (
+              <a
+                href="#"
+                onClick={(event) => event.preventDefault()}
+                aria-disabled="true"
+              >
+                {children}
+              </a>
+            ),
+            img: ({ src, alt, width, node }) => (
+              <VaultImage
+                vaultId={vaultId}
+                notePath={notePath}
+                src={String(src ?? '')}
+                alt={alt}
+                width={typeof width === 'number' ? width : undefined}
+                kind={
+                  node?.properties['data-vault-kind'] === 'wiki'
+                    ? 'wiki'
+                    : 'markdown'
+                }
+              />
+            ),
+            pre: MarkdownPre,
+          }}
+        >
+          {markdown}
+        </ReactMarkdown>
       </div>
     </section>
   );
 }
+
+export default memo(MarkdownPreview);

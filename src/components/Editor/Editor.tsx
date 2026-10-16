@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -8,7 +9,7 @@ import {
 } from 'react';
 import { markdown } from '@codemirror/lang-markdown';
 import { vim } from '@replit/codemirror-vim';
-import { Compartment, EditorState } from '@codemirror/state';
+import { Compartment, EditorState, Transaction } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
 import type { ReactNode } from 'react';
 import {
@@ -19,8 +20,17 @@ import {
 } from '@codemirror/view';
 import type { NoteData } from '../../shared/types';
 import { markdownEditorExtensions } from './extensions';
+import { markdownSyntaxHighlighting } from './markdownHighlighting';
 import MarkdownPreview from './MarkdownPreview';
+import { taskMarkerChange, taskToggleMatchesBinding } from './markdownTasks';
+import type { TaskTogglePayload } from './markdownTasks';
+import { formatMarkdownSelection } from './markdownFormatting';
 import { useToast } from '../Toast';
+import {
+  isCurrentSaveCompletion,
+  isSaveCompletionContentUnchanged,
+  shouldSaveBoundDocument,
+} from './saveBinding';
 
 export type NoteTabSnapshot = {
   kind: 'note';
@@ -41,6 +51,7 @@ export type EditorHandle = {
   clear: () => void;
   focus: () => void;
   isNormalMode: () => boolean;
+  format?: (kind: 'bold' | 'italic') => boolean;
 };
 type EditorProps = {
   vimMode: boolean;
@@ -64,6 +75,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     vaultId: string;
   } | null>(null);
   const revision = useRef<string | null>(null);
+  const generation = useRef(0);
+  const binding = useRef<{ view: EditorView; generation: number } | null>(null);
   const dirty = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inFlight = useRef<Promise<boolean> | null>(null);
@@ -79,6 +92,30 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const [hasActiveNote, setHasActiveNote] = useState(false);
   const pendingFocus = useRef(false);
   const [previewVisible, setPreviewVisible] = useState(true);
+  const onToggleTask = useCallback((payload: TaskTogglePayload) => {
+    const view = viewRef.current;
+    const active = current.current;
+    if (
+      !view ||
+      !taskToggleMatchesBinding(
+        payload,
+        active ? { vaultId: active.vaultId, notePath: active.note.path } : null,
+      ) ||
+      blocked.current ||
+      view.state.doc.toString() !== payload.source
+    )
+      return;
+    const changes = taskMarkerChange(
+      payload.offset,
+      payload.expected,
+      payload.source,
+    );
+    if (!changes) return;
+    view.dispatch({
+      changes,
+      annotations: Transaction.userEvent.of('input.task'),
+    });
+  }, []);
 
   useLayoutEffect(() => {
     if (!hasActiveNote || !pendingFocus.current) return;
@@ -105,8 +142,31 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     }
     const view = viewRef.current;
     const active = current.current;
-    if (!dirty.current || !active || !view || blocked.current)
-      return !blocked.current;
+    const installed = binding.current;
+    if (!dirty.current) return true;
+    if (
+      !active ||
+      !view ||
+      !installed ||
+      !shouldSaveBoundDocument({
+        currentView: view,
+        bindingView: installed.view,
+        currentGeneration: generation.current,
+        bindingGeneration: installed.generation,
+        currentNote: active,
+        boundNote: current.current,
+        blocked: blocked.current,
+      })
+    ) {
+      setStatus('Unsaved');
+      notifyError(
+        'Note is not safely bound to this editor. Edits were not saved.',
+        true,
+      );
+      return false;
+    }
+    const saveGeneration = installed.generation;
+    const saveActive = active;
     const content = view.state.doc.toString();
     const expectedRevision = revision.current;
     if (!expectedRevision) return false;
@@ -119,10 +179,21 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         revision: expectedRevision,
       })
       .then((result) => {
-        if (current.current === active) revision.current = result.revision;
+        const stillBound =
+          binding.current === installed &&
+          isCurrentSaveCompletion({
+            currentView: viewRef.current,
+            bindingView: installed.view,
+            currentGeneration: generation.current,
+            bindingGeneration: saveGeneration,
+            currentNote: current.current,
+            boundNote: saveActive,
+            blocked: blocked.current,
+          });
+        if (stillBound) revision.current = result.revision;
         if (
-          view.state.doc.toString() === content &&
-          current.current === active
+          stillBound &&
+          isSaveCompletionContentUnchanged(view.state.doc.toString(), content)
         ) {
           dirty.current = false;
           active.note = { ...active.note, content, revision: result.revision };
@@ -131,7 +202,11 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         return true;
       })
       .catch((cause: unknown) => {
-        if (current.current === active) {
+        if (
+          binding.current === installed &&
+          generation.current === saveGeneration &&
+          current.current === saveActive
+        ) {
           blocked.current = true;
           const message =
             cause instanceof Error ? cause.message : 'Unable to save note.';
@@ -160,6 +235,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     const view = viewRef.current;
     if (!view) return;
     if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    binding.current = null;
+    generation.current += 1;
     current.current = {
       note: tab.note,
       vaultPath: tab.vaultPath,
@@ -170,6 +248,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     dirty.current = false;
     blocked.current = false;
     view.setState(tab.state);
+    binding.current = { view, generation: generation.current };
     setPreview({
       vaultId: tab.vaultId,
       notePath: tab.note.path,
@@ -204,6 +283,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     activate: (tab) => {
       if (tab.kind === 'note') install(tab);
       else {
+        binding.current = null;
+        generation.current += 1;
         current.current = null;
         pendingFocus.current = false;
         if (timer.current) clearTimeout(timer.current);
@@ -240,6 +321,38 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       if (hasActiveNote) viewRef.current?.focus();
       else if (current.current) pendingFocus.current = true;
     },
+    format: (kind) => {
+      const view = viewRef.current;
+      const installed = binding.current;
+      const active = current.current;
+      if (
+        !view ||
+        !installed ||
+        !active ||
+        !shouldSaveBoundDocument({
+          currentView: view,
+          bindingView: installed.view,
+          currentGeneration: generation.current,
+          bindingGeneration: installed.generation,
+          currentNote: active,
+          boundNote: current.current,
+          blocked: blocked.current,
+        })
+      )
+        return false;
+      const target = document.activeElement;
+      if (
+        !(target instanceof HTMLElement) ||
+        !target.closest('.cm-content') ||
+        target.closest('.cm-vim-panel')
+      )
+        return false;
+      view.dispatch({
+        ...formatMarkdownSelection(view.state, kind),
+        annotations: Transaction.userEvent.of('input.format'),
+      });
+      return true;
+    },
     isNormalMode: () => {
       const state = viewRef.current?.state as
         | (EditorState & {
@@ -249,8 +362,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       const vimState = state?.vim;
       return Boolean(
         vimState &&
-          vimState.insertMode === false &&
-          vimState.visualMode === false,
+        vimState.insertMode === false &&
+        vimState.visualMode === false,
       );
     },
     clear: () => {
@@ -258,6 +371,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       if (!view) return;
       if (timer.current) clearTimeout(timer.current);
       timer.current = null;
+      binding.current = null;
+      generation.current += 1;
       current.current = null;
       pendingFocus.current = false;
       setHasActiveNote(false);
@@ -285,13 +400,21 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       markdown(),
       vimCompartment.current.of(vimMode ? vim() : []),
       ...markdownEditorExtensions,
+      markdownSyntaxHighlighting,
       lineNumbers(),
       EditorView.lineWrapping,
       drawSelection({ cursorBlinkRate: 1000 }),
       highlightActiveLine(),
       EditorView.updateListener.of((update) => {
         const active = current.current;
-        if (!active) return;
+        const installed = binding.current;
+        if (
+          !active ||
+          !installed ||
+          installed.view !== viewRef.current ||
+          installed.generation !== generation.current
+        )
+          return;
         if (update.selectionSet || update.docChanged)
           onLayoutChangeRef.current?.();
         if (!update.docChanged) return;
@@ -315,6 +438,21 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           border: 'none',
           color: 'rgba(255, 255, 255, 0.4)',
         },
+        '.cm-tooltip, .cm-vim-panel': {
+          color: 'rgba(255, 255, 255, 0.9)',
+          backgroundColor: 'rgba(255, 255, 255, 0.1)',
+          border: '1px solid rgba(255, 255, 255, 0.12)',
+          backdropFilter: 'blur(12px)',
+        },
+        '.cm-tooltip-autocomplete ul li[aria-selected]': {
+          backgroundColor: 'rgba(255, 255, 255, 0.18)',
+          color: 'white',
+        },
+        '.cm-vim-panel input': {
+          color: 'inherit',
+          backgroundColor: 'transparent',
+          caretColor: 'white',
+        },
         '.cm-content': { caretColor: '#027DFF', padding: '0 16px' },
         '.cm-cursor, .cm-dropCursor': { borderLeft: '1.5px solid #027DFF' },
         '.cm-activeLine': { backgroundColor: 'rgba(224, 191, 255, 0.1)' },
@@ -335,6 +473,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     return () => {
       view.scrollDOM.removeEventListener('scroll', onScroll);
       if (timer.current) clearTimeout(timer.current);
+      if (binding.current?.view === view) {
+        binding.current = null;
+        generation.current += 1;
+      }
       view.destroy();
       viewRef.current = null;
     };
@@ -391,9 +533,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
               markdown={preview.markdown}
               vaultId={preview.vaultId}
               notePath={preview.notePath}
+              onToggleTask={onToggleTask}
             />
           ) : !hasActiveNote ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">
               <div className="text-2xl font-medium tracking-wide text-white/50">
                 storm
               </div>

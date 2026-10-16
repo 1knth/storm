@@ -5,7 +5,9 @@
   outline: none;
 }
 
-:where(button, a):focus-visible:not([aria-pressed='true']):not([aria-current='true']) {
+:where(button, a):focus-visible:not([aria-pressed='true']):not(
+    [aria-current='true']
+  ) {
   background-color: rgb(255 255 255 / 12%);
 }
 

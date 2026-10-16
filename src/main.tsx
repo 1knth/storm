@@ -318,12 +318,23 @@ function App() {
     const unsubscribeToggle = window.vault.onToggleExplorer(() =>
       setExplorerCollapsed((collapsed) => !collapsed),
     );
+    const unsubscribeFormat = window.vault.onFormat((kind) => {
+      const target = document.activeElement;
+      if (
+        !(target instanceof HTMLElement) ||
+        !target.closest('.cm-content') ||
+        target.closest('input, textarea, [role="dialog"], .cm-vim-panel')
+      )
+        return;
+      editorRef.current?.format?.(kind);
+    });
     const unsubscribeNewTab = window.vault.onNewTab(() => {
       if (!pickerOpen) void createEmptyTab();
     });
     return () => {
       unsubscribeOpen();
       unsubscribeToggle();
+      unsubscribeFormat();
       unsubscribeNewTab();
     };
   }, [pickerOpen]);
@@ -807,6 +818,132 @@ function App() {
     ],
   );
 
+  const handleDeleteEntry = async (path: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (
+      !vaultId ||
+      !vaultPath ||
+      navigationBusy.current ||
+      vaultTransition.current ||
+      hasOpenModal()
+    )
+      return;
+    navigationBusy.current = true;
+    ++noteRequestId.current;
+    try {
+      if (!(await editorRef.current?.flush())) return;
+      if (activeVaultIdRef.current !== vaultId) return;
+      const currentTabs = tabsRef.current;
+      const currentActiveId = activeIdRef.current;
+      const outgoing = editorRef.current?.snapshot();
+      const freshTabs = outgoing
+        ? currentTabs.map((tab) =>
+            tab.kind === 'note' && tab.note.path === outgoing.note.path
+              ? outgoing
+              : tab,
+          )
+        : currentTabs;
+      const result = await window.vault.deleteEntry({ vaultId, path });
+      if (!result.deleted) return;
+      const normalize = (value: string) =>
+        value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+      const deletedPath = normalize(result.path);
+      const matchesDeleted = (tab: TabSnapshot) => {
+        if (tab.kind !== 'note' || tab.vaultId !== vaultId) return false;
+        const notePath = normalize(tab.note.path);
+        return (
+          notePath === deletedPath ||
+          (result.kind === 'folder' && notePath.startsWith(`${deletedPath}/`))
+        );
+      };
+      const removedActive = freshTabs.find(
+        (tab) => getTabId(tab) === currentActiveId && matchesDeleted(tab),
+      );
+      const remaining = freshTabs.filter((tab) => !matchesDeleted(tab));
+      const assignments = { ...assignmentsRef.current };
+      for (const tab of freshTabs)
+        if (matchesDeleted(tab)) delete assignments[getTabId(tab)];
+      const groups = groupsRef.current;
+      const activeIndex = freshTabs.findIndex(
+        (tab) => getTabId(tab) === currentActiveId,
+      );
+      let nextActive = remaining.find(
+        (tab) => getTabId(tab) === currentActiveId,
+      );
+      if (!nextActive && remaining.length) {
+        const nearestIndex = Math.min(
+          Math.max(activeIndex, 0),
+          remaining.length - 1,
+        );
+        nextActive = remaining[nearestIndex];
+      }
+      if (removedActive) {
+        editorRef.current?.clear();
+        if (nextActive?.kind === 'note')
+          editorRef.current?.activate(nextActive);
+        else if (nextActive?.kind === 'empty')
+          editorRef.current?.activate(nextActive);
+      }
+      tabsRef.current = remaining;
+      activeIdRef.current = nextActive ? getTabId(nextActive) : null;
+      groupsRef.current = groups;
+      assignmentsRef.current = assignments;
+      setTabs(remaining);
+      setActiveId(activeIdRef.current);
+      setActivePath(nextActive?.kind === 'note' ? nextActive.note.path : null);
+      setTabGroups(groups);
+      setTabGroupAssignments(assignments);
+      visitedVaults.current.add(vaultId);
+      sessions.current.set(vaultId, {
+        tabs: remaining,
+        activeId: activeIdRef.current,
+        groups,
+        assignments,
+      });
+      if (checkpointTimer.current) {
+        clearTimeout(checkpointTimer.current);
+        checkpointTimer.current = null;
+      }
+      const previousCheckpoint = checkpointInFlight.current;
+      const saveLayout = async () => {
+        await previousCheckpoint?.catch(() => {});
+        await window.vault.saveTabLayout(
+          vaultId,
+          serializeTabLayout(
+            remaining,
+            activeIdRef.current,
+            groups,
+            assignments,
+            new Map(remaining.map((tab) => [getTabId(tab), tab])),
+          ),
+        );
+      };
+      checkpointInFlight.current = saveLayout();
+      try {
+        await checkpointInFlight.current;
+      } catch (error) {
+        notifyError(
+          `Deleted successfully, but could not save tab layout: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (activeVaultIdRef.current === vaultId) {
+        try {
+          setNotes(await window.vault.listNotes());
+        } catch (error) {
+          setVaultError(
+            `Deleted successfully, but could not refresh the file list: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    } catch (error) {
+      notifyError(
+        error instanceof Error ? error.message : 'Unable to delete entry.',
+      );
+    } finally {
+      navigationBusy.current = false;
+    }
+  };
+
   const selectNote = async (path: string, focusEditor = true) => {
     if (path === activePath) {
       if (focusEditor) editorRef.current?.focus();
@@ -1284,7 +1421,7 @@ function App() {
                 title="Navigation"
                 items={[
                   navigator.platform.toLowerCase().includes('mac')
-                    ? '⌘J / ⌘K / ⌘L — Focus Vaults / Explorer / Editor'
+                    ? 'Ctrl+1 / Ctrl+2 / Ctrl+3 — Focus Vaults / Explorer / Editor'
                     : 'Alt+1 / Alt+2 / Alt+3 — Focus Vaults / Explorer / Editor',
                   ...(vimMode
                     ? ['h / j / k / l — Navigate panes and files']
@@ -1316,7 +1453,7 @@ function App() {
                   (navigator.platform.toLowerCase().includes('mac')
                     ? '⌘'
                     : 'Ctrl') +
-                    'B — Toggle sidebar' +
+                    'S — Toggle file explorer' +
                     (toggleExplorerShortcut ? '' : ' (disabled)'),
                   (navigator.platform.toLowerCase().includes('mac')
                     ? '⌘'
@@ -1372,6 +1509,7 @@ function App() {
             setExplorerCollapsed((collapsed) => !collapsed)
           }
           onNoteSelect={selectNote}
+          onDeleteEntry={(path) => void handleDeleteEntry(path)}
           onCreate={beginCreate}
           onCreateNote={() => {
             const path = activePath?.replace(/\\/g, '/') ?? '';

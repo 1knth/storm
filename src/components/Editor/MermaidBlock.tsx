@@ -10,14 +10,21 @@ mermaid.initialize({
   securityLevel: 'strict',
   htmlLabels: false,
   maxTextSize: MAX_SOURCE_LENGTH,
+  suppressErrorRendering: true,
   flowchart: { htmlLabels: false },
 });
 
 const svgSanitizerOptions: Config = {
   USE_PROFILES: { svg: true, svgFilters: true },
   FORBID_TAGS: [
-    'a', 'animate', 'animateMotion', 'animateTransform', 'foreignObject',
-    'image', 'mpath', 'script',
+    'a',
+    'animate',
+    'animateMotion',
+    'animateTransform',
+    'foreignObject',
+    'image',
+    'mpath',
+    'script',
   ],
   FORBID_ATTR: ['href', 'xlink:href', 'src'],
 };

@@ -28,6 +28,7 @@ type FileExplorerProps = {
   onNoteSelect: (path: string, focusEditor?: boolean) => void;
   onCreate: (kind: 'note' | 'folder', parentPath: string) => void;
   onCreateNote: () => void;
+  onDeleteEntry?: (path: string, kind: 'note' | 'folder') => void;
   creationPending: boolean;
   onAddVault: () => void;
   vaultPath: string | null;
@@ -52,6 +53,7 @@ export default function FileExplorer({
   onNoteSelect,
   onCreate,
   onCreateNote,
+  onDeleteEntry,
   creationPending,
   onAddVault,
   vaultPath,
@@ -100,6 +102,7 @@ export default function FileExplorer({
   const [contextMenu, setContextMenu] = useState<{
     position: ContextMenuPosition;
     parent: string;
+    target: { path: string; kind: 'note' | 'folder' } | null;
     returnFocusTo: HTMLElement | null;
   } | null>(null);
   const openContextMenu = (
@@ -116,6 +119,7 @@ export default function FileExplorer({
       position,
       returnFocusTo,
       parent: !path || isFolder ? path : path.split('/').slice(0, -1).join('/'),
+      target: path ? { path, kind: isFolder ? 'folder' : 'note' } : null,
     });
   };
 
@@ -237,15 +241,15 @@ export default function FileExplorer({
             <button
               type="button"
               aria-label="Hide file explorer"
-              title="Hide file explorer (⌘/Ctrl+B)"
+              title="Hide file explorer (⌘/Ctrl+S)"
               onClick={onToggleCollapsed}
               className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white"
             >
               <RiMenuUnfold4Fill aria-hidden="true" className="h-4 w-4" />
               <ShortcutHint visible={commandHeld && toggleExplorerShortcut}>
                 {navigator.platform.toLowerCase().includes('mac')
-                  ? '⌘B'
-                  : 'Ctrl+B'}
+                  ? '⌘S'
+                  : 'Ctrl+S'}
               </ShortcutHint>
             </button>
           </div>
@@ -282,11 +286,28 @@ export default function FileExplorer({
           position={contextMenu.position}
           returnFocusTo={contextMenu.returnFocusTo}
           onClose={() => setContextMenu(null)}
-          items={(['note', 'folder'] as const).map((kind) => ({
-            id: `new-${kind}`,
-            label: `New ${kind}`,
-            onSelect: () => onCreate(kind, contextMenu.parent),
-          }))}
+          items={[
+            ...(['note', 'folder'] as const).map((kind) => ({
+              id: `new-${kind}`,
+              label: `New ${kind}`,
+              onSelect: () => onCreate(kind, contextMenu.parent),
+            })),
+            ...(contextMenu.target && onDeleteEntry
+              ? [
+                  { type: 'separator' as const, id: 'entry-actions' },
+                  {
+                    id: 'delete-entry',
+                    label: `Move ${contextMenu.target.kind} to Trash…`,
+                    danger: true,
+                    onSelect: () =>
+                      onDeleteEntry(
+                        contextMenu.target!.path,
+                        contextMenu.target!.kind,
+                      ),
+                  },
+                ]
+              : []),
+          ]}
         />
       )}
       {settingsOpen &&
@@ -376,7 +397,7 @@ export default function FileExplorer({
                       Toggle file explorer shortcut
                     </span>
                     <span className="mt-1 block text-xs text-white/50">
-                      ⌘/Ctrl + B
+                      ⌘/Ctrl + S
                     </span>
                   </span>
                   <input

@@ -264,7 +264,7 @@ export default function VaultSidebar({
     <aside
       data-pane="vaults"
       tabIndex={-1}
-      className="flex min-h-0 w-[176px] shrink-0 flex-col bg-black/70 px-3 pb-3 pt-7 text-white"
+      className="flex min-h-0 w-[176px] shrink-0 flex-col bg-black/70 px-3 pb-3 pt-7 text-white select-none"
       onKeyDown={(event) => {
         if (!vimMode || event.metaKey || event.ctrlKey || event.altKey) return;
         const target = event.target as HTMLElement;
@@ -293,7 +293,7 @@ export default function VaultSidebar({
         }
       }}
     >
-      <div className="mb-2 flex h-9 shrink-0 items-center justify-between border-b border-white/10 px-1">
+      <div className="mx-1 mb-2 flex h-9 shrink-0 items-center justify-between border-b border-white/10 px-1">
         <h2 className="text-sm font-semibold text-white/80">Vaults</h2>
         <div className="flex shrink-0 items-center gap-0.5">
           <button
@@ -322,7 +322,7 @@ export default function VaultSidebar({
               onClick={onToggleExplorer}
               aria-label="Show file explorer"
               aria-expanded="false"
-              title={`Show file explorer${toggleExplorerShortcut ? ` (${navigator.platform.toLowerCase().includes('mac') ? '⌘B' : 'Ctrl+B'})` : ''}`}
+              title={`Show file explorer${toggleExplorerShortcut ? ` (${navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'})` : ''}`}
               className="relative rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white"
             >
               <RiMenuUnfold4Fill aria-hidden="true" className="h-4 w-4" />
@@ -332,8 +332,8 @@ export default function VaultSidebar({
                   className="pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white"
                 >
                   {navigator.platform.toLowerCase().includes('mac')
-                    ? '⌘B'
-                    : 'Ctrl+B'}
+                    ? '⌘S'
+                    : 'Ctrl+S'}
                 </span>
               )}
             </button>
@@ -408,13 +408,14 @@ export default function VaultSidebar({
                 {groupForm.id
                   ? 'Rename group'
                   : groupForm.folderName
-                    ? `Group name (folders inside “${groupForm.folderName}” become vaults)`
+                    ? `Group name (vaults inside “${groupForm.folderName}”)`
                     : 'New group'}
               </label>
               {groupForm.folderName && (
                 <p className="mb-2 text-xs text-white/60">
-                  Immediate subfolders become vaults. Already-added vaults will
-                  be reassigned to this group.
+                  Immediate subfolders become vaults; if there are none, the
+                  selected folder itself becomes a vault. Already-added vaults
+                  will be reassigned to this group.
                 </p>
               )}
               <input
@@ -447,7 +448,7 @@ export default function VaultSidebar({
           )}
         </form>
       )}
-      <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+      <ul className="mx-1 min-h-0 flex-1 space-y-1 overflow-y-auto">
         {ungrouped.map((vault) =>
           renderVault(vault, visibleVaults.indexOf(vault)),
         )}

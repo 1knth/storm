@@ -50,6 +50,8 @@ export async function writeLastVault(
   settings.lastVaultPath = vaultPath;
   await mkdir(userDataPath, { recursive: true });
   const temporary = `${settingsFile}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, { flag: 'wx' });
+  await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, {
+    flag: 'wx',
+  });
   await rename(temporary, settingsFile);
 }
