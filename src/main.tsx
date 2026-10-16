@@ -2,41 +2,135 @@ import React, { useEffect, useRef, useState } from 'react';
 import './index.css';
 import { createRoot } from 'react-dom/client';
 import FileExplorer from './components/fileExplorer';
+import VaultSidebar from './components/VaultSidebar';
+import type { RegisteredVault, VaultEntry, VaultGroup } from './shared/types';
+import { deriveVisibleVaults } from './shared/vaultGroups';
 import Editor from './components/Editor/Editor';
 import type { EditorHandle, TabSnapshot } from './components/Editor/Editor';
 import TabBar from './components/Editor/TabBar';
-import { RiMenuUnfold4Fill } from 'react-icons/ri';
+import {
+  cleanTabAssignments,
+  getTabId,
+  moveTab,
+  moveTabGroup,
+  visibleTabOrder,
+} from './components/Editor/tabGroups';
+import type { TabAssignments, TabGroup } from './components/Editor/tabGroups';
 
-function ShortcutHint({
-  children,
-  visible,
-}: {
-  children: React.ReactNode;
-  visible: boolean;
-}) {
+function ShortcutGroup({ title, items }: { title: string; items: string[] }) {
   return (
-    <span
-      aria-hidden="true"
-      className={`pointer-events-none absolute left-1/2 top-full z-20 -translate-x-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${visible ? 'opacity-100' : 'opacity-0'}`}
-    >
-      {children}
-    </span>
+    <div>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/50">
+        {title}
+      </h3>
+      <ul className="space-y-2 text-sm">
+        {items.map((item) => (
+          <li key={item} className="text-white/85">
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
+
+const isEligibleFocusTarget = (
+  element: HTMLElement | null,
+): element is HTMLElement => {
+  if (!element?.isConnected || element.matches(':disabled')) return false;
+  if (element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+  if (element.getClientRects().length === 0) return false;
+  const style = window.getComputedStyle(element);
+  return style.visibility !== 'hidden' && style.visibility !== 'collapse';
+};
+
+const hasOpenModal = () =>
+  Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '[role="dialog"][aria-modal="true"]',
+    ),
+  ).some((dialog) => isEligibleFocusTarget(dialog));
 
 function App() {
   const editorRef = useRef<EditorHandle>(null);
   const navigationBusy = useRef(false);
+  const vaultTransition = useRef(false);
+  const noteRequestId = useRef(0);
+  const sessions = useRef(
+    new Map<
+      string,
+      {
+        tabs: TabSnapshot[];
+        activeId: string | null;
+        groups: TabGroup[];
+        assignments: TabAssignments;
+      }
+    >(),
+  );
+  const [tabGroups, setTabGroups] = useState<TabGroup[]>([]);
+  const [tabGroupAssignments, setTabGroupAssignments] =
+    useState<TabAssignments>({});
   const [tabs, setTabs] = useState<TabSnapshot[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [vaultPath, setVaultPath] = useState<string | null>(null);
+  const [vaults, setVaults] = useState<RegisteredVault[]>([]);
+  const [vaultGroups, setVaultGroups] = useState<VaultGroup[]>([]);
+  const visibleVaults = deriveVisibleVaults(vaults, vaultGroups);
+  const [activeVaultId, setActiveVaultId] = useState<string | null>(null);
+  const activeVaultIdRef = useRef<string | null>(null);
+  const tabsRef = useRef(tabs);
+  const groupsRef = useRef(tabGroups);
+  const assignmentsRef = useRef(tabGroupAssignments);
+  activeVaultIdRef.current = activeVaultId;
+  tabsRef.current = tabs;
+  groupsRef.current = tabGroups;
+  assignmentsRef.current = tabGroupAssignments;
+
+  const onMoveTab = (vaultId: string, tabId: string, groupId: string | null, beforeTabId: string | null) => {
+    if (!vaultId || activeVaultIdRef.current !== vaultId) return;
+    const moved = moveTab(tabsRef.current, groupsRef.current, assignmentsRef.current, tabId, groupId, beforeTabId);
+    if (!moved) return;
+    tabsRef.current = moved.tabs;
+    assignmentsRef.current = moved.assignments;
+    setTabs(moved.tabs);
+    setTabGroupAssignments(moved.assignments);
+    if (groupId) {
+      const nextGroups = groupsRef.current.map((group) => group.id === groupId && group.collapsed ? { ...group, collapsed: false } : group);
+      groupsRef.current = nextGroups;
+      setTabGroups(nextGroups);
+    }
+  };
+  const onMoveGroup = (vaultId: string, groupId: string, beforeGroupId: string | null) => {
+    if (!vaultId || activeVaultIdRef.current !== vaultId) return;
+    const nextGroups = moveTabGroup(groupsRef.current, groupId, beforeGroupId);
+    if (!nextGroups) return;
+    groupsRef.current = nextGroups;
+    setTabGroups(nextGroups);
+  };
+  const [vaultError, setVaultError] = useState<string | null>(null);
+  const [entriesLoading, setEntriesLoading] = useState(false);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
+  const lastPane = useRef<'vaults' | 'explorer' | 'editor'>('editor');
+  const lastPaneElement = useRef<HTMLElement | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const shortcutHelpInvoker = useRef<HTMLElement | null>(null);
+  const shortcutHelpDialog = useRef<HTMLElement | null>(null);
   const [commandHeld, setCommandHeld] = useState(false);
+  const commandHeldRef = useRef(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [notes, setNotes] = useState<
-    Awaited<ReturnType<typeof window.vault.listNotes>>
-  >([]);
+  const [notes, setNotes] = useState<VaultEntry[]>([]);
+  const [creation, setCreation] = useState<{
+    kind: 'note' | 'folder';
+    vaultId: string;
+    parent: string;
+    vaultName: string;
+  } | null>(null);
+  const [creationName, setCreationName] = useState('');
+  const [creationError, setCreationError] = useState<string | null>(null);
+  const [creationPending, setCreationPending] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const pickerInputRef = useRef<HTMLInputElement>(null);
   const pickerInvokerRef = useRef<HTMLElement | null>(null);
@@ -87,18 +181,39 @@ function App() {
     window.vault.setShortcutEnabled('toggleExplorer', toggleExplorerShortcut);
   }, [openFileShortcut, toggleExplorerShortcut]);
   useEffect(() => {
-    const updateModifier = (event: KeyboardEvent) =>
-      setCommandHeld(
-        navigator.platform.toLowerCase().includes('mac')
-          ? event.metaKey
-          : event.ctrlKey,
-      );
-    const clearModifier = () => setCommandHeld(false);
+    let showTimer: ReturnType<typeof setTimeout> | null = null;
+    const setHeld = (held: boolean) => {
+      commandHeldRef.current = held;
+      setCommandHeld(held);
+    };
+    const updateModifier = (event: KeyboardEvent) => {
+      const held = navigator.platform.toLowerCase().includes('mac')
+        ? event.metaKey
+        : event.ctrlKey;
+      if (held) {
+        if (!commandHeldRef.current && !showTimer) {
+          showTimer = setTimeout(() => {
+            showTimer = null;
+            setHeld(true);
+          }, 650);
+        }
+      } else {
+        if (showTimer) clearTimeout(showTimer);
+        showTimer = null;
+        setHeld(false);
+      }
+    };
+    const clearModifier = () => {
+      if (showTimer) clearTimeout(showTimer);
+      showTimer = null;
+      setHeld(false);
+    };
     window.addEventListener('keydown', updateModifier);
     window.addEventListener('keyup', updateModifier);
     window.addEventListener('blur', clearModifier);
     document.addEventListener('visibilitychange', clearModifier);
     return () => {
+      clearModifier();
       window.removeEventListener('keydown', updateModifier);
       window.removeEventListener('keyup', updateModifier);
       window.removeEventListener('blur', clearModifier);
@@ -113,11 +228,15 @@ function App() {
     const unsubscribeToggle = window.vault.onToggleExplorer(() =>
       setExplorerCollapsed((collapsed) => !collapsed),
     );
+    const unsubscribeNewTab = window.vault.onNewTab(() => {
+      if (!pickerOpen) void createEmptyTab();
+    });
     return () => {
       unsubscribeOpen();
       unsubscribeToggle();
+      unsubscribeNewTab();
     };
-  }, []);
+  }, [pickerOpen]);
 
   useEffect(() => {
     if (!pickerOpen) {
@@ -176,33 +295,388 @@ function App() {
     [],
   );
 
-  const selectNote = async (path: string) => {
-    if (navigationBusy.current || path === activePath || !vaultPath) return;
+  const beginCreate = (kind: 'note' | 'folder', parent: string) => {
+    if (!activeVaultId || !vaultPath) {
+      setVaultError('Open a vault before creating a file.');
+      return;
+    }
+    const vault = vaults.find((item) => item.id === activeVaultId);
+    setCreation({
+      kind,
+      vaultId: activeVaultId,
+      parent,
+      vaultName:
+        vault?.name ??
+        vaultPath.split(/[\\/]/).filter(Boolean).at(-1) ??
+        'Vault',
+    });
+    setCreationName('');
+    setCreationError(null);
+  };
+
+  const submitCreation = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!creation || creationPending) return;
+    setCreationPending(true);
+    setCreationError(null);
+    let created = false;
+    try {
+      if (!(await editorRef.current?.flush()))
+        throw new Error('Save the current note before creating an entry.');
+      const request = {
+        vaultId: creation.vaultId,
+        parentRelativePath: creation.parent,
+        name: creationName.trim(),
+      };
+      const entry =
+        creation.kind === 'note'
+          ? await window.vault.createNote(request)
+          : await window.vault.createFolder(request);
+      created = true;
+      setCreation(null);
+      if (activeVaultId === creation.vaultId) {
+        try {
+          setNotes(await window.vault.listNotes());
+        } catch (error) {
+          setVaultError(
+            `Created successfully, but could not refresh the file list: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        if (creation.kind === 'note') void selectNote(entry.path);
+      }
+    } catch (error) {
+      if (created) {
+        setVaultError(
+          `Created successfully, but could not finish updating the view: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } else {
+        setCreationError(
+          error instanceof Error ? error.message : 'Unable to create entry.',
+        );
+      }
+    } finally {
+      setCreationPending(false);
+    }
+  };
+
+  const pendingExplorerFocus = useRef(false);
+  useEffect(() => {
+    const rememberFocus = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const pane = target.closest<HTMLElement>('[data-pane]');
+      if (pane && (pane.dataset.pane !== 'explorer' || !explorerCollapsed)) {
+        lastPane.current = pane.dataset.pane as
+          | 'vaults'
+          | 'explorer'
+          | 'editor';
+        lastPaneElement.current = target;
+      }
+    };
+    const restoreOnWindowFocus = () => {
+      requestAnimationFrame(() => {
+        if (hasOpenModal()) return;
+        const active = document.activeElement;
+        if (
+          active &&
+          active !== document.body &&
+          active !== document.documentElement
+        )
+          return;
+        const remembered = lastPaneElement.current;
+        const rememberedPane = remembered?.closest<HTMLElement>('[data-pane]');
+        if (
+          isEligibleFocusTarget(remembered) &&
+          !(rememberedPane?.dataset.pane === 'explorer' && explorerCollapsed)
+        ) {
+          remembered.focus();
+        } else if (lastPane.current === 'explorer' && !explorerCollapsed) {
+          focusExplorerRow();
+        } else {
+          editorRef.current?.focus();
+        }
+      });
+    };
+    document.addEventListener('focusin', rememberFocus);
+    window.addEventListener('focus', restoreOnWindowFocus);
+    return () => {
+      document.removeEventListener('focusin', rememberFocus);
+      window.removeEventListener('focus', restoreOnWindowFocus);
+    };
+  }, [explorerCollapsed]);
+  useEffect(() => {
+    if (explorerCollapsed && lastPane.current === 'explorer')
+      editorRef.current?.focus();
+  }, [explorerCollapsed]);
+  const focusExplorerRow = () => {
+    const pane = document.querySelector<HTMLElement>('[data-pane="explorer"]');
+    const rows = Array.from(
+      pane?.querySelectorAll<HTMLElement>('[data-entry-path]') ?? [],
+    );
+    const row =
+      rows.find((item) => item.dataset.entryPath === activePath) ?? rows[0];
+    const rowButton = row?.querySelector<HTMLElement>('button');
+    (rowButton ?? pane)?.focus();
+  };
+
+  useEffect(() => {
+    if (explorerCollapsed || !pendingExplorerFocus.current) return;
+    pendingExplorerFocus.current = false;
+    focusExplorerRow();
+  }, [explorerCollapsed, activePath, activeVaultId]);
+
+  useEffect(() => {
+    const focusPane = (paneName: 'vaults' | 'explorer' | 'editor') => {
+      if (paneName === 'editor') {
+        editorRef.current?.focus();
+        return;
+      }
+      if (paneName === 'explorer' && explorerCollapsed) {
+        pendingExplorerFocus.current = true;
+        setExplorerCollapsed(false);
+        return;
+      }
+      const pane = document.querySelector<HTMLElement>(
+        `[data-pane="${paneName}"]`,
+      );
+      if (paneName === 'vaults') {
+        const vaultRow = pane?.querySelector<HTMLElement>('[data-vault-row]');
+        (vaultRow ?? pane)?.focus();
+        return;
+      }
+      pendingExplorerFocus.current = false;
+      focusExplorerRow();
+    };
+    const onPaneKeyDown = (event: KeyboardEvent) => {
+      if (
+        !['1', '2', '3'].includes(event.key) ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey
+      )
+        return;
+      const target = event.target as HTMLElement;
+      if (
+        hasOpenModal() ||
+        target.closest(
+          '[role="dialog"], [role="menu"], [role="search"], input, textarea, select',
+        ) ||
+        (target.closest('[contenteditable="true"]') &&
+          !target.closest('[data-pane="editor"]'))
+      )
+        return;
+      const activeTab = tabs.find(
+        (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) === activeId,
+      );
+      const emptyEditor = !activeTab || activeTab.kind === 'empty';
+      const pane = target.closest<HTMLElement>('[data-pane]');
+      const paneName = pane?.dataset.pane ?? lastPane.current;
+      if (vimMode) {
+        if (
+          (paneName === 'editor' && !editorRef.current?.isNormalMode()) ||
+          (!pane && !lastPane.current)
+        )
+          return;
+      } else if (!emptyEditor) return;
+      event.preventDefault();
+      event.stopPropagation();
+      focusPane(
+        ({ '1': 'vaults', '2': 'explorer', '3': 'editor' } as const)[event.key],
+      );
+    };
+    window.addEventListener('keydown', onPaneKeyDown, true);
+    return () => window.removeEventListener('keydown', onPaneKeyDown, true);
+  }, [vimMode, explorerCollapsed, activePath, tabs, activeId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== '?' ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.isComposing ||
+        event.repeat ||
+        shortcutHelpOpen ||
+        settingsOpen ||
+        pickerOpen ||
+        creation
+      )
+        return;
+      const target = event.target as HTMLElement;
+      if (
+        target.closest(
+          'input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], [role="search"]',
+        )
+      )
+        return;
+      const activeTab = tabs.find(
+        (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) === activeId,
+      );
+      const emptyEditor = !activeTab || activeTab.kind === 'empty';
+      const pane = target.closest<HTMLElement>('[data-pane]');
+      if (pane?.dataset.pane === 'editor') {
+        if (!vimMode || !editorRef.current?.isNormalMode()) return;
+      } else if (!pane || (vimMode ? false : !emptyEditor)) return;
+      shortcutHelpInvoker.current = target;
+      event.preventDefault();
+      event.stopPropagation();
+      setShortcutHelpOpen(true);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [
+    shortcutHelpOpen,
+    settingsOpen,
+    pickerOpen,
+    creation,
+    tabs,
+    activeId,
+    vimMode,
+  ]);
+
+  useEffect(() => {
+    if (!shortcutHelpOpen) {
+      shortcutHelpInvoker.current?.focus();
+      return;
+    }
+    shortcutHelpDialog.current?.querySelector<HTMLElement>('button')?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setShortcutHelpOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const controls =
+        shortcutHelpDialog.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+      if (!controls?.length) {
+        event.preventDefault();
+        shortcutHelpDialog.current?.focus();
+        return;
+      }
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [shortcutHelpOpen]);
+
+  useEffect(() => {
+    const parentForActiveNote = () => {
+      const path = activePath?.replace(/\\/g, '/') ?? '';
+      return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    };
+    const unsubscribe = window.vault.onCreateEntry((kind) => {
+      if (!pickerOpen && !creation) beginCreate(kind, parentForActiveNote());
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === 'n'
+      ) {
+        if (pickerOpen || creation) return;
+        event.preventDefault();
+        beginCreate('note', parentForActiveNote());
+      }
+      if (event.key === 'Escape' && creation && !creationPending)
+        setCreation(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [
+    activePath,
+    activeVaultId,
+    vaultPath,
+    vaults,
+    pickerOpen,
+    creation,
+    creationPending,
+  ]);
+
+  const selectNote = async (path: string, focusEditor = true) => {
+    if (path === activePath) {
+      if (focusEditor) editorRef.current?.focus();
+      return;
+    }
+    if (navigationBusy.current || vaultTransition.current || !vaultPath) return;
     navigationBusy.current = true;
+    const requestId = ++noteRequestId.current;
     try {
       if (!(await editorRef.current?.flush())) return;
+      if (requestId !== noteRequestId.current) return;
       const outgoing = editorRef.current?.snapshot();
       if (outgoing)
         setTabs((old) =>
           old.map((tab) =>
-            tab.note.path === outgoing.note.path ? outgoing : tab,
+            tab.kind === 'note' && tab.note.path === outgoing.note.path
+              ? outgoing
+              : tab,
           ),
         );
-      const existing = tabs.find((tab) => tab.note.path === path);
+      const existing = tabs.find(
+        (tab) => tab.kind === 'note' && tab.note.path === path,
+      );
       if (existing) {
-        editorRef.current?.activate(existing);
-        setActivePath(path);
+        activateTab(existing);
+        if (focusEditor) editorRef.current?.focus();
         return;
       }
+      const replacedEmpty = tabs.find(
+        (tab) => tab.kind === 'empty' && getTabId(tab) === activeId,
+      );
+      const removedEmptyIds = tabs
+        .filter((tab) => tab.kind === 'empty')
+        .map(getTabId);
+      const inheritedGroup = replacedEmpty
+        ? tabGroupAssignments[getTabId(replacedEmpty)]
+        : undefined;
       const note = await window.vault.readNote(path);
-      editorRef.current?.openNote(note, vaultPath);
+      if (requestId !== noteRequestId.current) return;
+      if (!activeVaultId) return;
+      editorRef.current?.openNote(note, vaultPath, activeVaultId);
+      if (focusEditor) editorRef.current?.focus();
       const fresh = editorRef.current?.snapshot();
       if (fresh)
         setTabs((old) => [
-          ...old.filter((tab) => tab.note.path !== path),
+          ...old.filter(
+            (tab) =>
+              tab.kind !== 'empty' &&
+              (tab.kind !== 'note' || tab.note.path !== path),
+          ),
           fresh,
         ]);
+      if (replacedEmpty) {
+        setTabGroupAssignments((assignments) => {
+          const next = { ...assignments };
+          for (const id of removedEmptyIds) delete next[id];
+          if (inheritedGroup) next[path] = inheritedGroup;
+          return next;
+        });
+      }
+      const assignedGroup = inheritedGroup;
+      if (assignedGroup)
+        setTabGroups((groups) =>
+          groups.map((group) =>
+            group.id === assignedGroup ? { ...group, collapsed: false } : group,
+          ),
+        );
       setActivePath(path);
+      setActiveId(path);
     } catch (error) {
       console.error('Unable to open note', error);
     } finally {
@@ -210,53 +684,495 @@ function App() {
     }
   };
 
-  const closeTab = async (path: string) => {
+  const activateTab = (tab: TabSnapshot) => {
+    const groupId = tabGroupAssignments[getTabId(tab)];
+    if (groupId)
+      setTabGroups((groups) =>
+        groups.map((group) =>
+          group.id === groupId ? { ...group, collapsed: false } : group,
+        ),
+      );
+    editorRef.current?.activate(tab);
+    setActiveId(tab.kind === 'note' ? tab.note.path : tab.id);
+    setActivePath(tab.kind === 'note' ? tab.note.path : null);
+  };
+  const createEmptyTab = async () => {
+    if (navigationBusy.current || vaultTransition.current) return;
+    navigationBusy.current = true;
+    try {
+      if (!(await editorRef.current?.flush())) return;
+      const outgoing = editorRef.current?.snapshot();
+      if (outgoing)
+        setTabs((old) =>
+          old.map((tab) =>
+            tab.kind === 'note' && tab.note.path === outgoing.note.path
+              ? outgoing
+              : tab,
+          ),
+        );
+      const empty: TabSnapshot = { kind: 'empty', id: crypto.randomUUID() };
+      const inheritedGroup = activeId
+        ? tabGroupAssignments[activeId]
+        : undefined;
+      if (inheritedGroup)
+        setTabGroupAssignments((assignments) => ({
+          ...assignments,
+          [empty.id]: inheritedGroup,
+        }));
+      setTabs((old) => [...old, empty]);
+      activateTab(empty);
+    } finally {
+      navigationBusy.current = false;
+    }
+  };
+  const closeTab = async (target: TabSnapshot) => {
     if (navigationBusy.current) return;
-    if (path !== activePath) {
-      setTabs((old) => old.filter((tab) => tab.note.path !== path));
+    const targetId = target.kind === 'note' ? target.note.path : target.id;
+    if (targetId !== activeId) {
+      setTabs((old) =>
+        old.filter(
+          (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) !== targetId,
+        ),
+      );
+      setTabGroupAssignments((assignments) => {
+        const next = { ...assignments };
+        delete next[targetId];
+        return next;
+      });
       return;
     }
     navigationBusy.current = true;
     try {
       if (!(await editorRef.current?.flush())) return;
-      const remaining = tabs.filter((tab) => tab.note.path !== path);
+      const remaining = tabs.filter(
+        (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) !== targetId,
+      );
       const next = remaining.at(-1);
-      if (next) {
-        editorRef.current?.activate(next);
-        setActivePath(next.note.path);
-      } else {
+      if (next) activateTab(next);
+      else {
+        ++noteRequestId.current;
+        editorRef.current?.clear();
         setActivePath(null);
+        setActiveId(null);
       }
       setTabs(remaining);
+      setTabGroupAssignments((assignments) =>
+        Object.fromEntries(
+          Object.entries(assignments).filter(([id]) => id !== targetId),
+        ),
+      );
     } finally {
       navigationBusy.current = false;
     }
   };
-  const changeVault = async () => {
-    if (!(await editorRef.current?.flush())) return;
-    setTabs([]);
-    setActivePath(null);
+  const beginVaultChange = () => {
+    if (vaultTransition.current) return false;
+    vaultTransition.current = true;
+    ++noteRequestId.current;
+    return true;
+  };
+  const cancelVaultChange = () => {
+    vaultTransition.current = false;
   };
 
+  const activateVault = async (id: string, focusExplorer = false) => {
+    if (id === activeVaultId) {
+      if (focusExplorer) {
+        if (explorerCollapsed) {
+          pendingExplorerFocus.current = true;
+          setExplorerCollapsed(false);
+        } else {
+          focusExplorerRow();
+        }
+      }
+      return;
+    }
+    if (navigationBusy.current || !beginVaultChange()) return;
+    navigationBusy.current = true;
+    setVaultError(null);
+    try {
+      if (!(await editorRef.current?.flush())) {
+        cancelVaultChange();
+        return;
+      }
+      const outgoing = editorRef.current?.snapshot();
+      if (activeVaultId) {
+        const outgoingTabs = outgoing
+          ? tabs.map((tab) =>
+              tab.kind === 'note' && tab.note.path === outgoing.note.path
+                ? outgoing
+                : tab,
+            )
+          : tabs;
+        sessions.current.set(activeVaultId, {
+          tabs: outgoingTabs,
+          activeId,
+          groups: tabGroups,
+          assignments: tabGroupAssignments,
+        });
+      }
+      const activated = await window.vault.registryActivate(id);
+      if (!activated.path)
+        throw new Error(
+          'Vault folder is unavailable. Choose or move the folder to recover.',
+        );
+      const listed = await window.vault.listNotes();
+      const session = sessions.current.get(id);
+      let restoredTabs: TabSnapshot[] = [];
+      if (session) {
+        for (const tab of session.tabs) {
+          if (tab.kind === 'empty') {
+            restoredTabs.push(tab);
+            continue;
+          }
+          try {
+            const latest = await window.vault.readNote(tab.note.path);
+            restoredTabs.push(
+              latest.revision === tab.note.revision &&
+                tab.vaultPath === activated.path
+                ? tab
+                : {
+                    ...tab,
+                    note: latest,
+                    vaultPath: activated.path,
+                    vaultId: id,
+                    state: editorRef.current!.createState(latest.content),
+                    scrollTop: 0,
+                  },
+            );
+          } catch {
+            // Deleted or inaccessible notes are omitted from this vault session.
+          }
+        }
+      }
+      const restoredId = restoredTabs.some(
+        (tab) =>
+          (tab.kind === 'note' ? tab.note.path : tab.id) === session?.activeId,
+      )
+        ? session!.activeId
+        : restoredTabs.at(-1)
+          ? restoredTabs.at(-1)!.kind === 'note'
+            ? (restoredTabs.at(-1) as Extract<TabSnapshot, { kind: 'note' }>)
+                .note.path
+            : restoredTabs.at(-1)!.id
+          : null;
+      const activeTab = restoredTabs.find(
+        (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) === restoredId,
+      );
+      if (activeTab) editorRef.current?.activate(activeTab);
+      else editorRef.current?.clear();
+      setTabs(restoredTabs);
+      setTabGroups(session?.groups ?? []);
+      setTabGroupAssignments(
+        cleanTabAssignments(
+          session?.assignments ?? {},
+          restoredTabs,
+          session?.groups ?? [],
+        ),
+      );
+      setActiveId(restoredId);
+      setActivePath(activeTab?.kind === 'note' ? activeTab.note.path : null);
+      setActiveVaultId(id);
+      setVaultPath(activated.path);
+      setNotes(listed);
+      if (focusExplorer) pendingExplorerFocus.current = true;
+    } catch (error) {
+      if (activeVaultId) {
+        try {
+          await window.vault.registryActivate(activeVaultId);
+        } catch {
+          /* Preserve prior UI on rollback failure. */
+        }
+      }
+      cancelVaultChange();
+      setVaultError(
+        error instanceof Error ? error.message : 'Unable to activate vault',
+      );
+    } finally {
+      navigationBusy.current = false;
+      vaultTransition.current = false;
+      setEntriesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const unsubscribeTab = window.vault.onSelectTabIndex((index) => {
+      if (pickerOpen) return;
+      const tab = visibleTabOrder(tabs, tabGroups, tabGroupAssignments)[index];
+      if (tab) {
+        if (tab.kind === 'note') void selectNote(tab.note.path);
+        else if (!navigationBusy.current) {
+          void (async () => {
+            if (!(await editorRef.current?.flush())) return;
+            const outgoing = editorRef.current?.snapshot();
+            if (outgoing)
+              setTabs((old) =>
+                old.map((item) =>
+                  item.kind === 'note' && item.note.path === outgoing.note.path
+                    ? outgoing
+                    : item,
+                ),
+              );
+            activateTab(tab);
+          })();
+        }
+      }
+    });
+    const unsubscribeVault = window.vault.onActivateVaultIndex((index) => {
+      if (pickerOpen) return;
+      const vault = visibleVaults[index];
+      if (vault) void activateVault(vault.id);
+    });
+    return () => {
+      unsubscribeTab();
+      unsubscribeVault();
+    };
+  }, [
+    tabs,
+    visibleVaults,
+    pickerOpen,
+    activePath,
+    vaultPath,
+    activeVaultId,
+    tabGroups,
+    tabGroupAssignments,
+  ]);
+
+  const removeVault = async (id: string) => {
+    if (id === activeVaultId) {
+      setVaultError('Switch to another vault before removing this one.');
+      return;
+    }
+    const vault = vaults.find((item) => item.id === id);
+    if (!vault || navigationBusy.current || vaultTransition.current) return;
+    if (
+      !window.confirm(
+        `Remove “${vault.name}” from the vault list? Its files will not be deleted.`,
+      )
+    )
+      return;
+    navigationBusy.current = true;
+    try {
+      await window.vault.registryRemove(id);
+      sessions.current.delete(id);
+      setVaults((old) => old.filter((item) => item.id !== id));
+      setVaultError(null);
+    } catch (error) {
+      setVaultError(
+        error instanceof Error ? error.message : 'Unable to remove vault',
+      );
+    } finally {
+      navigationBusy.current = false;
+    }
+  };
+
+  const addVault = async () => {
+    if (navigationBusy.current || !beginVaultChange()) return;
+    navigationBusy.current = true;
+    try {
+      if (!(await editorRef.current?.flush())) {
+        cancelVaultChange();
+        return;
+      }
+      const selection = await window.vault.choose();
+      if (!selection.path) {
+        cancelVaultChange();
+        return;
+      }
+      const { vault } = await window.vault.registryAdd(selection.path);
+      setVaults((old) =>
+        old.some((item) => item.id === vault.id) ? old : [...old, vault],
+      );
+      navigationBusy.current = false;
+      cancelVaultChange();
+      await activateVault(vault.id);
+    } catch (error) {
+      cancelVaultChange();
+      setVaultError(
+        error instanceof Error ? error.message : 'Unable to add vault',
+      );
+    } finally {
+      navigationBusy.current = false;
+    }
+  };
+
+  useEffect(() => {
+    let current = true;
+    void window.vault
+      .registryList()
+      .then(async ({ vaults: registered, activeVaultId: active }) => {
+        const groups = await window.vault.groupsList();
+        if (!current) return;
+        setVaultGroups(groups);
+        if (!current) return;
+        setVaults(registered);
+        if (!active) return;
+        try {
+          const result = await window.vault.registryActivate(active);
+          if (!current) return;
+          if (!result.path)
+            throw new Error(
+              'Vault folder is unavailable. Choose or move the folder to recover.',
+            );
+          setActiveVaultId(active);
+          setVaultPath(result.path);
+          setEntriesLoading(true);
+          setNotes(await window.vault.listNotes());
+        } catch (error) {
+          if (current)
+            setVaultError(
+              error instanceof Error ? error.message : 'Unable to load vault',
+            );
+        } finally {
+          if (current) setEntriesLoading(false);
+        }
+      })
+      .catch((error) => {
+        if (current)
+          setVaultError(
+            error instanceof Error
+              ? error.message
+              : 'Unable to load vault registry',
+          );
+      });
+    return () => {
+      current = false;
+    };
+  }, []);
+
   return (
-    <main className="flex h-screen min-h-0 w-screen flex-col">
+    <main className="flex h-screen min-h-0 w-full min-w-0 flex-col">
+      {shortcutHelpOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget)
+              setShortcutHelpOpen(false);
+          }}
+        >
+          <section
+            ref={shortcutHelpDialog}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="shortcut-help-title"
+            className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-xl border border-white/15 bg-[#17191d] p-6 text-white shadow-2xl outline-none"
+            tabIndex={-1}
+          >
+            <div className="mb-5 flex items-center justify-between">
+              <h2 id="shortcut-help-title" className="text-lg font-semibold">
+                Keyboard shortcuts
+              </h2>
+              <button
+                autoFocus
+                onClick={() => setShortcutHelpOpen(false)}
+                className="rounded px-3 py-1 text-sm text-white/70 hover:bg-white/10 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <ShortcutGroup
+                title="Navigation"
+                items={[
+                  '1 / 2 / 3 — Focus Vaults / Explorer / Editor',
+                  ...(vimMode
+                    ? ['h / j / k / l — Navigate panes and files']
+                    : []),
+                  'Enter / l — Open focused item',
+                  ...(vimMode
+                    ? ['i — Enter insert mode', 'Esc — Return to normal mode']
+                    : []),
+                ]}
+              />
+              <ShortcutGroup
+                title="App"
+                items={[
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + 'T — New empty tab',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + 'N — New note',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘⇧'
+                    : 'Ctrl+Shift+') + 'N — New folder',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') +
+                    'P — Search notes' +
+                    (openFileShortcut ? '' : ' (disabled)'),
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') +
+                    'B — Toggle sidebar' +
+                    (toggleExplorerShortcut ? '' : ' (disabled)'),
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + ', — Settings',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘⇧'
+                    : 'Ctrl+Shift+') + 'M — Toggle preview',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + '1–9 — Select tab',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘⇧'
+                    : 'Ctrl+Shift+') + '1–9 — Select vault',
+                ]}
+              />
+            </div>
+            {vimMode && (
+              <p className="mt-5 text-xs text-white/50">
+                In Vim normal mode, ? opens this help instead of backward
+                search.
+              </p>
+            )}
+          </section>
+        </div>
+      )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-row">
+        <VaultSidebar
+          vaults={vaults}
+          groups={vaultGroups}
+          visibleVaults={visibleVaults}
+          onGroupsChange={setVaultGroups}
+          onVaultsChange={setVaults}
+          activeVaultId={activeVaultId}
+          onActivate={activateVault}
+          onAdd={addVault}
+          collapsed={explorerCollapsed}
+          onToggleExplorer={() => setExplorerCollapsed(false)}
+          toggleExplorerShortcut={toggleExplorerShortcut}
+          onRemove={removeVault}
+          error={vaultError}
+          commandHeld={commandHeld}
+          vimMode={vimMode}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
         <FileExplorer
+          vaultPath={vaultPath}
+          notes={notes}
+          loading={entriesLoading}
+          error={vaultError}
+          onAddVault={addVault}
           collapsed={explorerCollapsed}
           onToggleCollapsed={() =>
             setExplorerCollapsed((collapsed) => !collapsed)
           }
-          onNotesChange={setNotes}
           onNoteSelect={selectNote}
-          onVaultChange={() => {
-            void changeVault();
+          onCreate={beginCreate}
+          onCreateNote={() => {
+            const path = activePath?.replace(/\\/g, '/') ?? '';
+            beginCreate(
+              'note',
+              path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '',
+            );
           }}
-          onVaultPath={setVaultPath}
-          beforeVaultChange={() =>
-            editorRef.current?.flush() ?? Promise.resolve(true)
-          }
+          creationPending={creationPending}
           vimMode={vimMode}
           onVimModeChange={setVimMode}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
           openFileShortcut={openFileShortcut}
           onOpenFileShortcutChange={setOpenFileShortcut}
           toggleExplorerShortcut={toggleExplorerShortcut}
@@ -264,34 +1180,46 @@ function App() {
           onToggleExplorerShortcutChange={setToggleExplorerShortcut}
           selectedPath={activePath}
         />
-        {explorerCollapsed && (
-          <button
-            type="button"
-            aria-label="Show file explorer"
-            aria-expanded={false}
-            title="Show file explorer (⌘/Ctrl+B)"
-            onClick={() => setExplorerCollapsed(false)}
-            className="absolute left-3 top-3 z-10 rounded-md bg-black/50 p-2 text-white/75 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
-          >
-            <RiMenuUnfold4Fill aria-hidden="true" className="h-4 w-4" />
-            <ShortcutHint visible={commandHeld && toggleExplorerShortcut}>
-              {navigator.platform.toLowerCase().includes('mac')
-                ? '⌘B'
-                : 'Ctrl+B'}
-            </ShortcutHint>
-          </button>
-        )}
         <Editor
           ref={editorRef}
           vimMode={vimMode}
+          vaultId={activeVaultId}
           tabs={
             <TabBar
+              commandHeld={commandHeld}
               tabs={tabs}
-              activePath={activePath}
-              onSelect={selectNote}
-              onClose={(path) => {
-                void closeTab(path);
+              activeId={activeId}
+              onSelect={(tab) =>
+                tab.kind === 'note'
+                  ? void selectNote(tab.note.path)
+                  : void (async () => {
+                      if (!(await editorRef.current?.flush())) return;
+                      const outgoing = editorRef.current?.snapshot();
+                      if (outgoing)
+                        setTabs((old) =>
+                          old.map((item) =>
+                            item.kind === 'note' &&
+                            item.note.path === outgoing.note.path
+                              ? outgoing
+                              : item,
+                          ),
+                        );
+                      activateTab(tab);
+                    })()
+              }
+              onClose={(tab) => {
+                void closeTab(tab);
               }}
+              onNew={() => {
+                void createEmptyTab();
+              }}
+              groups={tabGroups}
+              assignments={tabGroupAssignments}
+              onGroupsChange={setTabGroups}
+              onAssignmentsChange={setTabGroupAssignments}
+              onMoveTab={onMoveTab}
+              onMoveGroup={onMoveGroup}
+              vaultId={activeVaultId}
             />
           }
         />
@@ -363,6 +1291,61 @@ function App() {
               ↑↓ to navigate · Enter to open · Esc to close
             </p>
           </section>
+        </div>
+      )}
+      {creation && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !creationPending)
+              setCreation(null);
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-title"
+            onSubmit={submitCreation}
+            className="w-full max-w-sm rounded-xl border border-white/15 bg-[#202124] p-5 text-white shadow-2xl"
+          >
+            <h2 id="create-title" className="mb-3 text-lg font-semibold">
+              New {creation.kind === 'note' ? 'Markdown note' : 'folder'}
+            </h2>
+            <p className="mb-4 truncate text-xs text-white/55">
+              In {creation.vaultName}
+              {creation.parent ? ` / ${creation.parent}` : ''}
+            </p>
+            <label className="block text-sm">
+              Name
+              <input
+                autoFocus
+                value={creationName}
+                onChange={(event) => setCreationName(event.target.value)}
+                className="mt-1 w-full rounded border border-white/20 bg-black/30 px-3 py-2 outline-none focus:border-blue-400"
+              />
+            </label>
+            {creationError && (
+              <p role="alert" className="mt-2 text-sm text-red-300">
+                {creationError}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={creationPending}
+                onClick={() => setCreation(null)}
+                className="rounded px-3 py-2 text-sm hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={creationPending || !creationName.trim()}
+                className="rounded bg-blue-600 px-3 py-2 text-sm disabled:opacity-50"
+              >
+                {creationPending ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </main>
