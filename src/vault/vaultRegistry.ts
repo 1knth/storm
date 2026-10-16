@@ -9,7 +9,12 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
-import { groupColorForId, isGroupColor, type GroupColor } from '../shared/groupColors';
+import {
+  groupColorForId,
+  isGroupColor,
+  type GroupColor,
+} from '../shared/groupColors';
+import type { SavedTabLayout } from '../shared/types';
 
 export interface RegisteredVault {
   id: string;
@@ -30,9 +35,80 @@ interface Settings extends Record<string, unknown> {
   activeVaultId?: string | null;
   lastVaultPath?: string;
   vaultGroups?: VaultGroup[];
+  savedTabLayouts?: Record<string, SavedTabLayout>;
 }
 
 const MAX_GROUP_NAME_LENGTH = 80;
+
+function isSavedTabLayout(value: unknown): value is SavedTabLayout {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const layout = value as SavedTabLayout;
+  if (
+    layout.version !== 1 ||
+    !Array.isArray(layout.tabs) ||
+    layout.tabs.length > 200 ||
+    !Array.isArray(layout.groups) ||
+    layout.groups.length > 100 ||
+    !layout.assignments ||
+    typeof layout.assignments !== 'object' ||
+    Array.isArray(layout.assignments)
+  )
+    return false;
+  const ids = new Set<string>();
+  for (const tab of layout.tabs) {
+    if (tab.kind === 'empty') {
+      if (
+        typeof tab.id !== 'string' ||
+        !tab.id ||
+        tab.id.length > 100 ||
+        ids.has(tab.id)
+      )
+        return false;
+      ids.add(tab.id);
+    } else if (tab.kind === 'note') {
+      if (
+        typeof tab.path !== 'string' ||
+        !tab.path ||
+        tab.path.length > 1000 ||
+        tab.path.startsWith('/') ||
+        tab.path.split(/[\\/]/).includes('..') ||
+        !Number.isSafeInteger(tab.anchor) ||
+        tab.anchor < 0 ||
+        !Number.isSafeInteger(tab.head) ||
+        tab.head < 0 ||
+        !Number.isFinite(tab.scrollTop) ||
+        tab.scrollTop < 0 ||
+        tab.scrollTop > 10_000_000 ||
+        ids.has(tab.path)
+      )
+        return false;
+      ids.add(tab.path);
+    } else return false;
+  }
+  const groupIds = new Set<string>();
+  for (const group of layout.groups) {
+    if (
+      !group ||
+      typeof group.id !== 'string' ||
+      !group.id ||
+      groupIds.has(group.id) ||
+      typeof group.name !== 'string' ||
+      group.name.length > 80 ||
+      typeof group.collapsed !== 'boolean' ||
+      (group.color !== undefined && !isGroupColor(group.color))
+    )
+      return false;
+    groupIds.add(group.id);
+  }
+  if (layout.activeTab !== null && typeof layout.activeTab !== 'string')
+    return false;
+  return (
+    Object.entries(layout.assignments).length <= 200 &&
+    Object.entries(layout.assignments).every(
+      ([tabId, groupId]) => ids.has(tabId) && groupIds.has(groupId),
+    )
+  );
+}
 
 function validateGroupName(name: string): string {
   if (typeof name !== 'string') throw new Error('Group name must be text');
@@ -90,7 +166,12 @@ export class VaultRegistry {
     const groups = this.settings.vaultGroups ?? [];
     validateUniqueName(trimmed, groups);
     const id = randomUUID();
-    const group = { id, name: trimmed, collapsed: false, color: groupColorForId(id) };
+    const group = {
+      id,
+      name: trimmed,
+      collapsed: false,
+      color: groupColorForId(id),
+    };
     await this.update({ ...this.settings, vaultGroups: [...groups, group] });
     return { ...group };
   }
@@ -120,7 +201,12 @@ export class VaultRegistry {
       );
 
     const id = randomUUID();
-    const group = { id, name: trimmed, collapsed: false, color: groupColorForId(id) };
+    const group = {
+      id,
+      name: trimmed,
+      collapsed: false,
+      color: groupColorForId(id),
+    };
     const vaults = [...(this.settings.vaults ?? [])];
     for (const childPath of childPaths) {
       const existing = vaults.find((vault) => vault.path === childPath);
@@ -218,6 +304,27 @@ export class VaultRegistry {
     });
   }
 
+  async getTabLayout(vaultId: string): Promise<SavedTabLayout | null> {
+    await this.load();
+    if (!(this.settings.vaults ?? []).some((vault) => vault.id === vaultId))
+      throw new Error('Unknown vault');
+    return this.settings.savedTabLayouts?.[vaultId] ?? null;
+  }
+
+  async saveTabLayout(vaultId: string, layout: SavedTabLayout): Promise<void> {
+    await this.load();
+    if (!(this.settings.vaults ?? []).some((vault) => vault.id === vaultId))
+      throw new Error('Unknown vault');
+    if (!isSavedTabLayout(layout)) throw new Error('Invalid saved tab layout');
+    const layouts = {
+      ...(this.settings.savedTabLayouts ?? {}),
+      [vaultId]: layout,
+    };
+    if (JSON.stringify(layouts).length > 1_000_000)
+      throw new Error('Saved tab layouts exceed the size limit');
+    await this.update({ ...this.settings, savedTabLayouts: layouts });
+  }
+
   async getById(id: string): Promise<RegisteredVault | null> {
     await this.load();
     return (
@@ -262,6 +369,11 @@ export class VaultRegistry {
     const next = {
       ...this.settings,
       vaults: vaults.filter((vault) => vault.id !== id),
+      savedTabLayouts: Object.fromEntries(
+        Object.entries(this.settings.savedTabLayouts ?? {}).filter(
+          ([key]) => key !== id,
+        ),
+      ),
     };
     if (next.activeVaultId === id) next.activeVaultId = null;
     await this.update(next);

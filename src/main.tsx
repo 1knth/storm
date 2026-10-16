@@ -16,6 +16,8 @@ import {
   visibleTabOrder,
 } from './components/Editor/tabGroups';
 import type { TabAssignments, TabGroup } from './components/Editor/tabGroups';
+import { serializeTabLayout } from './components/Editor/savedTabLayout';
+import { ToastProvider, useToast } from './components/Toast';
 
 function ShortcutGroup({ title, items }: { title: string; items: string[] }) {
   return (
@@ -52,10 +54,14 @@ const hasOpenModal = () =>
   ).some((dialog) => isEligibleFocusTarget(dialog));
 
 function App() {
+  const { notifyError } = useToast();
   const editorRef = useRef<EditorHandle>(null);
   const navigationBusy = useRef(false);
   const vaultTransition = useRef(false);
   const noteRequestId = useRef(0);
+  const visitedVaults = useRef(new Set<string>());
+  const checkpointTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const checkpointInFlight = useRef<Promise<void> | null>(null);
   const sessions = useRef(
     new Map<
       string,
@@ -80,35 +86,120 @@ function App() {
   const [activeVaultId, setActiveVaultId] = useState<string | null>(null);
   const activeVaultIdRef = useRef<string | null>(null);
   const tabsRef = useRef(tabs);
+  const activeIdRef = useRef(activeId);
   const groupsRef = useRef(tabGroups);
   const assignmentsRef = useRef(tabGroupAssignments);
   activeVaultIdRef.current = activeVaultId;
   tabsRef.current = tabs;
+  activeIdRef.current = activeId;
   groupsRef.current = tabGroups;
   assignmentsRef.current = tabGroupAssignments;
 
-  const onMoveTab = (vaultId: string, tabId: string, groupId: string | null, beforeTabId: string | null) => {
+  const scheduleCheckpoint = () => {
+    if (checkpointTimer.current) clearTimeout(checkpointTimer.current);
+    checkpointTimer.current = setTimeout(() => {
+      checkpointTimer.current = null;
+      const save = async () => {
+        for (const vaultId of visitedVaults.current) {
+          const session = sessions.current.get(vaultId);
+          if (!session) continue;
+          await window.vault.saveTabLayout(
+            vaultId,
+            serializeTabLayout(
+              session.tabs,
+              session.activeId,
+              session.groups,
+              session.assignments,
+              new Map(session.tabs.map((tab) => [getTabId(tab), tab])),
+            ),
+          );
+        }
+      };
+      checkpointInFlight.current = (
+        checkpointInFlight.current ?? Promise.resolve()
+      )
+        .then(save)
+        .catch((error) => {
+          setVaultError(
+            `Could not save tab layout: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+    }, 1000);
+  };
+  const rememberCurrentSession = (vaultId: string) => {
+    const latest = editorRef.current?.snapshot();
+    const currentTabs = latest
+      ? tabsRef.current.map((tab) =>
+          tab.kind === 'note' && tab.note.path === latest.note.path
+            ? latest
+            : tab,
+        )
+      : tabsRef.current;
+    sessions.current.set(vaultId, {
+      tabs: currentTabs,
+      activeId: activeIdRef.current,
+      groups: groupsRef.current,
+      assignments: assignmentsRef.current,
+    });
+    scheduleCheckpoint();
+  };
+
+  useEffect(() => {
+    const vaultId = activeVaultIdRef.current;
+    if (vaultId && visitedVaults.current.has(vaultId))
+      rememberCurrentSession(vaultId);
+  }, [tabs, activeId, tabGroups, tabGroupAssignments]);
+
+  const onMoveTab = (
+    vaultId: string,
+    tabId: string,
+    groupId: string | null,
+    beforeTabId: string | null,
+  ) => {
     if (!vaultId || activeVaultIdRef.current !== vaultId) return;
-    const moved = moveTab(tabsRef.current, groupsRef.current, assignmentsRef.current, tabId, groupId, beforeTabId);
+    const moved = moveTab(
+      tabsRef.current,
+      groupsRef.current,
+      assignmentsRef.current,
+      tabId,
+      groupId,
+      beforeTabId,
+    );
     if (!moved) return;
+    visitedVaults.current.add(vaultId);
     tabsRef.current = moved.tabs;
     assignmentsRef.current = moved.assignments;
     setTabs(moved.tabs);
     setTabGroupAssignments(moved.assignments);
+    rememberCurrentSession(vaultId);
     if (groupId) {
-      const nextGroups = groupsRef.current.map((group) => group.id === groupId && group.collapsed ? { ...group, collapsed: false } : group);
+      const nextGroups = groupsRef.current.map((group) =>
+        group.id === groupId && group.collapsed
+          ? { ...group, collapsed: false }
+          : group,
+      );
       groupsRef.current = nextGroups;
       setTabGroups(nextGroups);
     }
   };
-  const onMoveGroup = (vaultId: string, groupId: string, beforeGroupId: string | null) => {
+  const onMoveGroup = (
+    vaultId: string,
+    groupId: string,
+    beforeGroupId: string | null,
+  ) => {
     if (!vaultId || activeVaultIdRef.current !== vaultId) return;
     const nextGroups = moveTabGroup(groupsRef.current, groupId, beforeGroupId);
     if (!nextGroups) return;
     groupsRef.current = nextGroups;
     setTabGroups(nextGroups);
+    visitedVaults.current.add(vaultId);
+    rememberCurrentSession(vaultId);
   };
-  const [vaultError, setVaultError] = useState<string | null>(null);
+  const [vaultError, setVaultErrorState] = useState<string | null>(null);
+  const setVaultError = (message: string | null) => {
+    setVaultErrorState(message);
+    if (message) notifyError(message);
+  };
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const lastPane = useRef<'vaults' | 'explorer' | 'editor'>('editor');
@@ -129,7 +220,6 @@ function App() {
     vaultName: string;
   } | null>(null);
   const [creationName, setCreationName] = useState('');
-  const [creationError, setCreationError] = useState<string | null>(null);
   const [creationPending, setCreationPending] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const pickerInputRef = useRef<HTMLInputElement>(null);
@@ -286,6 +376,30 @@ function App() {
           let ok = false;
           try {
             ok = (await editorRef.current?.flush()) ?? true;
+            if (ok) {
+              if (checkpointTimer.current) {
+                clearTimeout(checkpointTimer.current);
+                checkpointTimer.current = null;
+              }
+              const currentVault = activeVaultIdRef.current;
+              if (currentVault && visitedVaults.current.has(currentVault))
+                rememberCurrentSession(currentVault);
+              await checkpointInFlight.current;
+              for (const vaultId of visitedVaults.current) {
+                const session = sessions.current.get(vaultId);
+                if (!session) continue;
+                await window.vault.saveTabLayout(
+                  vaultId,
+                  serializeTabLayout(
+                    session.tabs,
+                    session.activeId,
+                    session.groups,
+                    session.assignments,
+                    new Map(session.tabs.map((tab) => [getTabId(tab), tab])),
+                  ),
+                );
+              }
+            }
           } catch {
             ok = false;
           }
@@ -311,14 +425,12 @@ function App() {
         'Vault',
     });
     setCreationName('');
-    setCreationError(null);
   };
 
   const submitCreation = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!creation || creationPending) return;
     setCreationPending(true);
-    setCreationError(null);
     let created = false;
     try {
       if (!(await editorRef.current?.flush()))
@@ -350,9 +462,9 @@ function App() {
           `Created successfully, but could not finish updating the view: ${error instanceof Error ? error.message : String(error)}`,
         );
       } else {
-        setCreationError(
-          error instanceof Error ? error.message : 'Unable to create entry.',
-        );
+        const message =
+          error instanceof Error ? error.message : 'Unable to create entry.';
+        notifyError(message);
       }
     } finally {
       setCreationPending(false);
@@ -447,47 +559,11 @@ function App() {
       pendingExplorerFocus.current = false;
       focusExplorerRow();
     };
-    const onPaneKeyDown = (event: KeyboardEvent) => {
-      if (
-        !['1', '2', '3'].includes(event.key) ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.shiftKey
-      )
-        return;
-      const target = event.target as HTMLElement;
-      if (
-        hasOpenModal() ||
-        target.closest(
-          '[role="dialog"], [role="menu"], [role="search"], input, textarea, select',
-        ) ||
-        (target.closest('[contenteditable="true"]') &&
-          !target.closest('[data-pane="editor"]'))
-      )
-        return;
-      const activeTab = tabs.find(
-        (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) === activeId,
-      );
-      const emptyEditor = !activeTab || activeTab.kind === 'empty';
-      const pane = target.closest<HTMLElement>('[data-pane]');
-      const paneName = pane?.dataset.pane ?? lastPane.current;
-      if (vimMode) {
-        if (
-          (paneName === 'editor' && !editorRef.current?.isNormalMode()) ||
-          (!pane && !lastPane.current)
-        )
-          return;
-      } else if (!emptyEditor) return;
-      event.preventDefault();
-      event.stopPropagation();
-      focusPane(
-        ({ '1': 'vaults', '2': 'explorer', '3': 'editor' } as const)[event.key],
-      );
-    };
-    window.addEventListener('keydown', onPaneKeyDown, true);
-    return () => window.removeEventListener('keydown', onPaneKeyDown, true);
-  }, [vimMode, explorerCollapsed, activePath, tabs, activeId]);
+    return window.vault.onFocusPane((paneName) => {
+      if (hasOpenModal()) return;
+      focusPane(paneName);
+    });
+  }, [explorerCollapsed, activePath]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -608,6 +684,129 @@ function App() {
     creationPending,
   ]);
 
+  const restoreSavedTabs = async () => {
+    const vaultId = activeVaultIdRef.current;
+    const root = vaultPath;
+    if (
+      !vaultId ||
+      !root ||
+      navigationBusy.current ||
+      vaultTransition.current ||
+      pickerOpen ||
+      creation ||
+      settingsOpen ||
+      shortcutHelpOpen
+    )
+      return;
+    if (
+      tabsRef.current.length &&
+      !window.confirm('Replace the current tabs with the saved layout?')
+    )
+      return;
+    navigationBusy.current = true;
+    const requestId = ++noteRequestId.current;
+    try {
+      if (!(await editorRef.current?.flush())) return;
+      if (
+        requestId !== noteRequestId.current ||
+        activeVaultIdRef.current !== vaultId
+      )
+        return;
+      const layout = await window.vault.getTabLayout(vaultId);
+      if (!layout) {
+        setVaultError('No saved tab layout for this vault.');
+        return;
+      }
+      const restored: TabSnapshot[] = [];
+      for (const item of layout.tabs) {
+        if (item.kind === 'empty') {
+          restored.push({ kind: 'empty', id: item.id });
+          continue;
+        }
+        try {
+          const note = await window.vault.readNote(item.path);
+          if (
+            requestId !== noteRequestId.current ||
+            activeVaultIdRef.current !== vaultId
+          )
+            return;
+          const state = editorRef.current!.createState(note.content);
+          const length = state.doc.length;
+          const safe = (position: number) =>
+            Math.max(0, Math.min(length, position));
+          const nextState = state.update({
+            selection: { anchor: safe(item.anchor), head: safe(item.head) },
+          }).state;
+          restored.push({
+            kind: 'note',
+            note,
+            vaultPath: root,
+            vaultId,
+            state: nextState,
+            scrollTop: Math.max(0, item.scrollTop),
+          });
+        } catch {
+          /* Missing/unreadable notes are skipped without blocking other tabs. */
+        }
+      }
+      if (
+        !restored.length &&
+        layout.tabs.some((item) => item.kind === 'note')
+      ) {
+        setVaultError(
+          'No saved notes could be restored; current tabs were kept.',
+        );
+        return;
+      }
+      const groups = layout.groups.map((group) => ({ ...group }) as TabGroup);
+      const ids = restored.map(getTabId);
+      const assignments = cleanTabAssignments(layout.assignments, ids, groups);
+      const selected =
+        restored.find((tab) => getTabId(tab) === layout.activeTab) ??
+        restored[0] ??
+        null;
+      tabsRef.current = restored;
+      groupsRef.current = groups;
+      assignmentsRef.current = assignments;
+      setTabs(restored);
+      setTabGroups(groups);
+      setTabGroupAssignments(assignments);
+      if (selected) {
+        editorRef.current?.activate(selected);
+        setActiveId(getTabId(selected));
+        setActivePath(selected.kind === 'note' ? selected.note.path : null);
+      } else {
+        editorRef.current?.clear();
+        setActiveId(null);
+        setActivePath(null);
+      }
+      visitedVaults.current.add(vaultId);
+      rememberCurrentSession(vaultId);
+      setVaultError(null);
+    } catch (error) {
+      setVaultError(
+        error instanceof Error ? error.message : 'Unable to restore saved tabs',
+      );
+    } finally {
+      navigationBusy.current = false;
+    }
+  };
+
+  useEffect(
+    () =>
+      window.vault.onRestoreTabs(() => {
+        void restoreSavedTabs();
+      }),
+    [
+      activeVaultId,
+      vaultPath,
+      pickerOpen,
+      creation,
+      settingsOpen,
+      shortcutHelpOpen,
+    ],
+  );
+
   const selectNote = async (path: string, focusEditor = true) => {
     if (path === activePath) {
       if (focusEditor) editorRef.current?.focus();
@@ -648,6 +847,7 @@ function App() {
       const note = await window.vault.readNote(path);
       if (requestId !== noteRequestId.current) return;
       if (!activeVaultId) return;
+      visitedVaults.current.add(activeVaultId);
       editorRef.current?.openNote(note, vaultPath, activeVaultId);
       if (focusEditor) editorRef.current?.focus();
       const fresh = editorRef.current?.snapshot();
@@ -710,6 +910,7 @@ function App() {
               : tab,
           ),
         );
+      if (activeVaultId) visitedVaults.current.add(activeVaultId);
       const empty: TabSnapshot = { kind: 'empty', id: crypto.randomUUID() };
       const inheritedGroup = activeId
         ? tabGroupAssignments[activeId]
@@ -728,6 +929,7 @@ function App() {
   const closeTab = async (target: TabSnapshot) => {
     if (navigationBusy.current) return;
     const targetId = target.kind === 'note' ? target.note.path : target.id;
+    if (activeVaultId) visitedVaults.current.add(activeVaultId);
     if (targetId !== activeId) {
       setTabs((old) =>
         old.filter(
@@ -797,6 +999,12 @@ function App() {
       }
       const outgoing = editorRef.current?.snapshot();
       if (activeVaultId) {
+        if (
+          tabs.length ||
+          tabGroups.length ||
+          Object.keys(tabGroupAssignments).length
+        )
+          visitedVaults.current.add(activeVaultId);
         const outgoingTabs = outgoing
           ? tabs.map((tab) =>
               tab.kind === 'note' && tab.note.path === outgoing.note.path
@@ -810,6 +1018,7 @@ function App() {
           groups: tabGroups,
           assignments: tabGroupAssignments,
         });
+        scheduleCheckpoint();
       }
       const activated = await window.vault.registryActivate(id);
       if (!activated.path)
@@ -1074,11 +1283,14 @@ function App() {
               <ShortcutGroup
                 title="Navigation"
                 items={[
-                  '1 / 2 / 3 — Focus Vaults / Explorer / Editor',
+                  navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘J / ⌘K / ⌘L — Focus Vaults / Explorer / Editor'
+                    : 'Alt+1 / Alt+2 / Alt+3 — Focus Vaults / Explorer / Editor',
                   ...(vimMode
                     ? ['h / j / k / l — Navigate panes and files']
                     : []),
                   'Enter / l — Open focused item',
+                  '⌘⇧T / Ctrl+Shift+T — Restore saved tabs',
                   ...(vimMode
                     ? ['i — Enter insert mode', 'Esc — Return to normal mode']
                     : []),
@@ -1116,7 +1328,7 @@ function App() {
                     ? '⌘'
                     : 'Ctrl') + '1–9 — Select tab',
                   (navigator.platform.toLowerCase().includes('mac')
-                    ? '⌘⇧'
+                    ? '⌃⇧'
                     : 'Ctrl+Shift+') + '1–9 — Select vault',
                 ]}
               />
@@ -1184,6 +1396,24 @@ function App() {
           ref={editorRef}
           vimMode={vimMode}
           vaultId={activeVaultId}
+          onLayoutChange={() => {
+            const vaultId = activeVaultIdRef.current;
+            const latest = editorRef.current?.snapshot();
+            if (!vaultId || !latest) return;
+            visitedVaults.current.add(vaultId);
+            const currentTabs = tabsRef.current.map((tab) =>
+              tab.kind === 'note' && tab.note.path === latest.note.path
+                ? latest
+                : tab,
+            );
+            sessions.current.set(vaultId, {
+              tabs: currentTabs,
+              activeId: activeIdRef.current,
+              groups: groupsRef.current,
+              assignments: assignmentsRef.current,
+            });
+            scheduleCheckpoint();
+          }}
           tabs={
             <TabBar
               commandHeld={commandHeld}
@@ -1215,8 +1445,22 @@ function App() {
               }}
               groups={tabGroups}
               assignments={tabGroupAssignments}
-              onGroupsChange={setTabGroups}
-              onAssignmentsChange={setTabGroupAssignments}
+              onGroupsChange={(groups) => {
+                setTabGroups(groups);
+                groupsRef.current = groups;
+                if (activeVaultId) {
+                  visitedVaults.current.add(activeVaultId);
+                  rememberCurrentSession(activeVaultId);
+                }
+              }}
+              onAssignmentsChange={(assignments) => {
+                setTabGroupAssignments(assignments);
+                assignmentsRef.current = assignments;
+                if (activeVaultId) {
+                  visitedVaults.current.add(activeVaultId);
+                  rememberCurrentSession(activeVaultId);
+                }
+              }}
               onMoveTab={onMoveTab}
               onMoveGroup={onMoveGroup}
               vaultId={activeVaultId}
@@ -1324,11 +1568,6 @@ function App() {
                 className="mt-1 w-full rounded border border-white/20 bg-black/30 px-3 py-2 outline-none focus:border-blue-400"
               />
             </label>
-            {creationError && (
-              <p role="alert" className="mt-2 text-sm text-red-300">
-                {creationError}
-              </p>
-            )}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
@@ -1351,4 +1590,8 @@ function App() {
     </main>
   );
 }
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(
+  <ToastProvider>
+    <App />
+  </ToastProvider>,
+);

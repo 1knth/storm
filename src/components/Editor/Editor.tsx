@@ -20,6 +20,7 @@ import {
 import type { NoteData } from '../../shared/types';
 import { markdownEditorExtensions } from './extensions';
 import MarkdownPreview from './MarkdownPreview';
+import { useToast } from '../Toast';
 
 export type NoteTabSnapshot = {
   kind: 'note';
@@ -40,17 +41,19 @@ export type EditorHandle = {
   clear: () => void;
   focus: () => void;
   isNormalMode: () => boolean;
-}
+};
 type EditorProps = {
   vimMode: boolean;
   tabs: ReactNode;
   vaultId: string | null;
+  onLayoutChange?: () => void;
 };
 
 const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
-  { vimMode, tabs, vaultId },
+  { vimMode, tabs, vaultId, onLayoutChange },
   ref,
 ) {
+  const { notifyError } = useToast();
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const vimCompartment = useRef(new Compartment());
@@ -65,6 +68,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inFlight = useRef<Promise<boolean> | null>(null);
   const blocked = useRef(false);
+  const onLayoutChangeRef = useRef(onLayoutChange);
+  onLayoutChangeRef.current = onLayoutChange;
   const [status, setStatus] = useState('');
   const [preview, setPreview] = useState<{
     vaultId: string;
@@ -128,11 +133,14 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       .catch((cause: unknown) => {
         if (current.current === active) {
           blocked.current = true;
-          setStatus(
-            cause instanceof Error &&
-              /changed outside|revision/i.test(cause.message)
-              ? 'Conflict — reload before saving'
-              : 'Save failed — changes kept in editor',
+          const message =
+            cause instanceof Error ? cause.message : 'Unable to save note.';
+          setStatus('Unsaved');
+          notifyError(
+            /changed outside|revision/i.test(message)
+              ? `Save conflict: ${message} Reload the note before saving again.`
+              : `Could not save note: ${message}`,
+            true,
           );
         }
         return false;
@@ -233,9 +241,17 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       else if (current.current) pendingFocus.current = true;
     },
     isNormalMode: () => {
-      const state = viewRef.current?.state as (EditorState & { vim?: { insertMode?: boolean; visualMode?: boolean } }) | undefined;
+      const state = viewRef.current?.state as
+        | (EditorState & {
+            vim?: { insertMode?: boolean; visualMode?: boolean };
+          })
+        | undefined;
       const vimState = state?.vim;
-      return !vimState || (!vimState.insertMode && !vimState.visualMode);
+      return Boolean(
+        vimState &&
+          vimState.insertMode === false &&
+          vimState.visualMode === false,
+      );
     },
     clear: () => {
       const view = viewRef.current;
@@ -274,8 +290,11 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       drawSelection({ cursorBlinkRate: 1000 }),
       highlightActiveLine(),
       EditorView.updateListener.of((update) => {
-        if (!update.docChanged) return;
         const active = current.current;
+        if (!active) return;
+        if (update.selectionSet || update.docChanged)
+          onLayoutChangeRef.current?.();
+        if (!update.docChanged) return;
         if (active) {
           setPreview({
             vaultId: active.vaultId,
@@ -309,7 +328,12 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       parent: host.current,
     });
     viewRef.current = view;
+    const onScroll = () => {
+      if (current.current) onLayoutChangeRef.current?.();
+    };
+    view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
     return () => {
+      view.scrollDOM.removeEventListener('scroll', onScroll);
       if (timer.current) clearTimeout(timer.current);
       view.destroy();
       viewRef.current = null;
@@ -323,7 +347,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   }, [vimMode]);
 
   return (
-    <section data-pane="editor" className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 p-4 text-white">
+    <section
+      data-pane="editor"
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 p-4 text-white"
+    >
       {tabs}
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-black/30 p-0">
         <div className="flex h-10 shrink-0 items-center justify-end px-3">
@@ -342,15 +369,19 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         </div>
         <div className="flex w-full min-h-0 min-w-0 flex-1 overflow-hidden">
           <div
-            className="pointer-events-none absolute bottom-2 right-4 z-10 text-xs text-white/60"
-            role="status"
+            className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${hasActiveNote ? '' : 'hidden'}`}
           >
-            {status}
+            <div
+              ref={host}
+              className="h-full min-h-0 min-w-0 overflow-hidden [&_.cm-editor]:h-full [&_.cm-editor]:min-h-0 [&_.cm-editor]:min-w-0 [&_.cm-scroller]:overflow-auto"
+            />
+            <div
+              className="pointer-events-none absolute bottom-2 right-3 z-10 text-xs text-white/60"
+              role="status"
+            >
+              {status}
+            </div>
           </div>
-          <div
-            ref={host}
-            className={`min-h-0 min-w-0 flex-1 overflow-hidden [&_.cm-editor]:h-full [&_.cm-editor]:min-h-0 [&_.cm-editor]:min-w-0 [&_.cm-scroller]:overflow-auto ${hasActiveNote ? '' : 'hidden'}`}
-          />
           {hasActiveNote &&
           previewVisible &&
           preview &&
@@ -366,7 +397,18 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
               <div className="text-2xl font-medium tracking-wide text-white/50">
                 storm
               </div>
-              <div className="text-sm text-white/30">cmd + p : search note</div>
+              <div className="flex items-center gap-2 text-sm text-white/30">
+                <span>search note</span>
+                <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs text-white/60">
+                  cmd + p
+                </kbd>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-white/30">
+                <span>restore last tabs</span>
+                <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs text-white/60">
+                  cmd + shift + t
+                </kbd>
+              </div>
             </div>
           ) : null}
         </div>

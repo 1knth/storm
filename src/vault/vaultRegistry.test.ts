@@ -92,6 +92,15 @@ test('persists groups, assignments and collapse state without changing vault fol
     await assert.rejects(registry.setGroupColor(group.id, 'not-a-color'));
     await registry.setGroupCollapsed(group.id, true);
     await registry.renameGroup(group.id, 'Projects');
+    const layout = {
+      version: 1 as const,
+      tabs: [{ kind: 'note' as const, path: 'note.md', anchor: 0, head: 2, scrollTop: 4 }],
+      activeTab: 'note.md',
+      groups: [{ id: 'tabs-group', name: 'Reading', collapsed: false }],
+      assignments: { 'note.md': 'tabs-group' },
+    };
+    await registry.saveTabLayout(vault.id, layout);
+    assert.deepEqual(await registry.getTabLayout(vault.id), layout);
 
     const reloaded = new VaultRegistry(temp);
     assert.deepEqual(await reloaded.listGroups(), [

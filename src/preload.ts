@@ -9,6 +9,7 @@ import type {
   VaultImageResult,
   CreateEntryRequest,
   VaultGroup,
+  SavedTabLayout,
 } from './shared/types';
 import type { GroupColor } from './shared/groupColors';
 
@@ -19,6 +20,15 @@ contextBridge.exposeInMainWorld('vault', {
   }> => ipcRenderer.invoke('vault:registry-list'),
   groupsList: (): Promise<VaultGroup[]> =>
     ipcRenderer.invoke('vault:groups-list'),
+  saveTabLayout: (vaultId: string, layout: SavedTabLayout): Promise<void> =>
+    ipcRenderer.invoke('vault:tab-layout-save', vaultId, layout),
+  getTabLayout: (vaultId: string): Promise<SavedTabLayout | null> =>
+    ipcRenderer.invoke('vault:tab-layout-get', vaultId),
+  onRestoreTabs: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('tabs:restore-saved', listener);
+    return () => ipcRenderer.removeListener('tabs:restore-saved', listener);
+  },
   groupFolderChoose: (): Promise<{
     selectionId: string;
     name: string;
@@ -108,6 +118,16 @@ contextBridge.exposeInMainWorld('vault', {
     };
     ipcRenderer.on('vaults:activate-index', listener);
     return () => ipcRenderer.removeListener('vaults:activate-index', listener);
+  },
+  onFocusPane: (
+    callback: (pane: 'vaults' | 'explorer' | 'editor') => void,
+  ): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, pane: unknown) => {
+      if (pane === 'vaults' || pane === 'explorer' || pane === 'editor')
+        callback(pane);
+    };
+    ipcRenderer.on('pane:focus', listener);
+    return () => ipcRenderer.removeListener('pane:focus', listener);
   },
   onTogglePreview: (callback: () => void): (() => void) => {
     const listener = () => callback();

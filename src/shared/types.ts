@@ -14,6 +14,28 @@ export interface VaultGroup {
   color?: GroupColor;
 }
 
+export type SavedTabLayout = {
+  version: 1;
+  tabs: Array<
+    | {
+        kind: 'note';
+        path: string;
+        anchor: number;
+        head: number;
+        scrollTop: number;
+      }
+    | { kind: 'empty'; id: string }
+  >;
+  activeTab: string | null;
+  groups: Array<{
+    id: string;
+    name: string;
+    collapsed: boolean;
+    color?: string;
+  }>;
+  assignments: Record<string, string>;
+};
+
 export interface NoteData {
   path: string;
   content: string;
@@ -64,6 +86,9 @@ declare global {
         activeVaultId: string | null;
       }>;
       groupsList: () => Promise<VaultGroup[]>;
+      saveTabLayout: (vaultId: string, layout: SavedTabLayout) => Promise<void>;
+      getTabLayout: (vaultId: string) => Promise<SavedTabLayout | null>;
+      onRestoreTabs: (callback: () => void) => () => void;
       groupFolderChoose: () => Promise<{
         selectionId: string;
         name: string;
@@ -100,6 +125,9 @@ declare global {
       onNewTab: (callback: () => void) => () => void;
       onOpenFile: (callback: () => void) => () => void;
       onToggleExplorer: (callback: () => void) => () => void;
+      onFocusPane: (
+        callback: (pane: 'vaults' | 'explorer' | 'editor') => void,
+      ) => () => void;
       onTogglePreview: (callback: () => void) => () => void;
       onSelectTabIndex: (callback: (index: number) => void) => () => void;
       onActivateVaultIndex: (callback: (index: number) => void) => () => void;

@@ -167,7 +167,10 @@ ipcMain.handle('vault:choose', async () => {
   }
 });
 
-const pendingGroupFolders = new Map<string, { directory: string; createdAt: number }>();
+const pendingGroupFolders = new Map<
+  string,
+  { directory: string; createdAt: number }
+>();
 const groupFolderCreatesInFlight = new Set<string>();
 const GROUP_FOLDER_SELECTION_TTL_MS = 10 * 60 * 1000;
 const MAX_PENDING_GROUP_FOLDERS = 20;
@@ -222,6 +225,20 @@ ipcMain.handle(
 
 ipcMain.handle('vault:registry-list', () => vaultRegistry.list());
 ipcMain.handle('vault:groups-list', () => vaultRegistry.listGroups());
+ipcMain.handle('vault:tab-layout-get', (_event, id: unknown) => {
+  if (typeof id !== 'string') throw new Error('Invalid vault ID');
+  return vaultRegistry.getTabLayout(id);
+});
+ipcMain.handle(
+  'vault:tab-layout-save',
+  (_event, id: unknown, layout: unknown) => {
+    if (typeof id !== 'string') throw new Error('Invalid vault ID');
+    return vaultRegistry.saveTabLayout(
+      id,
+      layout as import('./shared/types').SavedTabLayout,
+    );
+  },
+);
 ipcMain.handle('vault:group-create', (_event, name: unknown) => {
   if (typeof name !== 'string') throw new Error('Invalid group name');
   return vaultRegistry.createGroup(name);
@@ -246,10 +263,13 @@ ipcMain.handle(
     return vaultRegistry.setVaultGroup(vaultId, groupId);
   },
 );
-ipcMain.handle('vault:group-set-color', (_event, id: unknown, color: unknown) => {
-  if (typeof id !== 'string') throw new Error('Invalid vault group ID');
-  return vaultRegistry.setGroupColor(id, color);
-});
+ipcMain.handle(
+  'vault:group-set-color',
+  (_event, id: unknown, color: unknown) => {
+    if (typeof id !== 'string') throw new Error('Invalid vault group ID');
+    return vaultRegistry.setGroupColor(id, color);
+  },
+);
 ipcMain.handle(
   'vault:group-set-collapsed',
   (_event, id: unknown, collapsed: unknown) => {
@@ -438,6 +458,21 @@ app.whenReady().then(() => {
     {
       label: 'View',
       submenu: [
+        ...(['Vaults', 'File Explorer', 'Editor'] as const).map(
+          (label, index) => ({
+            label: `Focus ${label}`,
+            accelerator:
+              process.platform === 'darwin'
+                ? `CommandOrControl+${['J', 'K', 'L'][index]}`
+                : `Alt+${index + 1}`,
+            click: () =>
+              BrowserWindow.getFocusedWindow()?.webContents.send(
+                'pane:focus',
+                ['vaults', 'explorer', 'editor'][index],
+              ),
+          }),
+        ),
+        { type: 'separator' },
         { role: 'reload' },
         { role: 'forceReload' },
         { role: 'toggleDevTools' },
@@ -451,17 +486,28 @@ app.whenReady().then(() => {
     },
     {
       label: 'Tabs',
-      submenu: Array.from({ length: 9 }, (_, index) => ({
-        label: `Select Tab ${index + 1}`,
-        accelerator: `CommandOrControl+${index + 1}`,
-        click: () => sendIndexedShortcut('tabs:select-index', index),
-      })),
+      submenu: [
+        {
+          label: 'Restore Saved Tabs',
+          accelerator: 'CommandOrControl+Shift+T',
+          click: () =>
+            BrowserWindow.getFocusedWindow()?.webContents.send(
+              'tabs:restore-saved',
+            ),
+        },
+        { type: 'separator' },
+        ...Array.from({ length: 9 }, (_, index) => ({
+          label: `Select Tab ${index + 1}`,
+          accelerator: `CommandOrControl+${index + 1}`,
+          click: () => sendIndexedShortcut('tabs:select-index', index),
+        })),
+      ],
     },
     {
       label: 'Vaults',
       submenu: Array.from({ length: 9 }, (_, index) => ({
         label: `Activate Vault ${index + 1}`,
-        accelerator: `CommandOrControl+Shift+${index + 1}`,
+        accelerator: `Control+Shift+${index + 1}`,
         click: () => sendIndexedShortcut('vaults:activate-index', index),
       })),
     },

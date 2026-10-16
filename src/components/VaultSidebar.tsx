@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useToast } from './Toast';
 import ContextMenu from './ContextMenu';
 import type { ContextMenuItem, ContextMenuPosition } from './ContextMenu';
 import { contextMenuPointForElement, isContextMenuKey } from './ContextMenu';
@@ -60,7 +61,7 @@ export default function VaultSidebar({
     returnFocusTo: HTMLElement;
   } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [operationError, setOperationError] = useState<string | null>(null);
+  const { notifyError } = useToast();
   const formInput = useRef<HTMLInputElement>(null);
   const refresh = async () => {
     const [nextGroups, result] = await Promise.all([
@@ -72,12 +73,11 @@ export default function VaultSidebar({
   };
   const run = async (operation: () => Promise<unknown>) => {
     setBusy(true);
-    setOperationError(null);
     try {
       await operation();
       await refresh();
     } catch (cause) {
-      setOperationError(
+      notifyError(
         cause instanceof Error
           ? cause.message
           : 'Unable to update vault groups',
@@ -148,7 +148,8 @@ export default function VaultSidebar({
                     id: `color-${color}`,
                     label: `${color[0].toUpperCase()}${color.slice(1)}`,
                     color: value,
-                    selected: (group.color ?? groupColorForId(group.id)) === color,
+                    selected:
+                      (group.color ?? groupColorForId(group.id)) === color,
                     onSelect: () =>
                       void run(() =>
                         window.vault.groupSetColor(
@@ -222,7 +223,7 @@ export default function VaultSidebar({
             className="pointer-events-none absolute right-8 top-1/2 z-20 -translate-y-1/2 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white"
           >
             {navigator.platform.toLowerCase().includes('mac')
-              ? '⌘⇧'
+              ? '⌃⇧'
               : 'Ctrl+Shift+'}
             {index + 1}
           </span>
@@ -298,7 +299,6 @@ export default function VaultSidebar({
           <button
             type="button"
             onClick={() => {
-              setOperationError(null);
               setGroupForm({ name: '', mode: 'choose' });
             }}
             aria-label="Create group"
@@ -370,7 +370,6 @@ export default function VaultSidebar({
                 disabled={busy}
                 onClick={async () => {
                   setBusy(true);
-                  setOperationError(null);
                   try {
                     const selection = await window.vault.groupFolderChoose();
                     if (!selection) return;
@@ -382,7 +381,7 @@ export default function VaultSidebar({
                     });
                     requestAnimationFrame(() => formInput.current?.focus());
                   } catch (cause) {
-                    setOperationError(
+                    notifyError(
                       cause instanceof Error
                         ? cause.message
                         : 'Unable to select folder',
@@ -543,14 +542,7 @@ export default function VaultSidebar({
           }
         />
       )}
-      {operationError || error ? (
-        <p
-          role="alert"
-          className="mt-2 shrink-0 break-words text-xs text-red-300"
-        >
-          {operationError || error}
-        </p>
-      ) : vaults.length === 0 ? (
+      {!error && vaults.length === 0 ? (
         <p className="mt-2 shrink-0 text-xs text-white/40">
           Add a vault to get started.
         </p>

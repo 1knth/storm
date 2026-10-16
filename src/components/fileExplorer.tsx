@@ -102,14 +102,21 @@ export default function FileExplorer({
     parent: string;
     returnFocusTo: HTMLElement | null;
   } | null>(null);
-  const openContextMenu = (target: HTMLElement, position: ContextMenuPosition) => {
+  const openContextMenu = (
+    target: HTMLElement,
+    position: ContextMenuPosition,
+  ) => {
     const row = target.closest<HTMLElement>('[data-entry-path]');
     const path = row?.dataset.entryPath ?? '';
     const isFolder = row?.dataset.entryDirectory === 'true';
     const returnFocusTo =
       row?.querySelector<HTMLElement>('button') ??
       target.closest<HTMLElement>('[data-pane="explorer"]');
-    setContextMenu({ position, returnFocusTo, parent: !path || isFolder ? path : path.split('/').slice(0, -1).join('/') });
+    setContextMenu({
+      position,
+      returnFocusTo,
+      parent: !path || isFolder ? path : path.split('/').slice(0, -1).join('/'),
+    });
   };
 
   return (
@@ -119,7 +126,9 @@ export default function FileExplorer({
         tabIndex={-1}
         onKeyDown={(event) => {
           if (isContextMenuKey(event)) {
-            const row = (event.target as HTMLElement).closest<HTMLElement>('[data-entry-path]');
+            const row = (event.target as HTMLElement).closest<HTMLElement>(
+              '[data-entry-path]',
+            );
             if (row && event.currentTarget.contains(row)) {
               event.preventDefault();
               openContextMenu(row, contextMenuPointForElement(row));
@@ -169,7 +178,8 @@ export default function FileExplorer({
               }
             } else if (event.key !== 'h') {
               event.preventDefault();
-              if (event.key === 'Enter') onNoteSelect(row.dataset.entryPath ?? '', true);
+              if (event.key === 'Enter')
+                onNoteSelect(row.dataset.entryPath ?? '', true);
               else onNoteSelect(row.dataset.entryPath ?? '', false);
             } else {
               event.preventDefault();
@@ -182,7 +192,10 @@ export default function FileExplorer({
         }}
         onContextMenu={(event) => {
           event.preventDefault();
-          openContextMenu(event.target as HTMLElement, { x: event.clientX, y: event.clientY });
+          openContextMenu(event.target as HTMLElement, {
+            x: event.clientX,
+            y: event.clientY,
+          });
         }}
         className={`${collapsed ? 'hidden' : 'flex'} min-h-0 min-w-[240px] max-w-80 flex-[0_1_24vw] flex-col bg-black/50 p-3 text-white select-none`}
         style={{ width: 'clamp(260px, 24vw, 320px)' }}
@@ -204,7 +217,11 @@ export default function FileExplorer({
             <button
               type="button"
               aria-label={`New note (${navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'})`}
-              aria-keyshortcuts={navigator.platform.toLowerCase().includes('mac') ? 'Meta+N' : 'Control+N'}
+              aria-keyshortcuts={
+                navigator.platform.toLowerCase().includes('mac')
+                  ? 'Meta+N'
+                  : 'Control+N'
+              }
               title={`New note (${navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'})`}
               disabled={!vaultPath || creationPending}
               onClick={onCreateNote}
@@ -212,7 +229,9 @@ export default function FileExplorer({
             >
               <FaPlus aria-hidden="true" size={16} />
               <ShortcutHint visible={commandHeld}>
-                {navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'}
+                {navigator.platform.toLowerCase().includes('mac')
+                  ? '⌘N'
+                  : 'Ctrl+N'}
               </ShortcutHint>
             </button>
             <button
@@ -239,11 +258,6 @@ export default function FileExplorer({
         {loading && (
           <p className="mt-4 text-sm text-white/70">Loading notes…</p>
         )}
-        {error && (
-          <p role="alert" className="mt-4 text-sm text-red-300">
-            {error}
-          </p>
-        )}
         {!loading && !error && vaultPath && notes.length === 0 && (
           <p className="mt-4 text-sm text-white/70">No Markdown notes found.</p>
         )}
@@ -263,112 +277,123 @@ export default function FileExplorer({
         </ul>
       </aside>
 
-      {contextMenu && <ContextMenu position={contextMenu.position} returnFocusTo={contextMenu.returnFocusTo} onClose={() => setContextMenu(null)} items={(['note', 'folder'] as const).map((kind) => ({ id: `new-${kind}`, label: `New ${kind}`, onSelect: () => onCreate(kind, contextMenu.parent) }))} />}
+      {contextMenu && (
+        <ContextMenu
+          position={contextMenu.position}
+          returnFocusTo={contextMenu.returnFocusTo}
+          onClose={() => setContextMenu(null)}
+          items={(['note', 'folder'] as const).map((kind) => ({
+            id: `new-${kind}`,
+            label: `New ${kind}`,
+            onSelect: () => onCreate(kind, contextMenu.parent),
+          }))}
+        />
+      )}
       {settingsOpen &&
         createPortal(
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget)
-              onSettingsOpenChange(false);
-          }}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="settings-title"
-            className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#202124] p-6 text-white shadow-2xl"
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget)
+                onSettingsOpenChange(false);
+            }}
           >
-            <div className="mb-6 flex items-center justify-between">
-              <h2 id="settings-title" className="text-lg font-semibold">
-                Settings
-              </h2>
-              <button
-                type="button"
-                aria-label="Close settings"
-                onClick={() => onSettingsOpenChange(false)}
-                className="rounded-md px-2 py-1 text-white/60 hover:bg-white/10 hover:text-white"
-              >
-                ×
-              </button>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="font-medium">Vault</p>
-                <p className="mt-1 max-w-[15rem] break-all text-xs text-white/50">
-                  {vaultPath ?? 'No vault selected'}
-                </p>
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="settings-title"
+              className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#202124] p-6 text-white shadow-2xl"
+            >
+              <div className="mb-6 flex items-center justify-between">
+                <h2 id="settings-title" className="text-lg font-semibold">
+                  Settings
+                </h2>
+                <button
+                  type="button"
+                  aria-label="Close settings"
+                  onClick={() => onSettingsOpenChange(false)}
+                  className="rounded-md px-2 py-1 text-white/60 hover:bg-white/10 hover:text-white"
+                >
+                  ×
+                </button>
               </div>
-              <button
-                ref={changeVaultRef}
-                type="button"
-                onClick={() => {
-                  chooseVault();
-                  onSettingsOpenChange(false);
-                }}
-                disabled={loading}
-                className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
-              >
-                Change vault
-              </button>
-            </div>
-            <label className="mt-6 flex cursor-pointer items-center justify-between gap-4">
-              <span>
-                <span className="block font-medium">Vim keybindings</span>
-                <span className="mt-1 block text-xs text-white/50">
-                  Use Esc for normal mode and i to insert.
-                </span>
-              </span>
-              <input
-                type="checkbox"
-                checked={vimMode}
-                onChange={(event) => onVimModeChange(event.target.checked)}
-                className="h-4 w-4 accent-blue-500"
-              />
-            </label>
-            <div className="mt-6 space-y-4 border-t border-white/10 pt-4">
-              <label className="flex cursor-pointer items-center justify-between gap-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="font-medium">Vault</p>
+                  <p className="mt-1 max-w-[15rem] break-all text-xs text-white/50">
+                    {vaultPath ?? 'No vault selected'}
+                  </p>
+                </div>
+                <button
+                  ref={changeVaultRef}
+                  type="button"
+                  onClick={() => {
+                    chooseVault();
+                    onSettingsOpenChange(false);
+                  }}
+                  disabled={loading}
+                  className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
+                >
+                  Change vault
+                </button>
+              </div>
+              <label className="mt-6 flex cursor-pointer items-center justify-between gap-4">
                 <span>
-                  <span className="block text-sm font-medium">
-                    Open file shortcut
-                  </span>
+                  <span className="block font-medium">Vim keybindings</span>
                   <span className="mt-1 block text-xs text-white/50">
-                    ⌘/Ctrl + P
+                    Use Esc for normal mode and i to insert.
                   </span>
                 </span>
                 <input
                   type="checkbox"
-                  checked={openFileShortcut}
-                  onChange={(event) =>
-                    onOpenFileShortcutChange(event.target.checked)
-                  }
+                  checked={vimMode}
+                  onChange={(event) => onVimModeChange(event.target.checked)}
                   className="h-4 w-4 accent-blue-500"
                 />
               </label>
-              <label className="flex cursor-pointer items-center justify-between gap-4">
-                <span>
-                  <span className="block text-sm font-medium">
-                    Toggle file explorer shortcut
+              <div className="mt-6 space-y-4 border-t border-white/10 pt-4">
+                <label className="flex cursor-pointer items-center justify-between gap-4">
+                  <span>
+                    <span className="block text-sm font-medium">
+                      Open file shortcut
+                    </span>
+                    <span className="mt-1 block text-xs text-white/50">
+                      ⌘/Ctrl + P
+                    </span>
                   </span>
-                  <span className="mt-1 block text-xs text-white/50">
-                    ⌘/Ctrl + B
+                  <input
+                    type="checkbox"
+                    checked={openFileShortcut}
+                    onChange={(event) =>
+                      onOpenFileShortcutChange(event.target.checked)
+                    }
+                    className="h-4 w-4 accent-blue-500"
+                  />
+                </label>
+                <label className="flex cursor-pointer items-center justify-between gap-4">
+                  <span>
+                    <span className="block text-sm font-medium">
+                      Toggle file explorer shortcut
+                    </span>
+                    <span className="mt-1 block text-xs text-white/50">
+                      ⌘/Ctrl + B
+                    </span>
                   </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={toggleExplorerShortcut}
-                  onChange={(event) =>
-                    onToggleExplorerShortcutChange(event.target.checked)
-                  }
-                  className="h-4 w-4 accent-blue-500"
-                />
-              </label>
-              <p className="text-xs text-white/50">Open settings: ⌘ + ,</p>
-            </div>
-          </section>
-        </div>,
-        document.body,
-      )}
+                  <input
+                    type="checkbox"
+                    checked={toggleExplorerShortcut}
+                    onChange={(event) =>
+                      onToggleExplorerShortcutChange(event.target.checked)
+                    }
+                    className="h-4 w-4 accent-blue-500"
+                  />
+                </label>
+                <p className="text-xs text-white/50">Open settings: ⌘ + ,</p>
+              </div>
+            </section>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }
