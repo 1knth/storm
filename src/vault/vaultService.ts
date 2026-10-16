@@ -1,6 +1,7 @@
 import path from 'node:path';
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
-import type { NoteData, VaultEntry } from '../shared/types';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmod, lstat, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import type { NoteData, SaveNoteRequest, SaveNoteResult, VaultEntry } from '../shared/types';
 
 export class VaultService {
   private selectedVaultPath: string | null = null;
@@ -66,8 +67,39 @@ export class VaultService {
     }
     if (!stat.isFile() || !realNotePath.toLowerCase().endsWith('.md')) throw new Error('Not a Markdown note');
 
-    return { path: segments.join('/'), content: await readFile(realNotePath, 'utf8') };
+    const content = await readFile(realNotePath, 'utf8');
+    return { path: segments.join('/'), content, revision: revisionOf(content) };
   }
+
+  async saveNote(request: unknown): Promise<SaveNoteResult> {
+    if (!request || typeof request !== 'object') throw new Error('Invalid save request');
+    const { vaultPath, path: relativePath, content, revision } = request as SaveNoteRequest;
+    const root = this.selectedVaultPath;
+    if (!root || vaultPath !== root) throw new Error('Selected vault changed; save cancelled');
+    if (typeof content !== 'string' || typeof revision !== 'string') throw new Error('Invalid save request');
+    const current = await this.readNote(relativePath);
+    if (current.revision !== revision) throw new Error('Note changed outside Storm; reload before saving');
+    const rootReal = await realpath(root);
+    const target = path.resolve(rootReal, ...current.path.split('/'));
+    const info = await lstat(target);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Not a regular Markdown note');
+    const temp = path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.tmp`);
+    try {
+      await writeFile(temp, content, { flag: 'wx', mode: info.mode });
+      await chmod(temp, info.mode);
+      if (this.selectedVaultPath !== root) throw new Error('Selected vault changed; save cancelled');
+      const latest = await readFile(target, 'utf8');
+      if (revisionOf(latest) !== revision) throw new Error('Note changed outside Storm; reload before saving');
+      await rename(temp, target);
+    } finally {
+      await unlink(temp).catch(() => {});
+    }
+    return { revision: revisionOf(content) };
+  }
+}
+
+function revisionOf(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
 }
 
 function firstSentence(markdown: string): string {

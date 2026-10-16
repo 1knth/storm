@@ -4,6 +4,57 @@ import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
 
 const vaultService = new VaultService();
+let shutdownAllowed = false;
+let shutdownInFlight: Promise<boolean> | null = null;
+const closeAllowed = new WeakSet<BrowserWindow>();
+const shutdownAcks = new Map<string, (succeeded: boolean) => void>();
+ipcMain.handle(
+  'shutdown:ack',
+  (_event, requestId: unknown, succeeded: unknown) => {
+    if (typeof requestId === 'string')
+      shutdownAcks.get(requestId)?.(succeeded === true);
+  },
+);
+
+async function flushBeforeQuit(): Promise<boolean> {
+  if (shutdownInFlight) return shutdownInFlight;
+  shutdownInFlight = (async () => {
+    const windows = BrowserWindow.getAllWindows();
+    const outcomes = await Promise.all(
+      windows.map(
+        (window) =>
+          new Promise<boolean>((resolve) => {
+            const requestId = `${Date.now()}-${Math.random()}`;
+            const timeout = setTimeout(() => {
+              shutdownAcks.delete(requestId);
+              resolve(false);
+            }, 5000);
+            shutdownAcks.set(requestId, (succeeded) => {
+              clearTimeout(timeout);
+              shutdownAcks.delete(requestId);
+              resolve(succeeded);
+            });
+            window.webContents.send('shutdown:flush', requestId);
+          }),
+      ),
+    );
+    if (outcomes.every(Boolean)) return true;
+    const choice = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Keep editing', 'Discard changes and quit'],
+      defaultId: 0,
+      cancelId: 0,
+      message: 'Some changes could not be saved.',
+      detail:
+        'Keep editing to return to your notes, or explicitly discard changes and quit.',
+      noLink: true,
+    });
+    return choice.response === 1;
+  })().finally(() => {
+    shutdownInFlight = null;
+  });
+  return shutdownInFlight;
+}
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -15,15 +66,26 @@ const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
-	transparent: true,
-	backgroundColor: '#00000000',
-	vibrancy: 'under-window',
-	visualEffectState: 'active',
-	frame: true,
-	titleBarStyle: 'hiddenInset',
+    // Keep the native macOS titlebar and traffic lights; a transparent window can
+    // suppress the standard titlebar, so translucency comes from vibrancy instead.
+    vibrancy: 'hud',
+    visualEffectState: 'active',
+    frame: true,
+    titleBarStyle: 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
     },
+  });
+
+  mainWindow.on('close', (event) => {
+    if (shutdownAllowed || closeAllowed.has(mainWindow)) return;
+    event.preventDefault();
+    void flushBeforeQuit().then((proceed) => {
+      if (proceed && !mainWindow.isDestroyed()) {
+        closeAllowed.add(mainWindow);
+        mainWindow.close();
+      }
+    });
   });
 
   // and load the index.html of the app.
@@ -52,17 +114,28 @@ ipcMain.handle('vault:choose', async () => {
 
 ipcMain.handle('vault:list-notes', async () => vaultService.listNotes());
 
-ipcMain.handle('vault:read-note', async (_event, relativePath: unknown) => vaultService.readNote(relativePath));
+ipcMain.handle('vault:read-note', async (_event, relativePath: unknown) =>
+  vaultService.readNote(relativePath),
+);
+ipcMain.handle('vault:save-note', async (_event, request: unknown) =>
+  vaultService.saveNote(request),
+);
 
 app.whenReady().then(() => {
   const menu = Menu.buildFromTemplate([
     {
       label: app.name,
       submenu: [
-        { label: 'Settings', accelerator: 'CommandOrControl+,', click: () => {
-          const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-          window?.webContents.send('settings:open');
-        } },
+        {
+          label: 'Settings',
+          accelerator: 'CommandOrControl+,',
+          click: () => {
+            const window =
+              BrowserWindow.getFocusedWindow() ??
+              BrowserWindow.getAllWindows()[0];
+            window?.webContents.send('settings:open');
+          },
+        },
         { type: 'separator' },
         { role: 'about' },
         { type: 'separator' },
@@ -75,9 +148,41 @@ app.whenReady().then(() => {
         { role: 'quit' },
       ],
     },
-    { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
-    { label: 'View', submenu: [{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
-    { role: 'window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }] },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      role: 'window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        { role: 'front' },
+      ],
+    },
   ]);
   app.applicationMenu = menu;
   createWindow();
@@ -87,6 +192,17 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+    }
+  });
+});
+
+app.on('before-quit', (event) => {
+  if (shutdownAllowed) return;
+  event.preventDefault();
+  void flushBeforeQuit().then((proceed) => {
+    if (proceed) {
+      shutdownAllowed = true;
+      app.quit();
     }
   });
 });
