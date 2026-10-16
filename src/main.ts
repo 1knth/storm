@@ -1,23 +1,38 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
+import { readLastVault } from './vault/vaultPreferences';
+import { VaultRegistry } from './vault/vaultRegistry';
+import { readVaultImage } from './vault/vaultAssets';
+import { createFolder, createMarkdownNote } from './vault/vaultCreation';
 
 const vaultService = new VaultService();
+const vaultRegistry = new VaultRegistry(app.getPath('userData'));
 let shutdownAllowed = false;
 let shutdownInFlight: Promise<boolean> | null = null;
 const closeAllowed = new WeakSet<BrowserWindow>();
 const shutdownAcks = new Map<string, (succeeded: boolean) => void>();
 let openFileMenuItem: Electron.MenuItem | null = null;
 let toggleExplorerMenuItem: Electron.MenuItem | null = null;
+const sendIndexedShortcut = (
+  channel: 'tabs:select-index' | 'vaults:activate-index',
+  index: number,
+) => {
+  BrowserWindow.getFocusedWindow()?.webContents.send(channel, index);
+};
 
-ipcMain.on('shortcut:set-enabled', (_event, shortcut: unknown, enabled: unknown) => {
-  if (typeof enabled !== 'boolean') return;
-  if (shortcut === 'openFile' && openFileMenuItem)
-    openFileMenuItem.enabled = enabled;
-  if (shortcut === 'toggleExplorer' && toggleExplorerMenuItem)
-    toggleExplorerMenuItem.enabled = enabled;
-});
+ipcMain.on(
+  'shortcut:set-enabled',
+  (_event, shortcut: unknown, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') return;
+    if (shortcut === 'openFile' && openFileMenuItem)
+      openFileMenuItem.enabled = enabled;
+    if (shortcut === 'toggleExplorer' && toggleExplorerMenuItem)
+      toggleExplorerMenuItem.enabled = enabled;
+  },
+);
 
 ipcMain.handle(
   'shutdown:ack',
@@ -115,12 +130,202 @@ const createWindow = () => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
+ipcMain.handle('vault:restore', async () => {
+  try {
+    const savedPath = await readLastVault(app.getPath('userData'));
+    if (!savedPath) return { path: null, error: null };
+    await vaultService.selectVault(savedPath);
+    return { path: vaultService.getSelectedVaultPath(), error: null };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return { path: null, error: null };
+    }
+    return {
+      path: null,
+      error: `Could not restore the last vault: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+});
+
 ipcMain.handle('vault:choose', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
   if (result.canceled) return null;
-  const selectedPath = result.filePaths[0] ?? null;
-  vaultService.selectVault(selectedPath);
-  return selectedPath;
+  const selectedPath = result.filePaths[0];
+  if (!selectedPath) return null;
+  await vaultService.selectVault(selectedPath);
+  const validatedPath = vaultService.getSelectedVaultPath()!;
+  try {
+    const { vault } = await vaultRegistry.add(validatedPath);
+    await vaultRegistry.setActive(vault.id);
+    return validatedPath;
+  } catch (error) {
+    console.error('Could not save the selected vault:', error);
+    return validatedPath;
+  }
+});
+
+const pendingGroupFolders = new Map<string, { directory: string; createdAt: number }>();
+const groupFolderCreatesInFlight = new Set<string>();
+const GROUP_FOLDER_SELECTION_TTL_MS = 10 * 60 * 1000;
+const MAX_PENDING_GROUP_FOLDERS = 20;
+ipcMain.handle('vault:group-folder-choose', async () => {
+  const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
+  if (result.canceled || !result.filePaths[0]) return null;
+  const selectionId = randomUUID();
+  const now = Date.now();
+  for (const [id, selection] of pendingGroupFolders) {
+    if (now - selection.createdAt > GROUP_FOLDER_SELECTION_TTL_MS)
+      pendingGroupFolders.delete(id);
+  }
+  while (pendingGroupFolders.size >= MAX_PENDING_GROUP_FOLDERS) {
+    const oldestId = pendingGroupFolders.keys().next().value;
+    if (!oldestId) break;
+    pendingGroupFolders.delete(oldestId);
+  }
+  pendingGroupFolders.set(selectionId, {
+    directory: result.filePaths[0],
+    createdAt: now,
+  });
+  return { selectionId, name: path.basename(result.filePaths[0]) };
+});
+ipcMain.handle(
+  'vault:group-create-from-folder',
+  async (_event, selectionId: unknown, name: unknown) => {
+    if (typeof selectionId !== 'string' || typeof name !== 'string')
+      throw new Error('Invalid folder-based group request');
+    const selection = pendingGroupFolders.get(selectionId);
+    if (
+      !selection ||
+      Date.now() - selection.createdAt > GROUP_FOLDER_SELECTION_TTL_MS
+    ) {
+      pendingGroupFolders.delete(selectionId);
+      throw new Error('Folder selection expired; please choose it again');
+    }
+    if (groupFolderCreatesInFlight.has(selectionId))
+      throw new Error('Folder-based group creation is already in progress');
+    groupFolderCreatesInFlight.add(selectionId);
+    try {
+      const result = await vaultRegistry.createGroupFromFolder(
+        selection.directory,
+        name,
+      );
+      pendingGroupFolders.delete(selectionId);
+      return result;
+    } finally {
+      groupFolderCreatesInFlight.delete(selectionId);
+    }
+  },
+);
+
+ipcMain.handle('vault:registry-list', () => vaultRegistry.list());
+ipcMain.handle('vault:groups-list', () => vaultRegistry.listGroups());
+ipcMain.handle('vault:group-create', (_event, name: unknown) => {
+  if (typeof name !== 'string') throw new Error('Invalid group name');
+  return vaultRegistry.createGroup(name);
+});
+ipcMain.handle('vault:group-rename', (_event, id: unknown, name: unknown) => {
+  if (typeof id !== 'string' || typeof name !== 'string')
+    throw new Error('Invalid group rename');
+  return vaultRegistry.renameGroup(id, name);
+});
+ipcMain.handle('vault:group-remove', (_event, id: unknown) => {
+  if (typeof id !== 'string') throw new Error('Invalid vault group ID');
+  return vaultRegistry.removeGroup(id);
+});
+ipcMain.handle(
+  'vault:group-set-vault',
+  (_event, vaultId: unknown, groupId: unknown) => {
+    if (
+      typeof vaultId !== 'string' ||
+      (groupId !== null && typeof groupId !== 'string')
+    )
+      throw new Error('Invalid vault group assignment');
+    return vaultRegistry.setVaultGroup(vaultId, groupId);
+  },
+);
+ipcMain.handle('vault:group-set-color', (_event, id: unknown, color: unknown) => {
+  if (typeof id !== 'string') throw new Error('Invalid vault group ID');
+  return vaultRegistry.setGroupColor(id, color);
+});
+ipcMain.handle(
+  'vault:group-set-collapsed',
+  (_event, id: unknown, collapsed: unknown) => {
+    if (typeof id !== 'string' || typeof collapsed !== 'boolean')
+      throw new Error('Invalid group collapse state');
+    return vaultRegistry.setGroupCollapsed(id, collapsed);
+  },
+);
+ipcMain.handle('vault:registry-add', async (_event, directory: unknown) => {
+  if (typeof directory !== 'string') throw new Error('Invalid vault directory');
+  return vaultRegistry.add(directory);
+});
+ipcMain.handle('vault:registry-activate', async (_event, id: unknown) => {
+  if (typeof id !== 'string') throw new Error('Invalid vault ID');
+  const { vaults } = await vaultRegistry.list();
+  const selected = vaults.find((vault) => vault.id === id);
+  if (!selected) throw new Error('Unknown vault');
+  await vaultService.selectVault(selected.path);
+  await vaultRegistry.setActive(id);
+  return { id, path: vaultService.getSelectedVaultPath() };
+});
+ipcMain.handle('vault:registry-remove', (_event, id: unknown) => {
+  if (typeof id !== 'string') throw new Error('Invalid vault ID');
+  return vaultRegistry.remove(id);
+});
+
+ipcMain.handle('vault:read-image', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object')
+    throw new Error('Invalid image request');
+  const { vaultId, notePath, imagePath, kind } = request as Record<
+    string,
+    unknown
+  >;
+  if (typeof vaultId !== 'string') throw new Error('Invalid vault ID');
+  const vault = await vaultRegistry.getById(vaultId);
+  if (!vault) throw new Error('Unknown vault');
+  if (typeof notePath !== 'string' || typeof imagePath !== 'string')
+    throw new Error('Invalid image request');
+  return readVaultImage(vault.path, {
+    notePath,
+    imagePath,
+    kind: kind as 'markdown' | 'wiki' | undefined,
+  });
+});
+
+ipcMain.handle('vault:create-note', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    throw new Error('Invalid creation request');
+  const { vaultId, parentRelativePath, name } = request as Record<
+    string,
+    unknown
+  >;
+  if (
+    typeof vaultId !== 'string' ||
+    typeof parentRelativePath !== 'string' ||
+    typeof name !== 'string'
+  )
+    throw new Error('Invalid creation request');
+  const vault = await vaultRegistry.getById(vaultId);
+  if (!vault) throw new Error('Unknown vault');
+  return createMarkdownNote(vault.path, parentRelativePath, name);
+});
+ipcMain.handle('vault:create-folder', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    throw new Error('Invalid creation request');
+  const { vaultId, parentRelativePath, name } = request as Record<
+    string,
+    unknown
+  >;
+  if (
+    typeof vaultId !== 'string' ||
+    typeof parentRelativePath !== 'string' ||
+    typeof name !== 'string'
+  )
+    throw new Error('Invalid creation request');
+  const vault = await vaultRegistry.getById(vaultId);
+  if (!vault) throw new Error('Unknown vault');
+  return createFolder(vault.path, parentRelativePath, name);
 });
 
 ipcMain.handle('vault:list-notes', async () => vaultService.listNotes());
@@ -148,6 +353,31 @@ app.whenReady().then(() => {
           },
         },
         {
+          label: 'New Note',
+          accelerator: 'CommandOrControl+N',
+          click: () =>
+            BrowserWindow.getFocusedWindow()?.webContents.send(
+              'entry:create',
+              'note',
+            ),
+        },
+        {
+          label: 'New Folder',
+          accelerator: 'CommandOrControl+Shift+N',
+          click: () =>
+            BrowserWindow.getFocusedWindow()?.webContents.send(
+              'entry:create',
+              'folder',
+            ),
+        },
+        {
+          label: 'New Tab',
+          accelerator: 'CommandOrControl+T',
+          click: () => {
+            BrowserWindow.getFocusedWindow()?.webContents.send('tabs:new');
+          },
+        },
+        {
           id: 'open-file-shortcut',
           label: 'Open File…',
           accelerator: 'CommandOrControl+P',
@@ -156,6 +386,16 @@ app.whenReady().then(() => {
               BrowserWindow.getFocusedWindow() ??
               BrowserWindow.getAllWindows()[0];
             window?.webContents.send('file:open');
+          },
+        },
+        {
+          label: 'Toggle Markdown Preview',
+          accelerator: 'CommandOrControl+Shift+M',
+          click: () => {
+            const window =
+              BrowserWindow.getFocusedWindow() ??
+              BrowserWindow.getAllWindows()[0];
+            window?.webContents.send('preview:toggle');
           },
         },
         {
@@ -206,6 +446,22 @@ app.whenReady().then(() => {
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],
+    },
+    {
+      label: 'Tabs',
+      submenu: Array.from({ length: 9 }, (_, index) => ({
+        label: `Select Tab ${index + 1}`,
+        accelerator: `CommandOrControl+${index + 1}`,
+        click: () => sendIndexedShortcut('tabs:select-index', index),
+      })),
+    },
+    {
+      label: 'Vaults',
+      submenu: Array.from({ length: 9 }, (_, index) => ({
+        label: `Activate Vault ${index + 1}`,
+        accelerator: `CommandOrControl+Shift+${index + 1}`,
+        click: () => sendIndexedShortcut('vaults:activate-index', index),
+      })),
     },
     {
       role: 'window',

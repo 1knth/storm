@@ -1,13 +1,19 @@
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, lstat, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import type { NoteData, SaveNoteRequest, SaveNoteResult, VaultEntry } from '../shared/types';
 
 export class VaultService {
   private selectedVaultPath: string | null = null;
 
-  selectVault(vaultPath: string | null): void {
-    this.selectedVaultPath = vaultPath;
+  async selectVault(vaultPath: string): Promise<void> {
+    const info = await stat(vaultPath);
+    if (!info.isDirectory()) throw new Error('Selected vault is not a folder');
+    this.selectedVaultPath = await realpath(vaultPath);
+  }
+
+  getSelectedVaultPath(): string | null {
+    return this.selectedVaultPath;
   }
 
   async listNotes(): Promise<VaultEntry[]> {
