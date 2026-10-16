@@ -97,7 +97,7 @@ const createWindow = () => {
     vibrancy: 'hud',
     visualEffectState: 'active',
     frame: true,
-    titleBarStyle: 'default',
+    titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
     },
@@ -150,18 +150,20 @@ ipcMain.handle('vault:restore', async () => {
 
 ipcMain.handle('vault:choose', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
-  if (result.canceled) return null;
+  if (result.canceled) return { path: null, warning: null };
   const selectedPath = result.filePaths[0];
-  if (!selectedPath) return null;
+  if (!selectedPath) return { path: null, warning: null };
   await vaultService.selectVault(selectedPath);
   const validatedPath = vaultService.getSelectedVaultPath()!;
   try {
     const { vault } = await vaultRegistry.add(validatedPath);
     await vaultRegistry.setActive(vault.id);
-    return validatedPath;
+    return { path: validatedPath, warning: null };
   } catch (error) {
-    console.error('Could not save the selected vault:', error);
-    return validatedPath;
+    return {
+      path: validatedPath,
+      warning: `Vault opened, but the vault selection could not be saved: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 });
 

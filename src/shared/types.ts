@@ -85,7 +85,7 @@ declare global {
         id: string,
       ) => Promise<{ id: string; path: string | null }>;
       registryRemove: (id: string) => Promise<void>;
-      choose: () => Promise<string | null>;
+      choose: () => Promise<{ path: string | null; warning: string | null }>;
       restore: () => Promise<{ path: string | null; error: string | null }>;
       listNotes: () => Promise<VaultEntry[]>;
       createNote: (request: CreateEntryRequest) => Promise<VaultEntry>;

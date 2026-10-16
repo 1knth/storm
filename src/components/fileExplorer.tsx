@@ -1,4 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import ContextMenu from './ContextMenu';
+import type { ContextMenuPosition } from './ContextMenu';
+import { contextMenuPointForElement, isContextMenuKey } from './ContextMenu';
+import { FaPlus } from 'react-icons/fa';
 import { RiMenuUnfold4Fill } from 'react-icons/ri';
 import Note from './Note';
 
@@ -12,7 +17,7 @@ function ShortcutHint({
   return (
     <span
       aria-hidden="true"
-      className={`pointer-events-none absolute left-1/2 top-full z-20 -translate-x-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${visible ? 'opacity-100' : 'opacity-0'}`}
+      className={`pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${visible ? 'opacity-100' : 'opacity-0'}`}
     >
       {children}
     </span>
@@ -20,105 +25,172 @@ function ShortcutHint({
 }
 
 type FileExplorerProps = {
-  onNoteSelect: (path: string) => void;
-  onVaultChange: () => void;
-  onVaultPath: (path: string) => void;
-  beforeVaultChange: () => Promise<boolean>;
+  onNoteSelect: (path: string, focusEditor?: boolean) => void;
+  onCreate: (kind: 'note' | 'folder', parentPath: string) => void;
+  onCreateNote: () => void;
+  creationPending: boolean;
+  onAddVault: () => void;
+  vaultPath: string | null;
+  notes: Awaited<ReturnType<typeof window.vault.listNotes>>;
+  loading: boolean;
+  error: string | null;
   vimMode: boolean;
   onVimModeChange: (enabled: boolean) => void;
+  settingsOpen: boolean;
+  onSettingsOpenChange: (open: boolean) => void;
   openFileShortcut: boolean;
   onOpenFileShortcutChange: (enabled: boolean) => void;
   toggleExplorerShortcut: boolean;
   commandHeld: boolean;
   onToggleExplorerShortcutChange: (enabled: boolean) => void;
   selectedPath: string | null;
-  onNotesChange: (
-    notes: Awaited<ReturnType<typeof window.vault.listNotes>>,
-  ) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
 };
 
 export default function FileExplorer({
   onNoteSelect,
-  onVaultChange,
-  onVaultPath,
-  beforeVaultChange,
+  onCreate,
+  onCreateNote,
+  creationPending,
+  onAddVault,
+  vaultPath,
+  notes,
+  loading,
+  error,
   vimMode,
   onVimModeChange,
+  settingsOpen,
+  onSettingsOpenChange,
   openFileShortcut,
   onOpenFileShortcutChange,
   toggleExplorerShortcut,
   commandHeld,
   onToggleExplorerShortcutChange,
   selectedPath,
-  onNotesChange,
   collapsed,
   onToggleCollapsed,
 }: FileExplorerProps) {
-  const [vaultPath, setVaultPath] = useState<string | null>(null);
-  const [notes, setNotes] = useState<
-    Awaited<ReturnType<typeof window.vault.listNotes>>
-  >([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const changeVaultRef = useRef<HTMLButtonElement>(null);
   const vaultName = vaultPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? null;
 
   useEffect(() => {
     const unsubscribe = window.vault.onSettingsOpen(() =>
-      setSettingsOpen(true),
+      onSettingsOpenChange(true),
     );
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === ',') {
         event.preventDefault();
-        setSettingsOpen(true);
+        onSettingsOpenChange(true);
       }
-      if (event.key === 'Escape') setSettingsOpen(false);
+      if (event.key === 'Escape') onSettingsOpenChange(false);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => {
       unsubscribe();
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, []);
+  }, [onSettingsOpenChange]);
 
   useEffect(() => {
     if (settingsOpen) changeVaultRef.current?.focus();
-    else settingsButtonRef.current?.focus();
   }, [settingsOpen]);
 
-  const chooseVault = async () => {
-    setError(null);
-    try {
-      if (!(await beforeVaultChange())) return;
-      const selectedPath = await window.vault.choose();
-      if (!selectedPath) return;
-      onVaultChange();
-      onVaultPath(selectedPath);
-      setVaultPath(selectedPath);
-      setLoading(true);
-      const listedNotes = await window.vault.listNotes();
-      setNotes(listedNotes);
-      onNotesChange(listedNotes);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Unable to load vault');
-    } finally {
-      setLoading(false);
-    }
+  const chooseVault = () => onAddVault();
+  const [contextMenu, setContextMenu] = useState<{
+    position: ContextMenuPosition;
+    parent: string;
+    returnFocusTo: HTMLElement | null;
+  } | null>(null);
+  const openContextMenu = (target: HTMLElement, position: ContextMenuPosition) => {
+    const row = target.closest<HTMLElement>('[data-entry-path]');
+    const path = row?.dataset.entryPath ?? '';
+    const isFolder = row?.dataset.entryDirectory === 'true';
+    const returnFocusTo =
+      row?.querySelector<HTMLElement>('button') ??
+      target.closest<HTMLElement>('[data-pane="explorer"]');
+    setContextMenu({ position, returnFocusTo, parent: !path || isFolder ? path : path.split('/').slice(0, -1).join('/') });
   };
 
   return (
     <>
       <aside
-        className={`${collapsed ? 'hidden' : 'flex'} h-full w-80 shrink-0 flex-col rounded-2xl bg-black/50 p-4 text-white select-none`}
+        data-pane="explorer"
+        tabIndex={-1}
+        onKeyDown={(event) => {
+          if (isContextMenuKey(event)) {
+            const row = (event.target as HTMLElement).closest<HTMLElement>('[data-entry-path]');
+            if (row && event.currentTarget.contains(row)) {
+              event.preventDefault();
+              openContextMenu(row, contextMenuPointForElement(row));
+              return;
+            }
+          }
+          if (!vimMode || event.metaKey || event.ctrlKey || event.altKey)
+            return;
+          const target = event.target as HTMLElement;
+          const row = target.closest<HTMLElement>('[data-entry-path]');
+          if (!row || !event.currentTarget.contains(row)) return;
+          const rows = Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>(
+              '[data-entry-path]',
+            ),
+          ).filter((item) => item.querySelector('button'));
+          const index = rows.indexOf(row);
+          const focusRow = (next: HTMLElement | undefined) =>
+            next?.querySelector<HTMLButtonElement>('button')?.focus();
+          if (event.key === 'j' || event.key === 'k') {
+            event.preventDefault();
+            focusRow(rows[index + (event.key === 'j' ? 1 : -1)]);
+          } else if (
+            event.key === 'h' ||
+            event.key === 'l' ||
+            event.key === 'Enter'
+          ) {
+            const button = row.querySelector<HTMLButtonElement>('button');
+            if (!button) return;
+            if (row.dataset.entryDirectory === 'true') {
+              const expanded = button.getAttribute('aria-expanded') === 'true';
+              if (
+                event.key === 'Enter' ||
+                (event.key === 'h' && expanded) ||
+                (event.key === 'l' && !expanded)
+              ) {
+                event.preventDefault();
+                if (event.key === 'Enter') button.click();
+                else if (!expanded) button.click();
+              } else if (event.key === 'h') {
+                event.preventDefault();
+                focusRow(
+                  row.parentElement?.closest<HTMLElement>(
+                    '[data-entry-path]',
+                  ) ?? undefined,
+                );
+              }
+            } else if (event.key !== 'h') {
+              event.preventDefault();
+              if (event.key === 'Enter') onNoteSelect(row.dataset.entryPath ?? '', true);
+              else onNoteSelect(row.dataset.entryPath ?? '', false);
+            } else {
+              event.preventDefault();
+              focusRow(
+                row.parentElement?.closest<HTMLElement>('[data-entry-path]') ??
+                  undefined,
+              );
+            }
+          }
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          openContextMenu(event.target as HTMLElement, { x: event.clientX, y: event.clientY });
+        }}
+        className={`${collapsed ? 'hidden' : 'flex'} min-h-0 min-w-[240px] max-w-80 flex-[0_1_24vw] flex-col bg-black/50 p-3 text-white select-none`}
+        style={{ width: 'clamp(260px, 24vw, 320px)' }}
       >
         {/* title + fold */}
-        <div className="flex flex-row items-center justify-between pb-4">
+        <div className="mb-2 flex h-9 shrink-0 flex-row items-center justify-between border-b border-white/10 px-1">
           <div className="flex min-w-0 items-baseline gap-2">
-            <h1 className="text-xl font-bold">Directory</h1>
+            <h1 className="text-sm font-semibold text-white/80">Directory</h1>
             {vaultName && (
               <span
                 className="truncate text-sm text-white/50"
@@ -128,71 +200,40 @@ export default function FileExplorer({
               </span>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label={`New note (${navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'})`}
+              aria-keyshortcuts={navigator.platform.toLowerCase().includes('mac') ? 'Meta+N' : 'Control+N'}
+              title={`New note (${navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'})`}
+              disabled={!vaultPath || creationPending}
+              onClick={onCreateNote}
+              className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <FaPlus aria-hidden="true" size={16} />
+              <ShortcutHint visible={commandHeld}>
+                {navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'}
+              </ShortcutHint>
+            </button>
             <button
               type="button"
               aria-label="Hide file explorer"
               title="Hide file explorer (⌘/Ctrl+B)"
               onClick={onToggleCollapsed}
-              className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+              className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white"
             >
-              <RiMenuUnfold4Fill aria-hidden="true" />
+              <RiMenuUnfold4Fill aria-hidden="true" className="h-4 w-4" />
               <ShortcutHint visible={commandHeld && toggleExplorerShortcut}>
                 {navigator.platform.toLowerCase().includes('mac')
                   ? '⌘B'
                   : 'Ctrl+B'}
               </ShortcutHint>
             </button>
-            <button
-              ref={settingsButtonRef}
-              type="button"
-              aria-label="Open settings"
-              title="Open settings (⌘+,)"
-              onClick={() => setSettingsOpen(true)}
-              className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
-            >
-              <ShortcutHint visible={commandHeld}>
-                {navigator.platform.toLowerCase().includes('mac')
-                  ? '⌘,'
-                  : 'Ctrl+,'}
-              </ShortcutHint>
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="m19.4 15 .08.08a1.75 1.75 0 1 1-2.47 2.47l-.08-.08a1.75 1.75 0 0 0-2.98 1.24v.23a1.75 1.75 0 1 1-3.5 0v-.12a1.75 1.75 0 0 0-2.98-1.24l-.08.08a1.75 1.75 0 1 1-2.47-2.47l.08-.08a1.75 1.75 0 0 0-1.24-2.98h-.23a1.75 1.75 0 1 1 0-3.5h.12a1.75 1.75 0 0 0 1.24-2.98l-.08-.08a1.75 1.75 0 1 1 2.47-2.47l.08.08a1.75 1.75 0 0 0 2.98-1.24v-.23a1.75 1.75 0 1 1 3.5 0v.12a1.75 1.75 0 0 0 2.98 1.24l.08-.08a1.75 1.75 0 1 1 2.47 2.47l-.08.08a1.75 1.75 0 0 0 1.24 2.98h.23a1.75 1.75 0 1 1 0 3.5h-.12A1.75 1.75 0 0 0 19.4 15Z"
-                />
-              </svg>
-            </button>
           </div>
         </div>
 
-        {!vaultPath ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-            <button
-              type="button"
-              onClick={chooseVault}
-              disabled={loading}
-              className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20 disabled:opacity-50"
-            >
-              Open vault
-            </button>
-            <p className="text-sm text-white/70">No vault selected.</p>
-          </div>
-        ) : (
-          <></>
+        {!vaultPath && (
+          <p className="text-sm text-white/70">No vault selected.</p>
         )}
 
         {loading && (
@@ -221,11 +262,15 @@ export default function FileExplorer({
             ))}
         </ul>
       </aside>
-      {settingsOpen && (
+
+      {contextMenu && <ContextMenu position={contextMenu.position} returnFocusTo={contextMenu.returnFocusTo} onClose={() => setContextMenu(null)} items={(['note', 'folder'] as const).map((kind) => ({ id: `new-${kind}`, label: `New ${kind}`, onSelect: () => onCreate(kind, contextMenu.parent) }))} />}
+      {settingsOpen &&
+        createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setSettingsOpen(false);
+            if (event.target === event.currentTarget)
+              onSettingsOpenChange(false);
           }}
         >
           <section
@@ -241,7 +286,7 @@ export default function FileExplorer({
               <button
                 type="button"
                 aria-label="Close settings"
-                onClick={() => setSettingsOpen(false)}
+                onClick={() => onSettingsOpenChange(false)}
                 className="rounded-md px-2 py-1 text-white/60 hover:bg-white/10 hover:text-white"
               >
                 ×
@@ -257,12 +302,12 @@ export default function FileExplorer({
               <button
                 ref={changeVaultRef}
                 type="button"
-                onClick={async () => {
-                  await chooseVault();
-                  setSettingsOpen(false);
+                onClick={() => {
+                  chooseVault();
+                  onSettingsOpenChange(false);
                 }}
                 disabled={loading}
-                className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:opacity-50"
+                className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
               >
                 Change vault
               </button>
@@ -321,7 +366,8 @@ export default function FileExplorer({
               <p className="text-xs text-white/50">Open settings: ⌘ + ,</p>
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
