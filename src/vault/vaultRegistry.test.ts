@@ -10,6 +10,64 @@ async function temporaryDirectory(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'storm-vault-registry-'));
 }
 
+test('serializes concurrent mutations and recovers after a failed save', async () => {
+  const temp = await temporaryDirectory();
+  try {
+    const registry = new VaultRegistry(temp);
+    for (let round = 0; round < 5; round++) {
+      await Promise.all([
+        registry.createGroup(`Team ${round} A`),
+        registry.createGroup(`Team ${round} B`),
+      ]);
+    }
+    assert.equal((await new VaultRegistry(temp).listGroups()).length, 10);
+
+    const settingsFile = path.join(temp, 'settings.json');
+    const backupFile = path.join(temp, 'settings.backup');
+    await (await import('node:fs/promises')).rename(settingsFile, backupFile);
+    await mkdir(settingsFile);
+    await assert.rejects(registry.createGroup('Save fails'));
+    await rm(settingsFile, { recursive: true });
+    await (await import('node:fs/promises')).rename(backupFile, settingsFile);
+
+    await registry.createGroup('After recovery');
+    const persisted = new VaultRegistry(temp);
+    const groups = await persisted.listGroups();
+    assert.equal(groups.length, 11);
+    assert.ok(groups.some((group) => group.name === 'After recovery'));
+    assert.ok(groups.every((group) => group.name !== 'Save fails'));
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('serializes concurrent group and saved-layout mutations without losing either update', async () => {
+  const temp = await temporaryDirectory();
+  try {
+    const vaultPath = path.join(temp, 'vault');
+    await mkdir(vaultPath);
+    const registry = new VaultRegistry(temp);
+    const { vault } = await registry.add(vaultPath);
+    const layout = {
+      version: 1 as const,
+      tabs: [{ kind: 'empty' as const, id: 'welcome' }],
+      activeTab: 'welcome',
+      groups: [],
+      assignments: {},
+    };
+    const [group] = await Promise.all([
+      registry.createGroup('Concurrent'),
+      registry.saveTabLayout(vault.id, layout),
+    ]);
+
+    const reloaded = new VaultRegistry(temp);
+    assert.equal((await reloaded.listGroups())[0].id, group.id);
+    assert.deepEqual(await reloaded.getTabLayout(vault.id), layout);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('imports immediate child folders as vaults in one group without importing the selected parent', async () => {
   const temp = await temporaryDirectory();
   try {
@@ -50,24 +108,49 @@ test('imports immediate child folders as vaults in one group without importing t
   }
 });
 
-test('folder group import rejects empty folders and duplicate names without partial registry changes', async () => {
+test('folder group import falls back when there are no child folders and ignores root notes when importing children', async () => {
   const temp = await temporaryDirectory();
   try {
     const parent = path.join(temp, 'Empty');
     await mkdir(parent);
+    await writeFile(path.join(parent, 'root-note.md'), 'keep');
     const registry = new VaultRegistry(temp);
-    await assert.rejects(
-      registry.createGroupFromFolder(parent, 'Empty group'),
-      /no immediate child folders/,
+    const group = await registry.createGroupFromFolder(parent, 'Empty group');
+    const fallback = (await registry.list()).vaults[0];
+    assert.equal(
+      fallback.path,
+      await import('node:fs/promises').then(({ realpath }) => realpath(parent)),
     );
-    assert.deepEqual(await registry.listGroups(), []);
+    assert.equal(fallback.name, 'Empty');
+    assert.equal(fallback.groupId, group.id);
     await mkdir(path.join(parent, 'Child'));
+    await writeFile(path.join(parent, 'another-note.md'), 'also keep');
+    const childGroup = await registry.createGroupFromFolder(
+      parent,
+      'Child group',
+    );
+    const afterChildImport = (await registry.list()).vaults;
+    const canonicalChild = await import('node:fs/promises').then(
+      ({ realpath }) => realpath(path.join(parent, 'Child')),
+    );
+    assert.deepEqual(
+      afterChildImport.map((vault) => vault.path),
+      [fallback.path, canonicalChild],
+    );
+    assert.equal(
+      afterChildImport.find((vault) => vault.path === fallback.path)?.groupId,
+      group.id,
+    );
+    assert.equal(
+      afterChildImport.find((vault) => vault.path === canonicalChild)?.groupId,
+      childGroup.id,
+    );
     await registry.createGroup('Taken');
     await assert.rejects(
       registry.createGroupFromFolder(parent, ' taken '),
       /already exists/,
     );
-    assert.equal((await registry.list()).vaults.length, 0);
+    assert.equal((await registry.list()).vaults.length, 2);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -94,7 +177,15 @@ test('persists groups, assignments and collapse state without changing vault fol
     await registry.renameGroup(group.id, 'Projects');
     const layout = {
       version: 1 as const,
-      tabs: [{ kind: 'note' as const, path: 'note.md', anchor: 0, head: 2, scrollTop: 4 }],
+      tabs: [
+        {
+          kind: 'note' as const,
+          path: 'note.md',
+          anchor: 0,
+          head: 2,
+          scrollTop: 4,
+        },
+      ],
       activeTab: 'note.md',
       groups: [{ id: 'tabs-group', name: 'Reading', collapsed: false }],
       assignments: { 'note.md': 'tabs-group' },

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   lstat,
   mkdir,
+  rm,
   readFile,
   readdir,
   realpath,
@@ -139,6 +140,7 @@ export class VaultRegistry {
   private readonly settingsFile: string;
   private settings: Settings = {};
   private loaded = false;
+  private pendingMutation: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string) {
     this.settingsFile = path.join(userDataPath, 'settings.json');
@@ -161,146 +163,157 @@ export class VaultRegistry {
   }
 
   async createGroup(name: string): Promise<VaultGroup> {
-    await this.load();
-    const trimmed = validateGroupName(name);
-    const groups = this.settings.vaultGroups ?? [];
-    validateUniqueName(trimmed, groups);
-    const id = randomUUID();
-    const group = {
-      id,
-      name: trimmed,
-      collapsed: false,
-      color: groupColorForId(id),
-    };
-    await this.update({ ...this.settings, vaultGroups: [...groups, group] });
-    return { ...group };
+    return this.runMutation(async () => {
+      await this.load();
+      const trimmed = validateGroupName(name);
+      const groups = this.settings.vaultGroups ?? [];
+      validateUniqueName(trimmed, groups);
+      const id = randomUUID();
+      const group = {
+        id,
+        name: trimmed,
+        collapsed: false,
+        color: groupColorForId(id),
+      };
+      await this.update({ ...this.settings, vaultGroups: [...groups, group] });
+      return { ...group };
+    });
   }
 
   async createGroupFromFolder(
     directory: string,
     name: string,
   ): Promise<VaultGroup> {
-    await this.load();
-    const trimmed = validateGroupName(name);
-    const groups = this.settings.vaultGroups ?? [];
-    validateUniqueName(trimmed, groups);
+    return this.runMutation(async () => {
+      await this.load();
+      const trimmed = validateGroupName(name);
+      const groups = this.settings.vaultGroups ?? [];
+      validateUniqueName(trimmed, groups);
 
-    const root = await realpath(directory);
-    const entries = await readdir(root, { withFileTypes: true });
-    const childPaths: string[] = [];
-    for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue;
-      const childPath = path.join(root, entry.name);
-      const info = await lstat(childPath);
-      if (info.isDirectory() && !info.isSymbolicLink())
-        childPaths.push(await realpath(childPath));
-    }
-    if (childPaths.length === 0)
-      throw new Error(
-        'The selected folder has no immediate child folders to add as vaults',
-      );
+      const root = await realpath(directory);
+      const entries = await readdir(root, { withFileTypes: true });
+      const childPaths: string[] = [];
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const childPath = path.join(root, entry.name);
+        const info = await lstat(childPath);
+        if (info.isDirectory() && !info.isSymbolicLink())
+          childPaths.push(await realpath(childPath));
+      }
+      if (childPaths.length === 0) childPaths.push(root);
 
-    const id = randomUUID();
-    const group = {
-      id,
-      name: trimmed,
-      collapsed: false,
-      color: groupColorForId(id),
-    };
-    const vaults = [...(this.settings.vaults ?? [])];
-    for (const childPath of childPaths) {
-      const existing = vaults.find((vault) => vault.path === childPath);
-      if (existing) existing.groupId = group.id;
-      else
-        vaults.push({
-          id: randomUUID(),
-          name: path.basename(childPath),
-          path: childPath,
-          groupId: group.id,
-        });
-    }
-    await this.update({
-      ...this.settings,
-      vaultGroups: [...groups, group],
-      vaults,
+      const id = randomUUID();
+      const group = {
+        id,
+        name: trimmed,
+        collapsed: false,
+        color: groupColorForId(id),
+      };
+      const vaults = [...(this.settings.vaults ?? [])];
+      for (const childPath of childPaths) {
+        const existing = vaults.find((vault) => vault.path === childPath);
+        if (existing) existing.groupId = group.id;
+        else
+          vaults.push({
+            id: randomUUID(),
+            name: path.basename(childPath),
+            path: childPath,
+            groupId: group.id,
+          });
+      }
+      await this.update({
+        ...this.settings,
+        vaultGroups: [...groups, group],
+        vaults,
+      });
+      return { ...group };
     });
-    return { ...group };
   }
 
   async renameGroup(id: string, name: string): Promise<VaultGroup> {
-    await this.load();
-    const trimmed = validateGroupName(name);
-    const groups = this.settings.vaultGroups ?? [];
-    const existing = groups.find((group) => group.id === id);
-    if (!existing) throw new Error('Unknown vault group');
-    validateUniqueName(trimmed, groups, id);
-    const renamed = { ...existing, name: trimmed };
-    await this.update({
-      ...this.settings,
-      vaultGroups: groups.map((group) => (group.id === id ? renamed : group)),
+    return this.runMutation(async () => {
+      await this.load();
+      const trimmed = validateGroupName(name);
+      const groups = this.settings.vaultGroups ?? [];
+      const existing = groups.find((group) => group.id === id);
+      if (!existing) throw new Error('Unknown vault group');
+      validateUniqueName(trimmed, groups, id);
+      const renamed = { ...existing, name: trimmed };
+      await this.update({
+        ...this.settings,
+        vaultGroups: groups.map((group) => (group.id === id ? renamed : group)),
+      });
+      return { ...renamed };
     });
-    return { ...renamed };
   }
 
   async removeGroup(id: string): Promise<void> {
-    await this.load();
-    const groups = this.settings.vaultGroups ?? [];
-    if (!groups.some((group) => group.id === id))
-      throw new Error('Unknown vault group');
-    const vaults = (this.settings.vaults ?? []).map((vault) =>
-      vault.groupId === id ? { ...vault, groupId: null } : vault,
-    );
-    await this.update({
-      ...this.settings,
-      vaultGroups: groups.filter((group) => group.id !== id),
-      vaults,
+    return this.runMutation(async () => {
+      await this.load();
+      const groups = this.settings.vaultGroups ?? [];
+      if (!groups.some((group) => group.id === id))
+        throw new Error('Unknown vault group');
+      const vaults = (this.settings.vaults ?? []).map((vault) =>
+        vault.groupId === id ? { ...vault, groupId: null } : vault,
+      );
+      await this.update({
+        ...this.settings,
+        vaultGroups: groups.filter((group) => group.id !== id),
+        vaults,
+      });
     });
   }
 
   async setVaultGroup(vaultId: string, groupId: string | null): Promise<void> {
-    await this.load();
-    const vaults = this.settings.vaults ?? [];
-    if (!vaults.some((vault) => vault.id === vaultId))
-      throw new Error('Unknown vault');
-    if (
-      groupId !== null &&
-      !(this.settings.vaultGroups ?? []).some((group) => group.id === groupId)
-    )
-      throw new Error('Unknown vault group');
-    await this.update({
-      ...this.settings,
-      vaults: vaults.map((vault) =>
-        vault.id === vaultId ? { ...vault, groupId } : vault,
-      ),
+    return this.runMutation(async () => {
+      await this.load();
+      const vaults = this.settings.vaults ?? [];
+      if (!vaults.some((vault) => vault.id === vaultId))
+        throw new Error('Unknown vault');
+      if (
+        groupId !== null &&
+        !(this.settings.vaultGroups ?? []).some((group) => group.id === groupId)
+      )
+        throw new Error('Unknown vault group');
+      await this.update({
+        ...this.settings,
+        vaults: vaults.map((vault) =>
+          vault.id === vaultId ? { ...vault, groupId } : vault,
+        ),
+      });
     });
   }
 
   async setGroupColor(id: string, color: unknown): Promise<void> {
-    await this.load();
-    if (!isGroupColor(color)) throw new Error('Invalid group color');
-    const groups = this.settings.vaultGroups ?? [];
-    if (!groups.some((group) => group.id === id))
-      throw new Error('Unknown vault group');
-    await this.update({
-      ...this.settings,
-      vaultGroups: groups.map((group) =>
-        group.id === id ? { ...group, color } : group,
-      ),
+    return this.runMutation(async () => {
+      await this.load();
+      if (!isGroupColor(color)) throw new Error('Invalid group color');
+      const groups = this.settings.vaultGroups ?? [];
+      if (!groups.some((group) => group.id === id))
+        throw new Error('Unknown vault group');
+      await this.update({
+        ...this.settings,
+        vaultGroups: groups.map((group) =>
+          group.id === id ? { ...group, color } : group,
+        ),
+      });
     });
   }
 
   async setGroupCollapsed(id: string, collapsed: boolean): Promise<void> {
-    await this.load();
-    if (typeof collapsed !== 'boolean')
-      throw new Error('Collapsed must be a boolean');
-    const groups = this.settings.vaultGroups ?? [];
-    if (!groups.some((group) => group.id === id))
-      throw new Error('Unknown vault group');
-    await this.update({
-      ...this.settings,
-      vaultGroups: groups.map((group) =>
-        group.id === id ? { ...group, collapsed } : group,
-      ),
+    return this.runMutation(async () => {
+      await this.load();
+      if (typeof collapsed !== 'boolean')
+        throw new Error('Collapsed must be a boolean');
+      const groups = this.settings.vaultGroups ?? [];
+      if (!groups.some((group) => group.id === id))
+        throw new Error('Unknown vault group');
+      await this.update({
+        ...this.settings,
+        vaultGroups: groups.map((group) =>
+          group.id === id ? { ...group, collapsed } : group,
+        ),
+      });
     });
   }
 
@@ -312,17 +325,20 @@ export class VaultRegistry {
   }
 
   async saveTabLayout(vaultId: string, layout: SavedTabLayout): Promise<void> {
-    await this.load();
-    if (!(this.settings.vaults ?? []).some((vault) => vault.id === vaultId))
-      throw new Error('Unknown vault');
-    if (!isSavedTabLayout(layout)) throw new Error('Invalid saved tab layout');
-    const layouts = {
-      ...(this.settings.savedTabLayouts ?? {}),
-      [vaultId]: layout,
-    };
-    if (JSON.stringify(layouts).length > 1_000_000)
-      throw new Error('Saved tab layouts exceed the size limit');
-    await this.update({ ...this.settings, savedTabLayouts: layouts });
+    return this.runMutation(async () => {
+      await this.load();
+      if (!(this.settings.vaults ?? []).some((vault) => vault.id === vaultId))
+        throw new Error('Unknown vault');
+      if (!isSavedTabLayout(layout))
+        throw new Error('Invalid saved tab layout');
+      const layouts = {
+        ...this.settings.savedTabLayouts,
+        [vaultId]: layout,
+      };
+      if (JSON.stringify(layouts).length > 1_000_000)
+        throw new Error('Saved tab layouts exceed the size limit');
+      await this.update({ ...this.settings, savedTabLayouts: layouts });
+    });
   }
 
   async getById(id: string): Promise<RegisteredVault | null> {
@@ -335,48 +351,63 @@ export class VaultRegistry {
   async add(
     directory: string,
   ): Promise<{ vault: RegisteredVault; created: boolean }> {
-    await this.load();
-    const canonicalPath = await realpath(directory);
-    const vaults = this.settings.vaults ?? [];
-    const existing = vaults.find((vault) => vault.path === canonicalPath);
-    if (existing) return { vault: existing, created: false };
-    const vault = {
-      id: randomUUID(),
-      name: path.basename(canonicalPath),
-      path: canonicalPath,
-    };
-    await this.update({ ...this.settings, vaults: [...vaults, vault] });
-    return { vault, created: true };
+    return this.runMutation(async () => {
+      await this.load();
+      const canonicalPath = await realpath(directory);
+      const vaults = this.settings.vaults ?? [];
+      const existing = vaults.find((vault) => vault.path === canonicalPath);
+      if (existing) return { vault: existing, created: false };
+      const vault = {
+        id: randomUUID(),
+        name: path.basename(canonicalPath),
+        path: canonicalPath,
+      };
+      await this.update({ ...this.settings, vaults: [...vaults, vault] });
+      return { vault, created: true };
+    });
   }
 
   async setActive(id: string | null): Promise<void> {
-    await this.load();
-    if (
-      id !== null &&
-      !(this.settings.vaults ?? []).some((vault) => vault.id === id)
-    )
-      throw new Error('Unknown vault');
-    const next = { ...this.settings, activeVaultId: id };
-    delete next.lastVaultPath;
-    await this.update(next);
+    return this.runMutation(async () => {
+      await this.load();
+      if (
+        id !== null &&
+        !(this.settings.vaults ?? []).some((vault) => vault.id === id)
+      )
+        throw new Error('Unknown vault');
+      const next = { ...this.settings, activeVaultId: id };
+      delete next.lastVaultPath;
+      await this.update(next);
+    });
   }
 
   async remove(id: string): Promise<void> {
-    await this.load();
-    const vaults = this.settings.vaults ?? [];
-    const removed = vaults.find((vault) => vault.id === id);
-    if (!removed) return;
-    const next = {
-      ...this.settings,
-      vaults: vaults.filter((vault) => vault.id !== id),
-      savedTabLayouts: Object.fromEntries(
-        Object.entries(this.settings.savedTabLayouts ?? {}).filter(
-          ([key]) => key !== id,
+    return this.runMutation(async () => {
+      await this.load();
+      const vaults = this.settings.vaults ?? [];
+      const removed = vaults.find((vault) => vault.id === id);
+      if (!removed) return;
+      const next = {
+        ...this.settings,
+        vaults: vaults.filter((vault) => vault.id !== id),
+        savedTabLayouts: Object.fromEntries(
+          Object.entries(this.settings.savedTabLayouts ?? {}).filter(
+            ([key]) => key !== id,
+          ),
         ),
-      ),
-    };
-    if (next.activeVaultId === id) next.activeVaultId = null;
-    await this.update(next);
+      };
+      if (next.activeVaultId === id) next.activeVaultId = null;
+      await this.update(next);
+    });
+  }
+
+  private runMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.pendingMutation.then(mutation);
+    this.pendingMutation = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   private async update(settings: Settings): Promise<void> {
@@ -466,9 +497,18 @@ export class VaultRegistry {
     const directory = path.dirname(this.settingsFile);
     await mkdir(directory, { recursive: true });
     const temporary = `${this.settingsFile}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, {
-      flag: 'wx',
-    });
-    await rename(temporary, this.settingsFile);
+    try {
+      await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, {
+        flag: 'wx',
+      });
+      await rename(temporary, this.settingsFile);
+    } catch (error) {
+      try {
+        await rm(temporary, { force: true });
+      } catch {
+        // Best-effort cleanup must not hide the original save failure.
+      }
+      throw error;
+    }
   }
 }
