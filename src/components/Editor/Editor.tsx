@@ -6,7 +6,8 @@ import {
   useState,
 } from 'react';
 import { markdown } from '@codemirror/lang-markdown';
-import { EditorState } from '@codemirror/state';
+import { vim } from '@replit/codemirror-vim';
+import { Compartment, EditorState } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
 import type { ReactNode } from 'react';
 import {
@@ -29,14 +30,15 @@ export type EditorHandle = {
   activate: (tab: TabSnapshot) => void;
   openNote: (note: NoteData, vaultPath: string) => void;
 };
-type EditorProps = { tabs: ReactNode };
+type EditorProps = { vimMode: boolean; tabs: ReactNode };
 
 const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
-  { tabs },
+  { vimMode, tabs },
   ref,
 ) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const vimCompartment = useRef(new Compartment());
   const extensions = useRef<Extension[]>([]);
   const current = useRef<{ note: NoteData; vaultPath: string } | null>(null);
   const revision = useRef<string | null>(null);
@@ -112,6 +114,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     dirty.current = false;
     blocked.current = false;
     view.setState(tab.state);
+    view.dispatch({
+      effects: vimCompartment.current.reconfigure(vimMode ? vim() : []),
+    });
     view.scrollDOM.scrollTop = tab.scrollTop;
     setStatus('');
   };
@@ -150,6 +155,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     if (!host.current) return;
     extensions.current = [
       markdown(),
+      vimCompartment.current.of(vimMode ? vim() : []),
       ...markdownEditorExtensions,
       EditorView.lineWrapping,
       drawSelection({ cursorBlinkRate: 1000 }),
@@ -183,6 +189,12 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       viewRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: vimCompartment.current.reconfigure(vimMode ? vim() : []),
+    });
+  }, [vimMode]);
 
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 p-4 text-white">

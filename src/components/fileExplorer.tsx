@@ -2,11 +2,35 @@ import { useEffect, useRef, useState } from 'react';
 import { RiMenuUnfold4Fill } from 'react-icons/ri';
 import Note from './Note';
 
+function ShortcutHint({
+  children,
+  visible,
+}: {
+  children: React.ReactNode;
+  visible: boolean;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`pointer-events-none absolute left-1/2 top-full z-20 -translate-x-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${visible ? 'opacity-100' : 'opacity-0'}`}
+    >
+      {children}
+    </span>
+  );
+}
+
 type FileExplorerProps = {
   onNoteSelect: (path: string) => void;
   onVaultChange: () => void;
   onVaultPath: (path: string) => void;
   beforeVaultChange: () => Promise<boolean>;
+  vimMode: boolean;
+  onVimModeChange: (enabled: boolean) => void;
+  openFileShortcut: boolean;
+  onOpenFileShortcutChange: (enabled: boolean) => void;
+  toggleExplorerShortcut: boolean;
+  commandHeld: boolean;
+  onToggleExplorerShortcutChange: (enabled: boolean) => void;
   selectedPath: string | null;
   onNotesChange: (
     notes: Awaited<ReturnType<typeof window.vault.listNotes>>,
@@ -20,6 +44,13 @@ export default function FileExplorer({
   onVaultChange,
   onVaultPath,
   beforeVaultChange,
+  vimMode,
+  onVimModeChange,
+  openFileShortcut,
+  onOpenFileShortcutChange,
+  toggleExplorerShortcut,
+  commandHeld,
+  onToggleExplorerShortcutChange,
   selectedPath,
   onNotesChange,
   collapsed,
@@ -101,11 +132,16 @@ export default function FileExplorer({
             <button
               type="button"
               aria-label="Hide file explorer"
-              title="Hide file explorer"
+              title="Hide file explorer (⌘/Ctrl+B)"
               onClick={onToggleCollapsed}
               className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
             >
               <RiMenuUnfold4Fill aria-hidden="true" />
+              <ShortcutHint visible={commandHeld && toggleExplorerShortcut}>
+                {navigator.platform.toLowerCase().includes('mac')
+                  ? '⌘B'
+                  : 'Ctrl+B'}
+              </ShortcutHint>
             </button>
             <button
               ref={settingsButtonRef}
@@ -115,6 +151,11 @@ export default function FileExplorer({
               onClick={() => setSettingsOpen(true)}
               className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
             >
+              <ShortcutHint visible={commandHeld}>
+                {navigator.platform.toLowerCase().includes('mac')
+                  ? '⌘,'
+                  : 'Ctrl+,'}
+              </ShortcutHint>
               <svg
                 aria-hidden="true"
                 viewBox="0 0 24 24"
@@ -226,7 +267,59 @@ export default function FileExplorer({
                 Change vault
               </button>
             </div>
-            <p className="mt-6 text-xs text-white/40">Open settings with ⌘ + ,</p>
+            <label className="mt-6 flex cursor-pointer items-center justify-between gap-4">
+              <span>
+                <span className="block font-medium">Vim keybindings</span>
+                <span className="mt-1 block text-xs text-white/50">
+                  Use Esc for normal mode and i to insert.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={vimMode}
+                onChange={(event) => onVimModeChange(event.target.checked)}
+                className="h-4 w-4 accent-blue-500"
+              />
+            </label>
+            <div className="mt-6 space-y-4 border-t border-white/10 pt-4">
+              <label className="flex cursor-pointer items-center justify-between gap-4">
+                <span>
+                  <span className="block text-sm font-medium">
+                    Open file shortcut
+                  </span>
+                  <span className="mt-1 block text-xs text-white/50">
+                    ⌘/Ctrl + P
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={openFileShortcut}
+                  onChange={(event) =>
+                    onOpenFileShortcutChange(event.target.checked)
+                  }
+                  className="h-4 w-4 accent-blue-500"
+                />
+              </label>
+              <label className="flex cursor-pointer items-center justify-between gap-4">
+                <span>
+                  <span className="block text-sm font-medium">
+                    Toggle file explorer shortcut
+                  </span>
+                  <span className="mt-1 block text-xs text-white/50">
+                    ⌘/Ctrl + B
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={toggleExplorerShortcut}
+                  onChange={(event) =>
+                    onToggleExplorerShortcutChange(event.target.checked)
+                  }
+                  className="h-4 w-4 accent-blue-500"
+                />
+              </label>
+              <p className="text-xs text-white/50">Open settings: ⌘ + ,</p>
+            </div>
           </section>
         </div>
       )}

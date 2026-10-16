@@ -30,6 +30,9 @@ declare global {
       readNote: (relativePath: string) => Promise<NoteData>;
       saveNote: (request: SaveNoteRequest) => Promise<SaveNoteResult>;
       onSettingsOpen: (callback: () => void) => () => void;
+      onOpenFile: (callback: () => void) => () => void;
+      onToggleExplorer: (callback: () => void) => () => void;
+      setShortcutEnabled: (shortcut: 'openFile' | 'toggleExplorer', enabled: boolean) => void;
       onShutdownFlush: (callback: (requestId: string) => void) => () => void;
       acknowledgeShutdownFlush: (
         requestId: string,

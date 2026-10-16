@@ -8,6 +8,17 @@ let shutdownAllowed = false;
 let shutdownInFlight: Promise<boolean> | null = null;
 const closeAllowed = new WeakSet<BrowserWindow>();
 const shutdownAcks = new Map<string, (succeeded: boolean) => void>();
+let openFileMenuItem: Electron.MenuItem | null = null;
+let toggleExplorerMenuItem: Electron.MenuItem | null = null;
+
+ipcMain.on('shortcut:set-enabled', (_event, shortcut: unknown, enabled: unknown) => {
+  if (typeof enabled !== 'boolean') return;
+  if (shortcut === 'openFile' && openFileMenuItem)
+    openFileMenuItem.enabled = enabled;
+  if (shortcut === 'toggleExplorer' && toggleExplorerMenuItem)
+    toggleExplorerMenuItem.enabled = enabled;
+});
+
 ipcMain.handle(
   'shutdown:ack',
   (_event, requestId: unknown, succeeded: unknown) => {
@@ -136,6 +147,28 @@ app.whenReady().then(() => {
             window?.webContents.send('settings:open');
           },
         },
+        {
+          id: 'open-file-shortcut',
+          label: 'Open File…',
+          accelerator: 'CommandOrControl+P',
+          click: () => {
+            const window =
+              BrowserWindow.getFocusedWindow() ??
+              BrowserWindow.getAllWindows()[0];
+            window?.webContents.send('file:open');
+          },
+        },
+        {
+          id: 'toggle-explorer-shortcut',
+          label: 'Toggle File Explorer',
+          accelerator: 'CommandOrControl+B',
+          click: () => {
+            const window =
+              BrowserWindow.getFocusedWindow() ??
+              BrowserWindow.getAllWindows()[0];
+            window?.webContents.send('explorer:toggle');
+          },
+        },
         { type: 'separator' },
         { role: 'about' },
         { type: 'separator' },
@@ -185,6 +218,8 @@ app.whenReady().then(() => {
     },
   ]);
   app.applicationMenu = menu;
+  openFileMenuItem = menu.getMenuItemById('open-file-shortcut');
+  toggleExplorerMenuItem = menu.getMenuItemById('toggle-explorer-shortcut');
   createWindow();
 
   // On OS X it's common to re-create a window in the app when the

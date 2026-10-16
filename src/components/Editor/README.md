@@ -7,7 +7,7 @@ The editor uses CodeMirror's standard history and key bindings, plus Markdown-aw
 - **Tab / Shift+Tab:** indent / outdent the selected lines by two spaces. In a code fence or other Markdown language region, CodeMirror's indentation rules can apply on input.
 - **Long lines:** wrap in the editor rather than requiring horizontal scrolling.
 
-Each open note has its own in-memory CodeMirror `EditorState`, preserving document, selection, scroll position, and undo history while switching readable tabs. Tabs are session-only. The active note keeps the existing debounced autosave and flush-before-switch behavior; inactive notes are not independently autosaved.
+Each open note has its own in-memory CodeMirror `EditorState`, preserving document, selection, scroll position, and undo history while switching readable tabs. Tabs are session-only. The active note keeps the existing debounced autosave and flush-before-switch behavior; inactive notes are not independently autosaved. Vim mode is reconfigured on each restored state.
 
 ## Window layout
 

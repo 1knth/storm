@@ -52,6 +52,7 @@
   "dependencies": {
     "@codemirror/commands": "6.8.1",
     "@codemirror/lang-markdown": "^6.5.2",
+    "@replit/codemirror-vim": "6.3.0",
     "electron-squirrel-startup": "^1.0.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

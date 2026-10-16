@@ -19,6 +19,20 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.on('settings:open', listener);
     return () => ipcRenderer.removeListener('settings:open', listener);
   },
+  onOpenFile: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('file:open', listener);
+    return () => ipcRenderer.removeListener('file:open', listener);
+  },
+  onToggleExplorer: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('explorer:toggle', listener);
+    return () => ipcRenderer.removeListener('explorer:toggle', listener);
+  },
+  setShortcutEnabled: (
+    shortcut: 'openFile' | 'toggleExplorer',
+    enabled: boolean,
+  ): void => ipcRenderer.send('shortcut:set-enabled', shortcut, enabled),
   onShutdownFlush: (callback: (requestId: string) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, requestId: string) =>
       callback(requestId);

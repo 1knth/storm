@@ -7,6 +7,23 @@ import type { EditorHandle, TabSnapshot } from './components/Editor/Editor';
 import TabBar from './components/Editor/TabBar';
 import { RiMenuUnfold4Fill } from 'react-icons/ri';
 
+function ShortcutHint({
+  children,
+  visible,
+}: {
+  children: React.ReactNode;
+  visible: boolean;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`pointer-events-none absolute left-1/2 top-full z-20 -translate-x-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${visible ? 'opacity-100' : 'opacity-0'}`}
+    >
+      {children}
+    </span>
+  );
+}
+
 function App() {
   const editorRef = useRef<EditorHandle>(null);
   const navigationBusy = useRef(false);
@@ -14,6 +31,7 @@ function App() {
   const [activePath, setActivePath] = useState<string | null>(null);
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
+  const [commandHeld, setCommandHeld] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [notes, setNotes] = useState<
@@ -22,13 +40,82 @@ function App() {
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const pickerInputRef = useRef<HTMLInputElement>(null);
   const pickerInvokerRef = useRef<HTMLElement | null>(null);
+  const [vimMode, setVimMode] = useState(() => {
+    try {
+      return window.localStorage.getItem('storm.vimMode') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [openFileShortcut, setOpenFileShortcut] = useState(() => {
+    try {
+      return window.localStorage.getItem('storm.shortcut.openFile') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [toggleExplorerShortcut, setToggleExplorerShortcut] = useState(() => {
+    try {
+      return (
+        window.localStorage.getItem('storm.shortcut.toggleExplorer') !== 'false'
+      );
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('storm.vimMode', String(vimMode));
+    } catch {
+      /* Optional preference. */
+    }
+  }, [vimMode]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        'storm.shortcut.openFile',
+        String(openFileShortcut),
+      );
+      window.localStorage.setItem(
+        'storm.shortcut.toggleExplorer',
+        String(toggleExplorerShortcut),
+      );
+    } catch {
+      /* Optional preference. */
+    }
+    window.vault.setShortcutEnabled('openFile', openFileShortcut);
+    window.vault.setShortcutEnabled('toggleExplorer', toggleExplorerShortcut);
+  }, [openFileShortcut, toggleExplorerShortcut]);
+  useEffect(() => {
+    const updateModifier = (event: KeyboardEvent) =>
+      setCommandHeld(
+        navigator.platform.toLowerCase().includes('mac')
+          ? event.metaKey
+          : event.ctrlKey,
+      );
+    const clearModifier = () => setCommandHeld(false);
+    window.addEventListener('keydown', updateModifier);
+    window.addEventListener('keyup', updateModifier);
+    window.addEventListener('blur', clearModifier);
+    document.addEventListener('visibilitychange', clearModifier);
+    return () => {
+      window.removeEventListener('keydown', updateModifier);
+      window.removeEventListener('keyup', updateModifier);
+      window.removeEventListener('blur', clearModifier);
+      document.removeEventListener('visibilitychange', clearModifier);
+    };
+  }, []);
   useEffect(() => {
     const unsubscribeOpen = window.vault.onOpenFile(() => {
       pickerInvokerRef.current = document.activeElement as HTMLElement;
       setPickerOpen(true);
     });
+    const unsubscribeToggle = window.vault.onToggleExplorer(() =>
+      setExplorerCollapsed((collapsed) => !collapsed),
+    );
     return () => {
       unsubscribeOpen();
+      unsubscribeToggle();
     };
   }, []);
 
@@ -168,6 +255,13 @@ function App() {
           beforeVaultChange={() =>
             editorRef.current?.flush() ?? Promise.resolve(true)
           }
+          vimMode={vimMode}
+          onVimModeChange={setVimMode}
+          openFileShortcut={openFileShortcut}
+          onOpenFileShortcutChange={setOpenFileShortcut}
+          toggleExplorerShortcut={toggleExplorerShortcut}
+          commandHeld={commandHeld}
+          onToggleExplorerShortcutChange={setToggleExplorerShortcut}
           selectedPath={activePath}
         />
         {explorerCollapsed && (
@@ -180,10 +274,16 @@ function App() {
             className="absolute left-3 top-3 z-10 rounded-md bg-black/50 p-2 text-white/75 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
           >
             <RiMenuUnfold4Fill aria-hidden="true" className="h-4 w-4" />
+            <ShortcutHint visible={commandHeld && toggleExplorerShortcut}>
+              {navigator.platform.toLowerCase().includes('mac')
+                ? '⌘B'
+                : 'Ctrl+B'}
+            </ShortcutHint>
           </button>
         )}
         <Editor
           ref={editorRef}
+          vimMode={vimMode}
           tabs={
             <TabBar
               tabs={tabs}
