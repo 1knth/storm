@@ -78,6 +78,12 @@ export interface VaultEntry {
   peek: string;
 }
 
+export interface DeleteEntryResult {
+  deleted: boolean;
+  path: string;
+  kind: 'note' | 'folder';
+}
+
 declare global {
   interface Window {
     vault: {
@@ -115,6 +121,10 @@ declare global {
       listNotes: () => Promise<VaultEntry[]>;
       createNote: (request: CreateEntryRequest) => Promise<VaultEntry>;
       createFolder: (request: CreateEntryRequest) => Promise<VaultEntry>;
+      deleteEntry: (request: {
+        vaultId: string;
+        path: string;
+      }) => Promise<DeleteEntryResult>;
       onCreateEntry: (
         callback: (kind: 'note' | 'folder') => void,
       ) => () => void;
@@ -129,6 +139,7 @@ declare global {
         callback: (pane: 'vaults' | 'explorer' | 'editor') => void,
       ) => () => void;
       onTogglePreview: (callback: () => void) => () => void;
+      onFormat: (callback: (kind: 'bold' | 'italic') => void) => () => void;
       onSelectTabIndex: (callback: (index: number) => void) => () => void;
       onActivateVaultIndex: (callback: (index: number) => void) => () => void;
       setShortcutEnabled: (

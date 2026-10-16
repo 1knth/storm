@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import started from 'electron-squirrel-startup';
@@ -7,6 +7,10 @@ import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
 import { readVaultImage } from './vault/vaultAssets';
 import { createFolder, createMarkdownNote } from './vault/vaultCreation';
+import {
+  assertDeletionTargetUnchanged,
+  resolveDeletionTarget,
+} from './vault/vaultDeletion';
 
 const vaultService = new VaultService();
 const vaultRegistry = new VaultRegistry(app.getPath('userData'));
@@ -350,6 +354,37 @@ ipcMain.handle('vault:create-folder', async (_event, request: unknown) => {
   return createFolder(vault.path, parentRelativePath, name);
 });
 
+ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    throw new Error('Invalid deletion request');
+  const { vaultId, path: relativePath } = request as Record<string, unknown>;
+  if (typeof vaultId !== 'string' || typeof relativePath !== 'string')
+    throw new Error('Invalid deletion request');
+  const vault = await vaultRegistry.getById(vaultId);
+  if (!vault) throw new Error('Unknown vault');
+  const target = await resolveDeletionTarget(vault.path, relativePath);
+  const window = BrowserWindow.fromWebContents(event.sender);
+  const contains =
+    target.kind === 'folder' ? ' Its entire contents will be moved.' : '';
+  const choice = await dialog.showMessageBox(
+    window ?? BrowserWindow.getFocusedWindow()!,
+    {
+      type: 'warning',
+      buttons: ['Cancel', 'Move to Trash'],
+      defaultId: 0,
+      cancelId: 0,
+      message: `Move “${target.relativePath}” to Trash?`,
+      detail: `${target.kind === 'folder' ? 'Folder.' : 'Markdown note.'}${contains}`,
+      noLink: true,
+    },
+  );
+  if (choice.response !== 1)
+    return { deleted: false, path: target.relativePath, kind: target.kind };
+  await assertDeletionTargetUnchanged(target);
+  await shell.trashItem(target.absolutePath);
+  return { deleted: true, path: target.relativePath, kind: target.kind };
+});
+
 ipcMain.handle('vault:list-notes', async () => vaultService.listNotes());
 
 ipcMain.handle('vault:read-note', async (_event, relativePath: unknown) =>
@@ -423,7 +458,7 @@ app.whenReady().then(() => {
         {
           id: 'toggle-explorer-shortcut',
           label: 'Toggle File Explorer',
-          accelerator: 'CommandOrControl+B',
+          accelerator: 'CommandOrControl+S',
           click: () => {
             const window =
               BrowserWindow.getFocusedWindow() ??
@@ -453,6 +488,25 @@ app.whenReady().then(() => {
         { role: 'copy' },
         { role: 'paste' },
         { role: 'selectAll' },
+        { type: 'separator' },
+        {
+          label: 'Bold',
+          accelerator: 'CommandOrControl+B',
+          click: () =>
+            BrowserWindow.getFocusedWindow()?.webContents.send(
+              'editor:format',
+              'bold',
+            ),
+        },
+        {
+          label: 'Italic',
+          accelerator: 'CommandOrControl+I',
+          click: () =>
+            BrowserWindow.getFocusedWindow()?.webContents.send(
+              'editor:format',
+              'italic',
+            ),
+        },
       ],
     },
     {
@@ -463,7 +517,7 @@ app.whenReady().then(() => {
             label: `Focus ${label}`,
             accelerator:
               process.platform === 'darwin'
-                ? `CommandOrControl+${['J', 'K', 'L'][index]}`
+                ? `Control+${index + 1}`
                 : `Alt+${index + 1}`,
             click: () =>
               BrowserWindow.getFocusedWindow()?.webContents.send(

@@ -10,6 +10,7 @@ import type {
   CreateEntryRequest,
   VaultGroup,
   SavedTabLayout,
+  DeleteEntryResult,
 } from './shared/types';
 import type { GroupColor } from './shared/groupColors';
 
@@ -70,6 +71,11 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.invoke('vault:create-note', request),
   createFolder: (request: CreateEntryRequest): Promise<VaultEntry> =>
     ipcRenderer.invoke('vault:create-folder', request),
+  deleteEntry: (request: {
+    vaultId: string;
+    path: string;
+  }): Promise<DeleteEntryResult> =>
+    ipcRenderer.invoke('vault:delete-entry', request),
   onCreateEntry: (
     callback: (kind: 'note' | 'folder') => void,
   ): (() => void) => {
@@ -128,6 +134,13 @@ contextBridge.exposeInMainWorld('vault', {
     };
     ipcRenderer.on('pane:focus', listener);
     return () => ipcRenderer.removeListener('pane:focus', listener);
+  },
+  onFormat: (callback: (kind: 'bold' | 'italic') => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, kind: unknown) => {
+      if (kind === 'bold' || kind === 'italic') callback(kind);
+    };
+    ipcRenderer.on('editor:format', listener);
+    return () => ipcRenderer.removeListener('editor:format', listener);
   },
   onTogglePreview: (callback: () => void): (() => void) => {
     const listener = () => callback();
