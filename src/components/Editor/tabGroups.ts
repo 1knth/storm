@@ -17,6 +17,17 @@ export const getTabId = (tab: TabSnapshot) =>
   tab.kind === 'note' ? tab.note.path : tab.id;
 
 export const hasOpenTabs = (tabs: TabSnapshot[]) => tabs.length > 0;
+
+/** Empty layouts must not retain editor-strip groups or tab assignments. */
+export function normalizeTabGroupState(
+  tabs: TabSnapshot[],
+  groups: TabGroup[],
+  assignments: TabAssignments,
+) {
+  return tabs.length === 0
+    ? { groups: [] as TabGroup[], assignments: {} as TabAssignments }
+    : { groups, assignments };
+}
 export type TabStripUnit =
   | { type: 'tab'; tab: TabSnapshot }
   | { type: 'group'; group: TabGroup; tabs: TabSnapshot[] };

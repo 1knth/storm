@@ -5,6 +5,7 @@ import {
   cleanTabAssignments,
   getTabId,
   hasOpenTabs,
+  normalizeTabGroupState,
   moveTab,
   moveTabGroup,
   moveTabGroupBlock,
@@ -27,6 +28,27 @@ const groups = [
 test('shows the tab bar only when at least one tab is open, regardless of groups', () => {
   assert.equal(hasOpenTabs([]), false);
   assert.equal(hasOpenTabs(tabs), true);
+});
+test('clears groups and assignments only when the actual tab list is empty', () => {
+  const assigned = { a: 'g1' };
+  assert.deepEqual(normalizeTabGroupState([], groups, assigned), {
+    groups: [],
+    assignments: {},
+  });
+  assert.deepEqual(normalizeTabGroupState([tabs[0]], groups, assigned), {
+    groups,
+    assignments: assigned,
+  });
+  // A collapsed group with real members still has open tabs.
+  assert.deepEqual(
+    normalizeTabGroupState([tabs[0]], groups, assigned).groups,
+    groups,
+  );
+  // Empty tabs are real tabs too.
+  assert.equal(
+    normalizeTabGroupState([tabs[0]], groups, assigned).groups.length,
+    2,
+  );
 });
 test('uses stable fallback colors and the approved palette for groups', () => {
   const firstColor = tabGroupColor(groups[0], 0);

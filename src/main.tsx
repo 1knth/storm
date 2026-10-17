@@ -11,6 +11,7 @@ import type { EditorHandle, TabSnapshot } from './components/Editor/Editor';
 import TabBar from './components/Editor/TabBar';
 import {
   cleanTabAssignments,
+  normalizeTabGroupState,
   getTabId,
   hasOpenTabs,
   moveTab,
@@ -153,11 +154,24 @@ function App() {
             : tab,
         )
       : tabsRef.current;
+    const normalized = normalizeTabGroupState(
+      currentTabs,
+      groupsRef.current,
+      assignmentsRef.current,
+    );
+    if (!currentTabs.length) {
+      groupsRef.current = normalized.groups;
+      assignmentsRef.current = normalized.assignments;
+      setTabGroups(normalized.groups);
+      setTabGroupAssignments(normalized.assignments);
+    }
     sessions.current.set(vaultId, {
       tabs: currentTabs,
-      activeId: activeIdRef.current,
-      groups: groupsRef.current,
-      assignments: assignmentsRef.current,
+      activeId: currentTabs.some((tab) => getTabId(tab) === activeIdRef.current)
+        ? activeIdRef.current
+        : null,
+      groups: normalized.groups,
+      assignments: normalized.assignments,
     });
     scheduleCheckpoint();
   };
@@ -447,11 +461,33 @@ function App() {
 
   useEffect(() => {
     if (!pickerOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      // Only take Escape when this palette is the topmost modal. Capture phase
+      // lets it win over editor/Vim handlers and already-prevented events.
+      const otherModal = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[role="dialog"][aria-modal="true"]',
+        ),
+      ).some(
+        (dialog) =>
+          dialog.getAttribute('aria-labelledby') !== 'open-file-title' &&
+          isEligibleFocusTarget(dialog),
+      );
+      if (otherModal) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setPickerOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape, true);
+    return () => window.removeEventListener('keydown', closeOnEscape, true);
+  }, [pickerOpen]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setPickerOpen(false);
-      } else if (event.key === 'ArrowDown') {
+      if (event.key === 'Escape') return;
+      if (event.key === 'ArrowDown') {
         event.preventDefault();
         setHighlightedIndex((index) =>
           Math.min(index + 1, matchingNotes.length - 1),
@@ -856,9 +892,21 @@ function App() {
         );
         return;
       }
-      const groups = layout.groups.map((group) => ({ ...group }) as TabGroup);
+      const savedGroups = layout.groups.map(
+        (group) => ({ ...group }) as TabGroup,
+      );
       const ids = restored.map(getTabId);
-      const assignments = cleanTabAssignments(layout.assignments, ids, groups);
+      const savedAssignments = cleanTabAssignments(
+        layout.assignments,
+        ids,
+        savedGroups,
+      );
+      const normalized = normalizeTabGroupState(
+        restored,
+        savedGroups,
+        savedAssignments,
+      );
+      const { groups, assignments } = normalized;
       const selected =
         restored.find((tab) => getTabId(tab) === layout.activeTab) ??
         restored[0] ??
@@ -950,7 +998,13 @@ function App() {
       const assignments = { ...assignmentsRef.current };
       for (const tab of freshTabs)
         if (matchesDeleted(tab)) delete assignments[getTabId(tab)];
-      const groups = groupsRef.current;
+      const normalized = normalizeTabGroupState(
+        remaining,
+        groupsRef.current,
+        assignments,
+      );
+      const { groups } = normalized;
+      const nextAssignments = normalized.assignments;
       const activeIndex = freshTabs.findIndex(
         (tab) => getTabId(tab) === currentActiveId,
       );
@@ -974,18 +1028,18 @@ function App() {
       tabsRef.current = remaining;
       activeIdRef.current = nextActive ? getTabId(nextActive) : null;
       groupsRef.current = groups;
-      assignmentsRef.current = assignments;
+      assignmentsRef.current = nextAssignments;
       setTabs(remaining);
       setActiveId(activeIdRef.current);
       setActivePath(nextActive?.kind === 'note' ? nextActive.note.path : null);
       setTabGroups(groups);
-      setTabGroupAssignments(assignments);
+      setTabGroupAssignments(nextAssignments);
       visitedVaults.current.add(vaultId);
       sessions.current.set(vaultId, {
         tabs: remaining,
         activeId: activeIdRef.current,
         groups,
-        assignments,
+        assignments: nextAssignments,
       });
       if (checkpointTimer.current) {
         clearTimeout(checkpointTimer.current);
@@ -1000,7 +1054,7 @@ function App() {
             remaining,
             activeIdRef.current,
             groups,
-            assignments,
+            nextAssignments,
             new Map(remaining.map((tab) => [getTabId(tab), tab])),
           ),
         );
@@ -1187,11 +1241,19 @@ function App() {
     const targetId = target.kind === 'note' ? target.note.path : target.id;
     if (activeVaultId) visitedVaults.current.add(activeVaultId);
     if (targetId !== activeId) {
-      setTabs((old) =>
-        old.filter(
-          (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) !== targetId,
-        ),
+      const remaining = tabs.filter((tab) => getTabId(tab) !== targetId);
+      const normalized = normalizeTabGroupState(
+        remaining,
+        groupsRef.current,
+        assignmentsRef.current,
       );
+      if (!remaining.length) {
+        groupsRef.current = normalized.groups;
+        assignmentsRef.current = normalized.assignments;
+        setTabGroups(normalized.groups);
+        setTabGroupAssignments(normalized.assignments);
+      }
+      setTabs(remaining);
       setTabGroupAssignments((assignments) => {
         const next = { ...assignments };
         delete next[targetId];
@@ -1214,11 +1276,19 @@ function App() {
         setActiveId(null);
       }
       setTabs(remaining);
-      setTabGroupAssignments((assignments) =>
+      const normalized = normalizeTabGroupState(
+        remaining,
+        groupsRef.current,
         Object.fromEntries(
-          Object.entries(assignments).filter(([id]) => id !== targetId),
+          Object.entries(assignmentsRef.current).filter(
+            ([id]) => id !== targetId,
+          ),
         ),
       );
+      groupsRef.current = normalized.groups;
+      assignmentsRef.current = normalized.assignments;
+      if (!remaining.length) setTabGroups(normalized.groups);
+      setTabGroupAssignments(normalized.assignments);
     } finally {
       navigationBusy.current = false;
     }
@@ -1310,6 +1380,15 @@ function App() {
           }
         }
       }
+      const normalizedSession = normalizeTabGroupState(
+        restoredTabs,
+        session?.groups ?? [],
+        cleanTabAssignments(
+          session?.assignments ?? {},
+          restoredTabs,
+          session?.groups ?? [],
+        ),
+      );
       const restoredId = restoredTabs.some(
         (tab) =>
           (tab.kind === 'note' ? tab.note.path : tab.id) === session?.activeId,
@@ -1326,15 +1405,12 @@ function App() {
       );
       if (activeTab) editorRef.current?.activate(activeTab);
       else editorRef.current?.clear();
+      tabsRef.current = restoredTabs;
+      groupsRef.current = normalizedSession.groups;
+      assignmentsRef.current = normalizedSession.assignments;
       setTabs(restoredTabs);
-      setTabGroups(session?.groups ?? []);
-      setTabGroupAssignments(
-        cleanTabAssignments(
-          session?.assignments ?? {},
-          restoredTabs,
-          session?.groups ?? [],
-        ),
-      );
+      setTabGroups(normalizedSession.groups);
+      setTabGroupAssignments(normalizedSession.assignments);
       setActiveId(restoredId);
       setActivePath(activeTab?.kind === 'note' ? activeTab.note.path : null);
       setActiveVaultId(id);
