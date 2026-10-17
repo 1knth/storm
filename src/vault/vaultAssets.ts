@@ -37,7 +37,12 @@ function inside(root: string, target: string): boolean {
 function safeImageName(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 2048)
     throw new Error('Invalid image path');
-  const name = value.trim();
+  let name = value.trim();
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    throw new Error('Invalid image path');
+  }
   if (/^(?:[a-z][a-z\d+.-]*:|\\\\|\/\/)/i.test(name))
     throw new Error('Image path must be vault-relative');
   return name;
@@ -97,7 +102,18 @@ export async function readVaultImage(
     !rootRelative.includes('/') &&
     !rootRelative.includes(path.sep)
   ) {
-    candidates = await findBareImage(root, rootRelative);
+    const noteDirectory = path.dirname(note);
+    const preferred = path.join(noteDirectory, 'images', rootRelative);
+    const besideNote = path.join(noteDirectory, rootRelative);
+    const vaultRoot = path.join(root, rootRelative);
+    const localCandidates = [preferred, besideNote, vaultRoot];
+    const localMatches = await existingSafe(localCandidates, root);
+    if (localMatches.length) {
+      // A deterministic local match wins over unrelated duplicate basenames.
+      candidates = [localMatches[0]];
+    } else {
+      candidates = await findBareImage(root, rootRelative);
+    }
   } else {
     const target =
       image.startsWith('/') || image.startsWith('\\')
@@ -106,8 +122,19 @@ export async function readVaultImage(
     if (!inside(root, target))
       throw new Error('Image path is outside the vault');
     candidates = [target];
+    if (
+      kind === 'wiki' &&
+      !image.startsWith('/') &&
+      !image.startsWith('\\\\')
+    ) {
+      const vaultTarget = path.resolve(root, rootRelative);
+      if (vaultTarget !== target) candidates.push(vaultTarget);
+    }
   }
-  const files = await existingSafe(candidates, root);
+  let files = await existingSafe(candidates, root);
+  if (kind === 'wiki' && files.length > 1 && candidates.length > 1) {
+    files = await existingSafe([candidates[0]], root);
+  }
   if (files.length !== 1)
     throw new Error(files.length ? 'Ambiguous image path' : 'Image not found');
   const file = files[0];

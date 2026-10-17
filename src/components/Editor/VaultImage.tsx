@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { vaultImageErrorMessage } from './vaultImageError';
 
 interface VaultImageProps {
   vaultId: string;
@@ -18,17 +19,27 @@ export function VaultImage({
   kind = 'markdown',
 }: VaultImageProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let objectUrl: string | null = null;
     setImageUrl(null);
-    setError(false);
+    setError(null);
     window.vault
       .readImage({ vaultId, notePath, imagePath: src, kind })
       .then((image) => {
         if (cancelled) return;
+        if (!image.ok) {
+          const messages = {
+            'not-found': 'Image not found in this vault.',
+            ambiguous: 'Multiple matching images found in this vault.',
+            unsupported: 'This image format or content is not supported.',
+            unavailable: 'Image could not be read from this vault.',
+          };
+          setError(messages[image.reason]);
+          return;
+        }
         const binary = atob(image.base64);
         const bytes = new Uint8Array(binary.length);
         for (let index = 0; index < binary.length; index++)
@@ -38,8 +49,8 @@ export function VaultImage({
         );
         setImageUrl(objectUrl);
       })
-      .catch(() => {
-        if (!cancelled) setError(true);
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(vaultImageErrorMessage(reason));
       });
     return () => {
       cancelled = true;
@@ -49,8 +60,8 @@ export function VaultImage({
 
   if (error)
     return (
-      <span role="img" aria-label={alt || 'Image unavailable'}>
-        Image unavailable
+      <span role="img" aria-label={alt || error}>
+        {error}
       </span>
     );
   if (!imageUrl) return <span role="status">Loading image…</span>;

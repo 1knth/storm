@@ -33,6 +33,7 @@ type Props = {
   vaultId: string;
   notePath: string;
   onToggleTask?: (payload: TaskTogglePayload) => void;
+  onOpenNote?: (target: string) => void;
   compact?: boolean;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   onScroll?: () => void;
@@ -88,6 +89,47 @@ function remarkWikiImages() {
   };
 }
 
+function remarkWikiLinks() {
+  return (tree: any) => {
+    const visit = (node: any) => {
+      if (!Array.isArray(node.children)) return;
+      const children: any[] = [];
+      for (const child of node.children) {
+        if (child.type === 'text') {
+          const pattern = /(?<!!)\[\[([^\]]+)\]\]/g;
+          let start = 0;
+          let match: RegExpExecArray | null;
+          while ((match = pattern.exec(child.value))) {
+            if (match.index > start)
+              children.push({
+                type: 'text',
+                value: child.value.slice(start, match.index),
+              });
+            const [rawTarget, rawLabel] = match[1].split('|', 2);
+            const target = rawTarget.trim();
+            if (target)
+              children.push({
+                type: 'link',
+                url: `vault-note:${encodeURIComponent(target)}`,
+                children: [
+                  { type: 'text', value: (rawLabel ?? target).trim() },
+                ],
+              });
+            start = pattern.lastIndex;
+          }
+          if (start < child.value.length)
+            children.push({ type: 'text', value: child.value.slice(start) });
+        } else {
+          if (child.type !== 'code' && child.type !== 'image') visit(child);
+          children.push(child);
+        }
+      }
+      node.children = children;
+    };
+    visit(tree);
+  };
+}
+
 const AppearanceContext = createContext<Appearance | null>(null);
 
 function MarkdownPre({
@@ -128,6 +170,7 @@ function MarkdownPreview({
   vaultId,
   notePath,
   onToggleTask,
+  onOpenNote,
   compact = false,
   scrollRef,
   onScroll,
@@ -159,6 +202,7 @@ function MarkdownPreview({
               remarkGfm,
               () => remarkTaskOffsets(markdown),
               remarkWikiImages,
+              remarkWikiLinks,
             ]}
             rehypePlugins={[sourcePositions, markdownMathRehypePlugin]}
             components={{
@@ -250,15 +294,24 @@ function MarkdownPreview({
                   </li>
                 );
               },
-              a: ({ children }) => (
-                <a
-                  href="#"
-                  onClick={(event) => event.preventDefault()}
-                  aria-disabled="true"
-                >
-                  {children}
-                </a>
-              ),
+              a: ({ children, href }) => {
+                const target =
+                  typeof href === 'string' && href.startsWith('vault-note:')
+                    ? decodeURIComponent(href.slice('vault-note:'.length))
+                    : null;
+                return (
+                  <a
+                    href={target ? '#' : undefined}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      if (target) onOpenNote?.(target);
+                    }}
+                    aria-disabled={!target || !onOpenNote}
+                  >
+                    {children}
+                  </a>
+                );
+              },
               img: ({ src, alt, width, node }) => (
                 <VaultImage
                   vaultId={vaultId}

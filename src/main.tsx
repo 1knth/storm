@@ -1105,6 +1105,38 @@ function App() {
     }
   };
 
+  const openWikiNote = async (target: string, sourceNotePath = activePath) => {
+    if (!activeVaultId || !sourceNotePath) return;
+    const vaultId = activeVaultId;
+    const notePath = sourceNotePath;
+    const requestId = ++noteRequestId.current;
+    try {
+      const result = await window.vault.resolveNoteLink({
+        vaultId,
+        notePath,
+        target,
+      });
+      if (
+        requestId !== noteRequestId.current ||
+        vaultId !== activeVaultIdRef.current
+      )
+        return;
+      if (!result.ok) {
+        notifyError(
+          result.reason === 'ambiguous'
+            ? 'Note link is ambiguous.'
+            : result.reason === 'missing'
+              ? 'Note not found.'
+              : 'Invalid note link.',
+        );
+        return;
+      }
+      await selectNote(result.path);
+    } catch {
+      notifyError('Note could not be opened.');
+    }
+  };
+
   const activateTab = (tab: TabSnapshot) => {
     const groupId = tabGroupAssignments[getTabId(tab)];
     if (groupId)
@@ -1642,6 +1674,7 @@ function App() {
         <Editor
           ref={editorRef}
           readingMode={readingMode}
+          onOpenNote={openWikiNote}
           onToggleReadingMode={toggleReadingMode}
           commandHeld={commandHeld}
           vimMode={vimMode}
@@ -1803,6 +1836,9 @@ function App() {
                     markdown={pickerPreview.markdown}
                     vaultId={activeVaultId ?? ''}
                     notePath={pickerPreview.path}
+                    onOpenNote={(target) =>
+                      openWikiNote(target, pickerPreview.path)
+                    }
                     appearance={appearance}
                   />
                 ) : (
