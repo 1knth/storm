@@ -1434,6 +1434,77 @@ function App() {
     }
   };
 
+  const unloadAllVaults = async (): Promise<boolean> => {
+    if (navigationBusy.current || !beginVaultChange()) return false;
+    navigationBusy.current = true;
+    try {
+      if (!(await editorRef.current?.flush()))
+        throw new Error(
+          'Could not save the current note; vaults were not unloaded.',
+        );
+      const currentVault = activeVaultIdRef.current;
+      if (currentVault && visitedVaults.current.has(currentVault))
+        rememberCurrentSession(currentVault);
+      if (checkpointTimer.current) {
+        clearTimeout(checkpointTimer.current);
+        checkpointTimer.current = null;
+      }
+      await checkpointInFlight.current;
+      for (const [vaultId, session] of sessions.current) {
+        await window.vault.saveTabLayout(
+          vaultId,
+          serializeTabLayout(
+            session.tabs,
+            session.activeId,
+            session.groups,
+            session.assignments,
+            new Map(session.tabs.map((tab) => [getTabId(tab), tab])),
+          ),
+        );
+      }
+      await window.vault.registryUnloadAll();
+      ++noteRequestId.current;
+      ++pickerPreviewRequest.current;
+      editorRef.current?.clear();
+      sessions.current.clear();
+      visitedVaults.current.clear();
+      tabsRef.current = [];
+      activeIdRef.current = null;
+      groupsRef.current = [];
+      assignmentsRef.current = {};
+      setTabs([]);
+      setActivePath(null);
+      setActiveId(null);
+      setTabGroups([]);
+      setTabGroupAssignments({});
+      setVaults([]);
+      setVaultGroups([]);
+      setActiveVaultId(null);
+      activeVaultIdRef.current = null;
+      setVaultPath(null);
+      setNotes([]);
+      setEntriesLoading(false);
+      setReadingModes({});
+      setCreationName('');
+      setPickerOpen(false);
+      setQuery('');
+      setPickerPreview(null);
+      setPickerPreviewState(null);
+      setCreation(null);
+      setVaultError(null);
+      notifySuccess('All vaults unloaded. Your files were not changed.');
+      return true;
+    } catch (error) {
+      setVaultError(
+        error instanceof Error ? error.message : 'Unable to unload vaults.',
+      );
+      return false;
+    } finally {
+      navigationBusy.current = false;
+      cancelVaultChange();
+    }
+  };
+
   const addVault = async () => {
     if (navigationBusy.current || !beginVaultChange()) return;
     navigationBusy.current = true;
@@ -1649,6 +1720,8 @@ function App() {
             loading={entriesLoading}
             error={vaultError}
             onAddVault={addVault}
+            onUnloadAllVaults={unloadAllVaults}
+            vaultCount={vaults.length}
             collapsed={explorerCollapsed}
             onToggleCollapsed={() =>
               setExplorerCollapsed((collapsed) => !collapsed)
