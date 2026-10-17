@@ -60,7 +60,7 @@ const hasOpenModal = () =>
 function App() {
   const { notifyError, notifySuccess } = useToast();
   const editorRef = useRef<EditorHandle>(null);
-  const [readingMode, setReadingMode] = useState(false);
+  const [readingModes, setReadingModes] = useState<Record<string, boolean>>({});
   const [appearance, setAppearance] = useState<Appearance>(() =>
     loadAppearance(window.localStorage),
   );
@@ -96,6 +96,13 @@ function App() {
   const [vaultGroups, setVaultGroups] = useState<VaultGroup[]>([]);
   const visibleVaults = deriveVisibleVaults(vaults, vaultGroups);
   const [activeVaultId, setActiveVaultId] = useState<string | null>(null);
+  const readingModeKey =
+    activeVaultId && activePath
+      ? JSON.stringify([activeVaultId, activePath])
+      : null;
+  const readingMode = readingModeKey
+    ? readingModes[readingModeKey] === true
+    : false;
   const activeVaultIdRef = useRef<string | null>(null);
   const tabsRef = useRef(tabs);
   const activeIdRef = useRef(activeId);
@@ -1028,6 +1035,34 @@ function App() {
     }
   };
 
+  const openWikiNote = async (target: string) => {
+    try {
+      if (!activeVaultId || !activePath) return;
+      const requestId = ++noteRequestId.current;
+      const result = await window.vault.resolveNoteLink({
+        vaultId: activeVaultId,
+        notePath: activePath,
+        target,
+      });
+      if (requestId !== noteRequestId.current) return;
+      if (!result.ok) {
+        notifyError(
+          result.reason === 'ambiguous'
+            ? 'Note link is ambiguous.'
+            : result.reason === 'missing'
+              ? 'Note not found.'
+              : 'Invalid note link.',
+        );
+        return;
+      }
+      await selectNote(result.path);
+    } catch (error) {
+      notifyError(
+        error instanceof Error ? `${error.message}.` : 'Note not found.',
+      );
+    }
+  };
+
   const selectNote = async (path: string, focusEditor = true) => {
     if (path === activePath) {
       if (focusEditor) editorRef.current?.focus();
@@ -1473,13 +1508,16 @@ function App() {
   const toggleReadingMode = () => {
     if (navigationBusy.current || vaultTransition.current || hasOpenModal())
       return;
-    if (!readingMode && (!activePath || !activeId)) return;
-    setReadingMode((value) => !value);
+    if (!readingModeKey || !activeId) return;
+    setReadingModes((modes) => ({
+      ...modes,
+      [readingModeKey]: !modes[readingModeKey],
+    }));
   };
 
   useEffect(
     () => window.vault.onToggleReadMode(toggleReadingMode),
-    [activeId, activePath, readingMode],
+    [activeId, activePath, readingMode, readingModeKey],
   );
 
   return (
@@ -1642,6 +1680,7 @@ function App() {
         <Editor
           ref={editorRef}
           readingMode={readingMode}
+          onOpenNote={openWikiNote}
           onToggleReadingMode={toggleReadingMode}
           commandHeld={commandHeld}
           vimMode={vimMode}
@@ -1803,6 +1842,7 @@ function App() {
                     markdown={pickerPreview.markdown}
                     vaultId={activeVaultId ?? ''}
                     notePath={pickerPreview.path}
+                    onOpenNote={openWikiNote}
                     appearance={appearance}
                   />
                 ) : (

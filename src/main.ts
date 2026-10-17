@@ -6,6 +6,8 @@ import { VaultService } from './vault/vaultService';
 import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
 import { readVaultImage } from './vault/vaultAssets';
+import { savePastedImage } from './vault/pasteImage';
+import { resolveVaultNote } from './vault/vaultNoteResolver';
 import { createFolder, createMarkdownNote } from './vault/vaultCreation';
 import {
   assertDeletionTargetUnchanged,
@@ -302,6 +304,53 @@ ipcMain.handle('vault:registry-remove', (_event, id: unknown) => {
   return vaultRegistry.remove(id);
 });
 
+ipcMain.handle('vault:resolve-note-link', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    return { ok: false, reason: 'invalid' as const };
+  const { vaultId, notePath, target } = request as Record<string, unknown>;
+  if (
+    typeof vaultId !== 'string' ||
+    typeof notePath !== 'string' ||
+    typeof target !== 'string'
+  )
+    return { ok: false, reason: 'invalid' as const };
+  const vault = await vaultRegistry.getById(vaultId);
+  if (!vault) return { ok: false, reason: 'invalid' as const };
+  try {
+    const path = await resolveVaultNote(vault.path, notePath, target);
+    return { ok: true, path };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const reason = /ambiguous/i.test(message)
+      ? 'ambiguous'
+      : /not found/i.test(message)
+        ? 'missing'
+        : 'invalid';
+    return { ok: false, reason };
+  }
+});
+
+ipcMain.handle('vault:paste-image', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    throw new Error('Invalid paste image request');
+  const value = request as Record<string, unknown>;
+  if (
+    typeof value.vaultId !== 'string' ||
+    typeof value.notePath !== 'string' ||
+    typeof value.mimeType !== 'string' ||
+    typeof value.base64 !== 'string'
+  )
+    throw new Error('Invalid paste image request');
+  const vault = await vaultRegistry.getById(value.vaultId);
+  if (!vault) throw new Error('Unknown vault');
+  return savePastedImage(vault.path, {
+    vaultId: value.vaultId,
+    notePath: value.notePath,
+    mimeType: value.mimeType,
+    base64: value.base64,
+  });
+});
+
 ipcMain.handle('vault:read-image', async (_event, request: unknown) => {
   if (!request || typeof request !== 'object')
     throw new Error('Invalid image request');
@@ -314,11 +363,24 @@ ipcMain.handle('vault:read-image', async (_event, request: unknown) => {
   if (!vault) throw new Error('Unknown vault');
   if (typeof notePath !== 'string' || typeof imagePath !== 'string')
     throw new Error('Invalid image request');
-  return readVaultImage(vault.path, {
-    notePath,
-    imagePath,
-    kind: kind as 'markdown' | 'wiki' | undefined,
-  });
+  try {
+    const image = await readVaultImage(vault.path, {
+      notePath,
+      imagePath,
+      kind: kind as 'markdown' | 'wiki' | undefined,
+    });
+    return { ok: true, ...image };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const reason = /not found/i.test(message)
+      ? 'not-found'
+      : /ambiguous/i.test(message)
+        ? 'ambiguous'
+        : /unsupported|content does not match/i.test(message)
+          ? 'unsupported'
+          : 'unavailable';
+    return { ok: false, reason };
+  }
 });
 
 ipcMain.handle('vault:create-note', async (_event, request: unknown) => {

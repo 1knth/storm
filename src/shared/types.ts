@@ -53,6 +53,27 @@ export interface SaveNoteResult {
   revision: string;
 }
 
+export interface VaultNoteLinkRequest {
+  vaultId: string;
+  notePath: string;
+  target: string;
+}
+
+export type VaultNoteLinkResult =
+  | { ok: true; path: string }
+  | { ok: false; reason: 'missing' | 'ambiguous' | 'invalid' };
+
+export interface PasteImageRequest {
+  vaultId: string;
+  notePath: string;
+  mimeType: string;
+  base64: string;
+}
+
+export interface PasteImageResult {
+  imagePath: string;
+}
+
 export interface VaultImageRequest {
   vaultId: string;
   notePath: string;
@@ -60,10 +81,12 @@ export interface VaultImageRequest {
   kind?: 'markdown' | 'wiki';
 }
 
-export interface VaultImageResult {
-  mimeType: string;
-  base64: string;
-}
+export type VaultImageResult =
+  | { ok: true; mimeType: string; base64: string }
+  | {
+      ok: false;
+      reason: 'not-found' | 'ambiguous' | 'unsupported' | 'unavailable';
+    };
 
 export interface CreateEntryRequest {
   vaultId: string;
@@ -131,6 +154,10 @@ declare global {
       readNote: (relativePath: string) => Promise<NoteData>;
       saveNote: (request: SaveNoteRequest) => Promise<SaveNoteResult>;
       readImage: (request: VaultImageRequest) => Promise<VaultImageResult>;
+      pasteImage: (request: PasteImageRequest) => Promise<PasteImageResult>;
+      resolveNoteLink: (
+        request: VaultNoteLinkRequest,
+      ) => Promise<VaultNoteLinkResult>;
       onSettingsOpen: (callback: () => void) => () => void;
       onNewTab: (callback: () => void) => () => void;
       onCloseActiveTab: (callback: () => void) => () => void;

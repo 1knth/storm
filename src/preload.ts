@@ -7,6 +7,10 @@ import type {
   RegisteredVault,
   VaultImageRequest,
   VaultImageResult,
+  PasteImageRequest,
+  PasteImageResult,
+  VaultNoteLinkRequest,
+  VaultNoteLinkResult,
   CreateEntryRequest,
   VaultGroup,
   SavedTabLayout,
@@ -91,6 +95,12 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.invoke('vault:save-note', request),
   readImage: (request: VaultImageRequest): Promise<VaultImageResult> =>
     ipcRenderer.invoke('vault:read-image', request),
+  pasteImage: (request: PasteImageRequest): Promise<PasteImageResult> =>
+    ipcRenderer.invoke('vault:paste-image', request),
+  resolveNoteLink: (
+    request: VaultNoteLinkRequest,
+  ): Promise<VaultNoteLinkResult> =>
+    ipcRenderer.invoke('vault:resolve-note-link', request),
   onSettingsOpen: (callback: () => void): (() => void) => {
     const listener = () => callback();
     ipcRenderer.on('settings:open', listener);
