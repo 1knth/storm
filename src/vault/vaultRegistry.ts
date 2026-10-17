@@ -381,6 +381,21 @@ export class VaultRegistry {
     });
   }
 
+  async unloadAll(): Promise<void> {
+    return this.runMutation(async () => {
+      await this.load();
+      const next = {
+        ...this.settings,
+        vaults: [],
+        activeVaultId: null,
+        vaultGroups: [],
+        savedTabLayouts: {},
+      };
+      delete next.lastVaultPath;
+      await this.update(next);
+    });
+  }
+
   async remove(id: string): Promise<void> {
     return this.runMutation(async () => {
       await this.load();

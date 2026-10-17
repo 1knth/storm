@@ -256,6 +256,78 @@ test('preserves legacy registries and normalizes unknown or malformed group refe
   }
 });
 
+test('unloads all vault registrations and layouts while preserving unrelated settings and vault files', async () => {
+  const temp = await temporaryDirectory();
+  try {
+    const vaultPath = path.join(temp, 'notes');
+    await mkdir(vaultPath);
+    await writeFile(path.join(vaultPath, 'note.md'), 'leave untouched');
+    await writeFile(
+      path.join(temp, 'settings.json'),
+      JSON.stringify({
+        appearance: { theme: 'light' },
+        vimMode: true,
+        lastVaultPath: vaultPath,
+      }),
+    );
+    const registry = new VaultRegistry(temp);
+    const { vault } = await registry.add(vaultPath);
+    const group = await registry.createGroup('Saved group');
+    await registry.setVaultGroup(vault.id, group.id);
+    await registry.saveTabLayout(vault.id, {
+      version: 1,
+      tabs: [{ kind: 'empty', id: 'tab' }],
+      activeTab: 'tab',
+      groups: [],
+      assignments: {},
+    });
+    await registry.setActive(vault.id);
+
+    await registry.unloadAll();
+    const stored = JSON.parse(
+      await readFile(path.join(temp, 'settings.json'), 'utf8'),
+    );
+    assert.deepEqual(stored.vaults, []);
+    assert.equal(stored.activeVaultId, null);
+    assert.deepEqual(stored.vaultGroups, []);
+    assert.deepEqual(stored.savedTabLayouts, {});
+    assert.equal('lastVaultPath' in stored, false);
+    assert.deepEqual(stored.appearance, { theme: 'light' });
+    assert.equal(stored.vimMode, true);
+    const reloaded = new VaultRegistry(temp);
+    assert.deepEqual(await reloaded.list(), {
+      vaults: [],
+      activeVaultId: null,
+    });
+    assert.equal(
+      await readFile(path.join(vaultPath, 'note.md'), 'utf8'),
+      'leave untouched',
+    );
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('does not update in-memory registry when unloading cannot persist', async () => {
+  const temp = await temporaryDirectory();
+  try {
+    const vaultPath = path.join(temp, 'vault');
+    await mkdir(vaultPath);
+    const registry = new VaultRegistry(temp);
+    await registry.add(vaultPath);
+    const settingsFile = path.join(temp, 'settings.json');
+    const backup = path.join(temp, 'settings.backup');
+    await (await import('node:fs/promises')).rename(settingsFile, backup);
+    await mkdir(settingsFile);
+    await assert.rejects(registry.unloadAll());
+    await rm(settingsFile, { recursive: true });
+    await (await import('node:fs/promises')).rename(backup, settingsFile);
+    assert.equal((await registry.list()).vaults.length, 1);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('clears unknown saved group references safely while retaining valid vault records', async () => {
   const temp = await temporaryDirectory();
   try {

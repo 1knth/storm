@@ -7,6 +7,7 @@ import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
 import { readVaultImage } from './vault/vaultAssets';
 import { savePastedImage } from './vault/pasteImage';
+import { VaultWriteBarrier } from './vault/writeBarrier';
 import { resolveVaultNote } from './vault/vaultNoteResolver';
 import { createFolder, createMarkdownNote } from './vault/vaultCreation';
 import {
@@ -20,6 +21,7 @@ const vaultRegistry = new VaultRegistry(app.getPath('userData'));
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;
 let shutdownInFlight: Promise<boolean> | null = null;
+const vaultWriteBarrier = new VaultWriteBarrier();
 const closeAllowed = new WeakSet<BrowserWindow>();
 const shutdownAcks = new Map<string, (succeeded: boolean) => void>();
 let openFileMenuItem: Electron.MenuItem | null = null;
@@ -303,6 +305,12 @@ ipcMain.handle('vault:registry-remove', (_event, id: unknown) => {
   if (typeof id !== 'string') throw new Error('Invalid vault ID');
   return vaultRegistry.remove(id);
 });
+ipcMain.handle('vault:registry-unload-all', () =>
+  vaultWriteBarrier.close(async () => {
+    await vaultRegistry.unloadAll();
+    vaultService.clearSelectedVault();
+  }),
+);
 
 ipcMain.handle('vault:resolve-note-link', async (_event, request: unknown) => {
   if (!request || typeof request !== 'object' || Array.isArray(request))
@@ -341,13 +349,21 @@ ipcMain.handle('vault:paste-image', async (_event, request: unknown) => {
     typeof value.base64 !== 'string'
   )
     throw new Error('Invalid paste image request');
-  const vault = await vaultRegistry.getById(value.vaultId);
-  if (!vault) throw new Error('Unknown vault');
-  return savePastedImage(vault.path, {
-    vaultId: value.vaultId,
-    notePath: value.notePath,
-    mimeType: value.mimeType,
-    base64: value.base64,
+  const { vaultId, notePath, mimeType, base64 } = value as {
+    vaultId: string;
+    notePath: string;
+    mimeType: string;
+    base64: string;
+  };
+  return vaultWriteBarrier.run(async () => {
+    const vault = await vaultRegistry.getById(vaultId);
+    if (!vault) throw new Error('Unknown vault');
+    return savePastedImage(vault.path, {
+      vaultId,
+      notePath,
+      mimeType,
+      base64,
+    });
   });
 });
 
