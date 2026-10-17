@@ -2,6 +2,8 @@ import { useEffect, useId, useState } from 'react';
 import DOMPurify, { type Config } from 'dompurify';
 import mermaid from 'mermaid';
 import { sanitizeSvgReferences } from './svgReferences';
+import type { Appearance } from '../../appearance';
+import { mermaidThemeVariables } from '../../appearance';
 
 const MAX_SOURCE_LENGTH = 10_000;
 
@@ -29,9 +31,9 @@ const svgSanitizerOptions: Config = {
   FORBID_ATTR: ['href', 'xlink:href', 'src'],
 };
 
-type Props = { source: string };
+type Props = { source: string; appearance: Appearance };
 
-export default function MermaidBlock({ source }: Props) {
+export default function MermaidBlock({ source, appearance }: Props) {
   const reactId = useId();
   const [svg, setSvg] = useState('');
   const [error, setError] = useState('');
@@ -52,8 +54,22 @@ export default function MermaidBlock({ source }: Props) {
     }
 
     const timer = setTimeout(() => {
+      // Mermaid serializes render calls internally; initialize immediately before each
+      // queued render so each diagram gets its own palette without concurrent races.
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        htmlLabels: false,
+        maxTextSize: MAX_SOURCE_LENGTH,
+        suppressErrorRendering: true,
+        flowchart: { htmlLabels: false },
+        theme: 'base',
+        themeVariables: mermaidThemeVariables(appearance),
+        secure: ['securityLevel', 'startOnLoad', 'theme', 'themeVariables'],
+      });
+      const safeSource = source.replace(/^%%\{[\s\S]*?\}%%\s*/gm, '');
       void mermaid
-        .render(id, source)
+        .render(id, safeSource)
         .then(({ svg: renderedSvg }) => {
           if (cancelled) return;
           const purifiedSvg = String(
@@ -77,7 +93,7 @@ export default function MermaidBlock({ source }: Props) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [id, source]);
+  }, [id, source, appearance]);
 
   if (error)
     return (

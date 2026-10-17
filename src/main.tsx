@@ -6,18 +6,22 @@ import VaultSidebar from './components/VaultSidebar';
 import type { RegisteredVault, VaultEntry, VaultGroup } from './shared/types';
 import { deriveVisibleVaults } from './shared/vaultGroups';
 import Editor from './components/Editor/Editor';
+import MarkdownPreview from './components/Editor/MarkdownPreview';
 import type { EditorHandle, TabSnapshot } from './components/Editor/Editor';
 import TabBar from './components/Editor/TabBar';
 import {
   cleanTabAssignments,
   getTabId,
+  hasOpenTabs,
   moveTab,
-  moveTabGroup,
+  moveTabGroupBlock,
   visibleTabOrder,
 } from './components/Editor/tabGroups';
 import type { TabAssignments, TabGroup } from './components/Editor/tabGroups';
 import { serializeTabLayout } from './components/Editor/savedTabLayout';
 import { ToastProvider, useToast } from './components/Toast';
+import { loadAppearance, saveAppearance } from './appearance';
+import type { Appearance } from './appearance';
 
 function ShortcutGroup({ title, items }: { title: string; items: string[] }) {
   return (
@@ -57,6 +61,13 @@ function App() {
   const { notifyError, notifySuccess } = useToast();
   const editorRef = useRef<EditorHandle>(null);
   const [readingMode, setReadingMode] = useState(false);
+  const [appearance, setAppearance] = useState<Appearance>(() =>
+    loadAppearance(window.localStorage),
+  );
+  useEffect(
+    () => saveAppearance(window.localStorage, appearance),
+    [appearance],
+  );
   const navigationBusy = useRef(false);
   const vaultTransition = useRef(false);
   const noteRequestId = useRef(0);
@@ -186,13 +197,22 @@ function App() {
   const onMoveGroup = (
     vaultId: string,
     groupId: string,
-    beforeGroupId: string | null,
+    before:
+      | { type: 'tab'; tabId: string }
+      | { type: 'group'; groupId: string }
+      | null,
   ) => {
     if (!vaultId || activeVaultIdRef.current !== vaultId) return;
-    const nextGroups = moveTabGroup(groupsRef.current, groupId, beforeGroupId);
-    if (!nextGroups) return;
-    groupsRef.current = nextGroups;
-    setTabGroups(nextGroups);
+    const nextTabs = moveTabGroupBlock(
+      tabsRef.current,
+      groupsRef.current,
+      assignmentsRef.current,
+      groupId,
+      before,
+    );
+    if (!nextTabs) return;
+    tabsRef.current = nextTabs;
+    setTabs(nextTabs);
     visitedVaults.current.add(vaultId);
     rememberCurrentSession(vaultId);
   };
@@ -223,6 +243,14 @@ function App() {
   const [creationName, setCreationName] = useState('');
   const [creationPending, setCreationPending] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [pickerPreview, setPickerPreview] = useState<{
+    path: string;
+    markdown: string;
+  } | null>(null);
+  const [pickerPreviewState, setPickerPreviewState] = useState<
+    'loading' | 'error' | null
+  >(null);
+  const pickerPreviewRequest = useRef(0);
   const pickerInputRef = useRef<HTMLInputElement>(null);
   const pickerInvokerRef = useRef<HTMLElement | null>(null);
   const [vimMode, setVimMode] = useState(() => {
@@ -332,23 +360,35 @@ function App() {
     const unsubscribeNewTab = window.vault.onNewTab(() => {
       if (!pickerOpen && !hasOpenModal()) void createEmptyTab();
     });
-    const unsubscribeCloseTab = window.vault.onCloseActiveTab(() => {
-      if (
-        pickerOpen ||
-        navigationBusy.current ||
-        vaultTransition.current ||
-        hasOpenModal()
-      )
-        return;
+    const closeActiveTab = () => {
+      if (navigationBusy.current || vaultTransition.current) return;
       const activeTab = tabs.find((tab) => getTabId(tab) === activeId);
       if (activeTab) void closeTab(activeTab);
-    });
+    };
+    const unsubscribeCloseTab = window.vault.onCloseActiveTab(closeActiveTab);
+    const onCloseShortcut = (event: KeyboardEvent) => {
+      const primary = navigator.platform.toLowerCase().includes('mac')
+        ? event.metaKey
+        : event.ctrlKey;
+      if (
+        !primary ||
+        event.altKey ||
+        event.shiftKey ||
+        event.key.toLowerCase() !== 'w'
+      )
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeActiveTab();
+    };
+    window.addEventListener('keydown', onCloseShortcut, true);
     return () => {
       unsubscribeOpen();
       unsubscribeToggle();
       unsubscribeFormat();
       unsubscribeNewTab();
       unsubscribeCloseTab();
+      window.removeEventListener('keydown', onCloseShortcut, true);
     };
   }, [pickerOpen, tabs, activeId]);
 
@@ -367,6 +407,37 @@ function App() {
     .filter((note) =>
       note.path.toLowerCase().includes(query.trim().toLowerCase()),
     );
+
+  const highlightedNote = matchingNotes[highlightedIndex];
+  useEffect(() => {
+    const requestId = ++pickerPreviewRequest.current;
+    if (!pickerOpen || !highlightedNote || !activeVaultId) {
+      setPickerPreview(null);
+      setPickerPreviewState(null);
+      return;
+    }
+    setPickerPreview(null);
+    setPickerPreviewState('loading');
+    void window.vault.readNote(highlightedNote.path).then(
+      (note) => {
+        if (pickerPreviewRequest.current !== requestId) return;
+        setPickerPreview({
+          path: highlightedNote.path,
+          markdown: note.content,
+        });
+        setPickerPreviewState(null);
+      },
+      () => {
+        if (pickerPreviewRequest.current !== requestId) return;
+        setPickerPreview(null);
+        setPickerPreviewState('error');
+      },
+    );
+    return () => {
+      if (pickerPreviewRequest.current === requestId)
+        pickerPreviewRequest.current++;
+    };
+  }, [pickerOpen, highlightedNote?.path, activeVaultId]);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -1557,6 +1628,8 @@ function App() {
             vimMode={vimMode}
             onVimModeChange={setVimMode}
             settingsOpen={settingsOpen}
+            appearance={appearance}
+            onAppearanceChange={setAppearance}
             onSettingsOpenChange={setSettingsOpen}
             openFileShortcut={openFileShortcut}
             onOpenFileShortcutChange={setOpenFileShortcut}
@@ -1572,6 +1645,8 @@ function App() {
           onToggleReadingMode={toggleReadingMode}
           commandHeld={commandHeld}
           vimMode={vimMode}
+          appearance={appearance}
+          tabsVisible={hasOpenTabs(tabs)}
           vaultId={activeVaultId}
           onLayoutChange={() => {
             const vaultId = activeVaultIdRef.current;
@@ -1647,7 +1722,7 @@ function App() {
       </div>
       {pickerOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-8 pt-[15vh]"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/20 p-8 pt-[15vh]"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setPickerOpen(false);
           }}
@@ -1656,7 +1731,7 @@ function App() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="open-file-title"
-            className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/15 bg-[#202124] text-white shadow-2xl"
+            className="app-popup-surface command-palette-surface flex max-h-[80vh] w-full max-w-5xl flex-col overflow-hidden"
           >
             <h2 id="open-file-title" className="sr-only">
               Open file
@@ -1675,40 +1750,69 @@ function App() {
                 setHighlightedIndex(0);
               }}
               disabled={!vaultPath}
-              className="w-full border-b border-white/10 bg-transparent px-5 py-4 outline-none placeholder:text-white/40"
+              className="app-input w-full rounded-none border-0 border-b border-white/10 bg-transparent px-5 py-4 outline-none placeholder:text-white/40 focus-visible:border-white/10"
             />
-            <ul className="max-h-[50vh] overflow-y-auto p-2">
-              {!vaultPath ? (
-                <li className="p-4 text-sm text-white/60">
-                  Choose a vault from the file explorer first.
-                </li>
-              ) : matchingNotes.length === 0 ? (
-                <li className="p-4 text-sm text-white/60">
-                  No matching files.
-                </li>
-              ) : (
-                matchingNotes.map((note, index) => (
-                  <li key={note.path}>
-                    <button
-                      type="button"
-                      onMouseEnter={() => setHighlightedIndex(index)}
-                      onClick={() => {
-                        void selectNote(note.path).then(() =>
-                          setPickerOpen(false),
-                        );
-                      }}
-                      className={`w-full rounded-lg px-3 py-2 text-left text-sm ${index === highlightedIndex ? 'bg-white/15' : 'hover:bg-white/10'}`}
-                    >
-                      <span className="block truncate">{note.name}</span>
-                      <span className="block truncate text-xs text-white/45">
-                        {note.path}
-                      </span>
-                    </button>
+            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+              <ul className="min-h-0 max-h-[30vh] w-full overflow-y-auto p-2 md:max-h-none md:w-1/2 md:border-r md:border-white/10">
+                {!vaultPath ? (
+                  <li className="p-4 text-sm text-white/60">
+                    Choose a vault from the file explorer first.
                   </li>
-                ))
-              )}
-            </ul>
-            <p className="border-t border-white/10 px-5 py-3 text-xs text-white/40">
+                ) : matchingNotes.length === 0 ? (
+                  <li className="p-4 text-sm text-white/60">
+                    No matching files.
+                  </li>
+                ) : (
+                  matchingNotes.map((note, index) => (
+                    <li key={note.path}>
+                      <button
+                        type="button"
+                        onMouseEnter={() => setHighlightedIndex(index)}
+                        onClick={() => {
+                          void selectNote(note.path).then(() =>
+                            setPickerOpen(false),
+                          );
+                        }}
+                        className={`app-popup-row w-full px-3 py-2 text-left text-sm ${index === highlightedIndex ? 'bg-white/10' : ''}`}
+                      >
+                        <span className="block truncate">{note.name}</span>
+                        <span className="block truncate text-xs text-white/45">
+                          {note.path}
+                        </span>
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+              <section
+                aria-label="File preview"
+                className="flex min-h-[28vh] w-full min-w-0 flex-col overflow-hidden md:min-h-[50vh] md:w-1/2"
+              >
+                <h3 className="shrink-0 border-b border-white/10 px-4 py-3 text-xs font-medium text-white/50">
+                  Preview
+                </h3>
+                {pickerPreviewState === 'loading' ? (
+                  <p className="p-4 text-sm text-white/50">Loading preview…</p>
+                ) : pickerPreviewState === 'error' ? (
+                  <p className="p-4 text-sm text-white/50">
+                    Could not load this file.
+                  </p>
+                ) : pickerPreview ? (
+                  <MarkdownPreview
+                    compact
+                    markdown={pickerPreview.markdown}
+                    vaultId={activeVaultId ?? ''}
+                    notePath={pickerPreview.path}
+                    appearance={appearance}
+                  />
+                ) : (
+                  <p className="p-4 text-sm text-white/50">
+                    Select a file to preview.
+                  </p>
+                )}
+              </section>
+            </div>
+            <p className="shrink-0 border-t border-white/10 px-5 py-3 text-xs text-white/40">
               ↑↓ to navigate · Enter to open · Esc to close
             </p>
           </section>
@@ -1727,7 +1831,7 @@ function App() {
             aria-modal="true"
             aria-labelledby="create-title"
             onSubmit={submitCreation}
-            className="w-full max-w-sm rounded-xl border border-white/15 bg-[#202124] p-5 text-white shadow-2xl"
+            className="app-popup-surface w-full max-w-sm p-5"
           >
             <h2 id="create-title" className="mb-3 text-lg font-semibold">
               New {creation.kind === 'note' ? 'Markdown note' : 'folder'}
@@ -1742,7 +1846,7 @@ function App() {
                 autoFocus
                 value={creationName}
                 onChange={(event) => setCreationName(event.target.value)}
-                className="mt-1 w-full rounded border border-white/20 bg-black/30 px-3 py-2 outline-none focus:border-blue-400"
+                className="app-input mt-1 w-full px-3 py-2 outline-none focus-visible:border-blue-400"
               />
             </label>
             <div className="mt-4 flex justify-end gap-2">
@@ -1750,13 +1854,13 @@ function App() {
                 type="button"
                 disabled={creationPending}
                 onClick={() => setCreation(null)}
-                className="rounded px-3 py-2 text-sm hover:bg-white/10"
+                className="app-button px-3 py-2 text-sm"
               >
                 Cancel
               </button>
               <button
                 disabled={creationPending || !creationName.trim()}
-                className="rounded bg-blue-600 px-3 py-2 text-sm disabled:opacity-50"
+                className="app-button bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50"
               >
                 {creationPending ? 'Creating…' : 'Create'}
               </button>

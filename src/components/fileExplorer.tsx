@@ -6,6 +6,8 @@ import { contextMenuPointForElement, isContextMenuKey } from './ContextMenu';
 import { FaPlus } from 'react-icons/fa';
 import { RiMenuUnfold4Fill } from 'react-icons/ri';
 import Note from './Note';
+import { DEFAULT_APPEARANCE } from '../appearance';
+import type { Appearance } from '../appearance';
 
 function ShortcutHint({
   children,
@@ -49,6 +51,8 @@ type FileExplorerProps = {
   onToggleCollapsed: () => void;
   onCopyPathError: (message: string) => void;
   onPathCopied: (message: string) => void;
+  appearance: Appearance;
+  onAppearanceChange: (appearance: Appearance) => void;
 };
 
 export default function FileExplorer({
@@ -76,8 +80,13 @@ export default function FileExplorer({
   onToggleCollapsed,
   onCopyPathError,
   onPathCopied,
+  appearance,
+  onAppearanceChange,
 }: FileExplorerProps) {
   const changeVaultRef = useRef<HTMLButtonElement>(null);
+  const [settingsTab, setSettingsTab] = useState<'general' | 'appearance'>(
+    'general',
+  );
   const vaultName = vaultPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? null;
 
   useEffect(() => {
@@ -233,7 +242,7 @@ export default function FileExplorer({
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               aria-label={`New note (${navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'})`}
@@ -245,7 +254,7 @@ export default function FileExplorer({
               title={`New note (${navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'})`}
               disabled={!vaultPath || creationPending}
               onClick={onCreateNote}
-              className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="app-icon-button relative disabled:cursor-not-allowed disabled:opacity-40"
             >
               <FaPlus aria-hidden="true" size={14} />
               <ShortcutHint visible={commandHeld}>
@@ -259,7 +268,7 @@ export default function FileExplorer({
               aria-label="Hide file explorer"
               title="Hide file explorer (⌘/Ctrl+S)"
               onClick={onToggleCollapsed}
-              className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white"
+              className="app-icon-button relative"
             >
               <RiMenuUnfold4Fill aria-hidden="true" className="h-3.5 w-3.5" />
               <ShortcutHint visible={commandHeld && toggleExplorerShortcut}>
@@ -354,79 +363,166 @@ export default function FileExplorer({
                   ×
                 </button>
               </div>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="font-medium">Vault</p>
-                  <p className="mt-1 max-w-[15rem] break-all text-xs text-white/50">
-                    {vaultPath ?? 'No vault selected'}
+              <div
+                role="tablist"
+                aria-label="Settings"
+                className="mb-5 flex gap-2 border-b border-white/10"
+              >
+                {(['general', 'appearance'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={settingsTab === tab}
+                    onClick={() => setSettingsTab(tab)}
+                    className={`px-3 py-2 text-sm capitalize ${settingsTab === tab ? 'border-b-2 border-blue-400 text-white' : 'text-white/60'}`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+              {settingsTab === 'general' && (
+                <>
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-medium">Vault</p>
+                      <p className="mt-1 max-w-[15rem] break-all text-xs text-white/50">
+                        {vaultPath ?? 'No vault selected'}
+                      </p>
+                    </div>
+                    <button
+                      ref={changeVaultRef}
+                      type="button"
+                      onClick={() => {
+                        chooseVault();
+                        onSettingsOpenChange(false);
+                      }}
+                      disabled={loading}
+                      className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
+                    >
+                      Change vault
+                    </button>
+                  </div>
+                  <label className="mt-6 flex cursor-pointer items-center justify-between gap-4">
+                    <span>
+                      <span className="block font-medium">Vim keybindings</span>
+                      <span className="mt-1 block text-xs text-white/50">
+                        Use Esc for normal mode and i to insert.
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={vimMode}
+                      onChange={(event) =>
+                        onVimModeChange(event.target.checked)
+                      }
+                      className="h-4 w-4 accent-blue-500"
+                    />
+                  </label>
+                  <div className="mt-6 space-y-4 border-t border-white/10 pt-4">
+                    <label className="flex cursor-pointer items-center justify-between gap-4">
+                      <span>
+                        <span className="block text-sm font-medium">
+                          Open file shortcut
+                        </span>
+                        <span className="mt-1 block text-xs text-white/50">
+                          ⌘/Ctrl + P
+                        </span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={openFileShortcut}
+                        onChange={(event) =>
+                          onOpenFileShortcutChange(event.target.checked)
+                        }
+                        className="h-4 w-4 accent-blue-500"
+                      />
+                    </label>
+                    <label className="flex cursor-pointer items-center justify-between gap-4">
+                      <span>
+                        <span className="block text-sm font-medium">
+                          Toggle file explorer shortcut
+                        </span>
+                        <span className="mt-1 block text-xs text-white/50">
+                          ⌘/Ctrl + S
+                        </span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={toggleExplorerShortcut}
+                        onChange={(event) =>
+                          onToggleExplorerShortcutChange(event.target.checked)
+                        }
+                        className="h-4 w-4 accent-blue-500"
+                      />
+                    </label>
+                    <p className="text-xs text-white/50">
+                      Open settings: ⌘ + ,
+                    </p>
+                  </div>
+                </>
+              )}
+              {settingsTab === 'appearance' && (
+                <div className="max-h-[65vh] space-y-2 overflow-y-auto">
+                  <p className="mb-3 text-sm text-white/60">
+                    Editor, preview, and diagram colors
                   </p>
+                  <p className="text-sm font-semibold">Appearance</p>
+                  {(
+                    [
+                      ['Selection highlight', 'selection'],
+                      ['Cursor', 'cursor'],
+                      ...appearance.headings.map((_, i) => [
+                        `Heading ${i + 1}`,
+                        `heading-${i + 1}`,
+                      ]),
+                      ['Mermaid background', 'mermaidBackground'],
+                      ['Mermaid node fill', 'mermaidNodeFill'],
+                      ['Mermaid node border', 'mermaidNodeBorder'],
+                      ['Mermaid text', 'mermaidText'],
+                      ['Mermaid connectors', 'mermaidConnectors'],
+                    ] as [string, string][]
+                  ).map(([label, key]) => {
+                    const value = key.startsWith('heading-')
+                      ? appearance.headings[Number(key.slice(8)) - 1]
+                      : (appearance[key as keyof typeof appearance] as string);
+                    return (
+                      <label
+                        key={key}
+                        className="flex items-center justify-between gap-3 text-xs text-white/80"
+                      >
+                        {label}
+                        <input
+                          aria-label={label}
+                          type="color"
+                          value={value}
+                          onChange={(event) => {
+                            const next = key.startsWith('heading-')
+                              ? {
+                                  ...appearance,
+                                  headings: appearance.headings.map(
+                                    (color, i) =>
+                                      i === Number(key.slice(8)) - 1
+                                        ? event.target.value
+                                        : color,
+                                  ),
+                                }
+                              : { ...appearance, [key]: event.target.value };
+                            onAppearanceChange(next);
+                          }}
+                        />
+                      </label>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="app-button text-xs"
+                    onClick={() => onAppearanceChange(DEFAULT_APPEARANCE)}
+                  >
+                    Reset appearance
+                  </button>
                 </div>
-                <button
-                  ref={changeVaultRef}
-                  type="button"
-                  onClick={() => {
-                    chooseVault();
-                    onSettingsOpenChange(false);
-                  }}
-                  disabled={loading}
-                  className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
-                >
-                  Change vault
-                </button>
-              </div>
-              <label className="mt-6 flex cursor-pointer items-center justify-between gap-4">
-                <span>
-                  <span className="block font-medium">Vim keybindings</span>
-                  <span className="mt-1 block text-xs text-white/50">
-                    Use Esc for normal mode and i to insert.
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={vimMode}
-                  onChange={(event) => onVimModeChange(event.target.checked)}
-                  className="h-4 w-4 accent-blue-500"
-                />
-              </label>
-              <div className="mt-6 space-y-4 border-t border-white/10 pt-4">
-                <label className="flex cursor-pointer items-center justify-between gap-4">
-                  <span>
-                    <span className="block text-sm font-medium">
-                      Open file shortcut
-                    </span>
-                    <span className="mt-1 block text-xs text-white/50">
-                      ⌘/Ctrl + P
-                    </span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={openFileShortcut}
-                    onChange={(event) =>
-                      onOpenFileShortcutChange(event.target.checked)
-                    }
-                    className="h-4 w-4 accent-blue-500"
-                  />
-                </label>
-                <label className="flex cursor-pointer items-center justify-between gap-4">
-                  <span>
-                    <span className="block text-sm font-medium">
-                      Toggle file explorer shortcut
-                    </span>
-                    <span className="mt-1 block text-xs text-white/50">
-                      ⌘/Ctrl + S
-                    </span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={toggleExplorerShortcut}
-                    onChange={(event) =>
-                      onToggleExplorerShortcutChange(event.target.checked)
-                    }
-                    className="h-4 w-4 accent-blue-500"
-                  />
-                </label>
-                <p className="text-xs text-white/50">Open settings: ⌘ + ,</p>
-              </div>
+              )}
             </section>
           </div>,
           document.body,

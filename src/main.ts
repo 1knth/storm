@@ -431,7 +431,7 @@ app.whenReady().then(() => {
         },
         {
           label: 'Close Tab',
-          accelerator: 'Control+W',
+          accelerator: undefined,
           click: () =>
             BrowserWindow.getFocusedWindow()?.webContents.send(
               'tabs:close-active',

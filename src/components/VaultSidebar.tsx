@@ -295,7 +295,7 @@ export default function VaultSidebar({
     >
       <div className="mx-1 mb-2 flex h-9 shrink-0 items-center justify-between border-b border-white/10 px-1">
         <h2 className="text-sm font-semibold text-white/80">Vaults</h2>
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
             onClick={() => {
@@ -303,7 +303,7 @@ export default function VaultSidebar({
             }}
             aria-label="Create group"
             title="Create group"
-            className="rounded-md p-1.5 text-xs text-white/70 hover:bg-white/10 hover:text-white"
+            className="app-icon-button"
           >
             <FaFolderTree aria-hidden="true" size={14} />
           </button>
@@ -312,7 +312,7 @@ export default function VaultSidebar({
             onClick={onAdd}
             aria-label="Add vault"
             title="Add vault"
-            className="rounded-md p-1.5 text-lg leading-none text-white/70 hover:bg-white/10 hover:text-white"
+            className="app-icon-button"
           >
             <FaPlus aria-hidden="true" size={14} />
           </button>
@@ -323,7 +323,7 @@ export default function VaultSidebar({
               aria-label="Show file explorer"
               aria-expanded="false"
               title={`Show file explorer${toggleExplorerShortcut ? ` (${navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'})` : ''}`}
-              className="relative rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white"
+              className="app-icon-button relative"
             >
               <RiMenuUnfold4Fill aria-hidden="true" className="h-3.5 w-3.5" />
               {commandHeld && toggleExplorerShortcut && (
@@ -343,7 +343,7 @@ export default function VaultSidebar({
       {groupForm && (
         <form
           onSubmit={saveGroup}
-          className="mb-2 rounded border border-white/15 bg-white/5 p-2"
+          className="app-popup-surface mb-2 p-2"
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
               event.preventDefault();
@@ -361,7 +361,7 @@ export default function VaultSidebar({
                   setGroupForm({ name: '' });
                   requestAnimationFrame(() => formInput.current?.focus());
                 }}
-                className="mb-1 block w-full rounded px-2 py-1 text-left text-xs hover:bg-white/10"
+                className="app-popup-row block w-full px-2 py-1 text-left text-xs"
               >
                 Empty group
               </button>
@@ -390,14 +390,14 @@ export default function VaultSidebar({
                     setBusy(false);
                   }
                 }}
-                className="block w-full rounded px-2 py-1 text-left text-xs hover:bg-white/10"
+                className="app-popup-row block w-full px-2 py-1 text-left text-xs"
               >
                 Create from folder…
               </button>
               <button
                 type="button"
                 onClick={() => setGroupForm(null)}
-                className="mt-1 w-full rounded px-2 py-1 text-right text-xs text-white/60 hover:bg-white/10"
+                className="app-button mt-1 w-full py-1 text-right text-xs text-white/60"
               >
                 Cancel
               </button>
@@ -426,20 +426,20 @@ export default function VaultSidebar({
                 }
                 aria-label="Group name"
                 maxLength={80}
-                className="w-full rounded bg-black/50 px-2 py-1 text-xs text-white outline-none focus:ring-2 focus:ring-white/40"
+                className="app-input w-full px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-white/40"
               />
               <div className="mt-1 flex justify-end gap-1">
                 <button
                   type="button"
                   onClick={() => setGroupForm(null)}
-                  className="rounded px-2 py-1 text-xs text-white/60 hover:bg-white/10"
+                  className="app-button px-2 py-1 text-xs text-white/60"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={busy || !groupForm.name.trim()}
-                  className="rounded px-2 py-1 text-xs text-white hover:bg-white/10 disabled:opacity-40"
+                  className="app-button px-2 py-1 text-xs text-white disabled:opacity-40"
                 >
                   Save
                 </button>
@@ -565,7 +565,7 @@ export default function VaultSidebar({
           aria-label="Settings"
           aria-haspopup="dialog"
           title="Settings (⌘+,)"
-          className="relative rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60"
+          className="app-icon-button relative focus-visible:ring-2 focus-visible:ring-white/60"
         >
           <IoIosSettings aria-hidden="true" className="h-3.5 w-3.5" />
           {commandHeld && (

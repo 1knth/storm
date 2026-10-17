@@ -94,14 +94,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={toast.id}
             role={toast.variant === 'error' ? 'alert' : 'status'}
-            className={`pointer-events-auto flex min-w-0 items-start gap-3 rounded-xl border border-white/15 border-l-2 ${toast.variant === 'error' ? 'border-l-red-300/70' : 'border-l-emerald-300/70'} bg-[#25282c]/90 px-3 py-2.5 text-[13px] leading-5 text-white/90 shadow-lg backdrop-blur-md`}
+            className={`app-popup-surface pointer-events-auto flex min-w-0 items-start gap-3 border-l-2 ${toast.variant === 'error' ? 'border-l-red-300/70' : 'border-l-emerald-300/70'} px-3 py-2.5 text-[13px] leading-5 text-white/90`}
           >
             <span className="min-w-0 flex-1 break-words">{toast.message}</span>
             <button
               type="button"
               aria-label="Dismiss notification"
               onClick={() => dismiss(toast.id)}
-              className="shrink-0 rounded px-1 text-white/55 hover:bg-white/5 hover:text-white focus-visible:bg-white/5"
+              className="app-button shrink-0 px-1 text-white/55"
             >
               ×
             </button>

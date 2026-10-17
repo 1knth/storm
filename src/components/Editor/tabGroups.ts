@@ -15,24 +15,102 @@ export function tabGroupColor(group: TabGroup, _index: number): TabGroupColor {
 export type TabAssignments = Record<string, string>;
 export const getTabId = (tab: TabSnapshot) =>
   tab.kind === 'note' ? tab.note.path : tab.id;
+
+export const hasOpenTabs = (tabs: TabSnapshot[]) => tabs.length > 0;
+export type TabStripUnit =
+  | { type: 'tab'; tab: TabSnapshot }
+  | { type: 'group'; group: TabGroup; tabs: TabSnapshot[] };
+
+/** Top-level strip order: a group's unit occupies its first member's global tab position. */
+export function mixedTabOrder(
+  tabs: TabSnapshot[],
+  groups: TabGroup[],
+  assignments: TabAssignments,
+): TabStripUnit[] {
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  const members = new Map<string, TabSnapshot[]>();
+  for (const tab of tabs) {
+    const groupId = assignments[getTabId(tab)];
+    if (groupsById.has(groupId))
+      members.set(groupId, [...(members.get(groupId) ?? []), tab]);
+  }
+  const emitted = new Set<string>();
+  const units: TabStripUnit[] = [];
+  for (const tab of tabs) {
+    const groupId = assignments[getTabId(tab)];
+    const group = groupsById.get(groupId);
+    if (!group) units.push({ type: 'tab', tab });
+    else if (!emitted.has(groupId)) {
+      emitted.add(groupId);
+      units.push({ type: 'group', group, tabs: members.get(groupId) ?? [] });
+    }
+  }
+  for (const group of groups) {
+    if (!emitted.has(group.id)) units.push({ type: 'group', group, tabs: [] });
+  }
+  return units;
+}
+
 export function visibleTabOrder(
   tabs: TabSnapshot[],
   groups: TabGroup[],
   assignments: TabAssignments,
 ) {
-  const grouped = groups
-    .filter((group) => !group.collapsed)
-    .flatMap((group) =>
-      tabs.filter((tab) => assignments[getTabId(tab)] === group.id),
-    );
-  return [
-    ...grouped,
-    ...tabs.filter(
-      (tab) =>
-        !assignments[getTabId(tab)] ||
-        !groups.some((group) => group.id === assignments[getTabId(tab)]),
-    ),
-  ];
+  return mixedTabOrder(tabs, groups, assignments).flatMap((unit) =>
+    unit.type === 'tab' ? [unit.tab] : unit.group.collapsed ? [] : unit.tabs,
+  );
+}
+
+/** Move a group's tab block before a top-level tab or group anchor, or to the end. */
+export function moveTabGroupBlock(
+  tabs: TabSnapshot[],
+  groups: TabGroup[],
+  assignments: TabAssignments,
+  groupId: string,
+  before:
+    | { type: 'tab'; tabId: string }
+    | { type: 'group'; groupId: string }
+    | null,
+): TabSnapshot[] | null {
+  const group = groups.find((item) => item.id === groupId);
+  if (!group) return null;
+  const units = mixedTabOrder(tabs, groups, assignments);
+  const source = units.findIndex(
+    (unit) => unit.type === 'group' && unit.group.id === groupId,
+  );
+  if (
+    before?.type === 'group' &&
+    !groups.some((item) => item.id === before.groupId)
+  )
+    return null;
+  if (
+    before?.type === 'tab' &&
+    !tabs.some((tab) => getTabId(tab) === before.tabId)
+  )
+    return null;
+  const target =
+    before === null
+      ? units.length
+      : units.findIndex((unit) =>
+          before.type === 'group'
+            ? unit.type === 'group' && unit.group.id === before.groupId
+            : unit.type === 'tab' && getTabId(unit.tab) === before.tabId,
+        );
+  if (target < 0) return null;
+  if (target === source || target === source + 1) return tabs;
+  const [unit] = units.splice(source, 1);
+  const insertion =
+    before === null
+      ? units.length
+      : units.findIndex((item) =>
+          before.type === 'group'
+            ? item.type === 'group' && item.group.id === before.groupId
+            : item.type === 'tab' && getTabId(item.tab) === before.tabId,
+        );
+  units.splice(insertion, 0, unit);
+  return units.flatMap((item) =>
+    item.type === 'tab' ? [item.tab] : item.tabs,
+  );
 }
 export function cleanTabAssignments(
   assignments: TabAssignments,
