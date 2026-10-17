@@ -1,16 +1,40 @@
 import {
   defaultKeymap,
+  indentLess,
+  indentMore,
   history,
   historyKeymap,
-  indentWithTab,
 } from '@codemirror/commands';
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown';
 import { completionStatus } from '@codemirror/autocomplete';
-import { indentOnInput, indentUnit } from '@codemirror/language';
-import { StateEffect, StateField } from '@codemirror/state';
+import { indentOnInput, indentUnit, syntaxTree } from '@codemirror/language';
+import { Prec, StateEffect, StateField } from '@codemirror/state';
+import type { SyntaxNode } from '@lezer/common';
+import { getCM } from '@replit/codemirror-vim';
 import { markdownCompletionExtension } from './markdownCompletions';
 import { EditorView, keymap } from '@codemirror/view';
 import { markdownTableEnter } from './markdownTables';
+import { markdownTaskEnter } from './markdownTaskEnter';
+import { formatMarkdownSelection } from './markdownFormatting';
+
+function isListContext(view: EditorView) {
+  const vimState = getCM(view)?.state.vim;
+  if (vimState && (!vimState.insertMode || vimState.visualMode)) return false;
+
+  return view.state.selection.ranges.every((range) => {
+    let node: SyntaxNode | null = syntaxTree(view.state).resolveInner(
+      range.head,
+      -1,
+    );
+    let inListItem = false;
+    for (; node; node = node.parent) {
+      if (node.name === 'FencedCode' || node.name === 'InlineCode')
+        return false;
+      if (node.name === 'ListItem') inListItem = true;
+    }
+    return inListItem;
+  });
+}
 
 const pairedAsteriskPosition = StateField.define<number | null>({
   create: () => null,
@@ -76,15 +100,68 @@ export const markdownEditorExtensions = [
   }),
   markdownCompletionExtension,
   history(),
+  Prec.highest(
+    keymap.of([
+      {
+        key: 'Enter',
+        run: (view) =>
+          completionStatus(view.state) !== 'active' && markdownTaskEnter(view),
+      },
+    ]),
+  ),
   keymap.of([
+    {
+      key: 'Tab',
+      run: (view) => {
+        if (completionStatus(view.state) === 'active') return false;
+        const vimState = getCM(view)?.state.vim;
+        if (vimState && (!vimState.insertMode || vimState.visualMode))
+          return false;
+        if (isListContext(view)) return indentMore(view);
+        view.dispatch({
+          changes: { from: view.state.selection.main.from, insert: '  ' },
+          selection: { anchor: view.state.selection.main.from + 2 },
+          userEvent: 'input',
+        });
+        return true;
+      },
+    },
+    {
+      key: 'Shift-Tab',
+      run: (view) =>
+        completionStatus(view.state) !== 'active' &&
+        isListContext(view) &&
+        indentLess(view),
+    },
+    ...(
+      [
+        ['Mod-b', 'bold'],
+        ['Mod-i', 'italic'],
+        ['Mod-Shift-x', 'strikethrough'],
+        ['Mod-`', 'code'],
+        ['Mod-k', 'link'],
+      ] as const
+    ).map(([key, kind]) => ({
+      key,
+      run: (view: EditorView) => {
+        const vimState = getCM(view)?.state.vim;
+        if (vimState && (!vimState.insertMode || vimState.visualMode))
+          return false;
+        view.dispatch({
+          ...formatMarkdownSelection(view.state, kind),
+          userEvent: 'input.format',
+        });
+        return true;
+      },
+    })),
     {
       key: 'Enter',
       run: (view) =>
         completionStatus(view.state) !== 'active' && markdownTableEnter(view),
     },
+    { key: 'Shift-Enter', run: insertNewlineContinueMarkup },
     { key: 'Enter', run: insertNewlineContinueMarkup },
     ...historyKeymap,
-    ...defaultKeymap,
-    indentWithTab,
+    ...defaultKeymap.filter(({ key }) => key !== 'Tab'),
   ]),
 ];

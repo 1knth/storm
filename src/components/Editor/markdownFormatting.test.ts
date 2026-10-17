@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { formatMarkdownSelection } from './markdownFormatting';
 
-function run(doc: string, from: number, to: number, kind: 'bold' | 'italic') {
+function run(
+  doc: string,
+  from: number,
+  to: number,
+  kind: 'bold' | 'italic' | 'strikethrough' | 'code' | 'link',
+) {
   const state = EditorState.create({
     doc,
     selection: { anchor: from, head: to },
@@ -35,6 +40,14 @@ describe('formatMarkdownSelection', () => {
   it('unwraps selected complete syntax', () => {
     const result = run('*hello*', 0, 7, 'italic');
     assert.equal(result.doc.toString(), 'hello');
+  });
+
+  it('supports code and strikethrough toggles plus link wrapping', () => {
+    assert.equal(run('text', 0, 4, 'strikethrough').doc.toString(), '~~text~~');
+    assert.equal(run('text', 0, 4, 'code').doc.toString(), '`text`');
+    const link = run('text', 0, 4, 'link');
+    assert.equal(link.doc.toString(), '[text]()');
+    assert.equal(link.selection.main.head, 7);
   });
 
   it('formats multiple selections in one state update', () => {

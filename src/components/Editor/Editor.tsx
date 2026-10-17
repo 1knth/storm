@@ -701,7 +701,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
               });
             return true;
           },
-          keydown: (event, view) => {
+          keydown: (event) => {
             if (
               !event.metaKey &&
               !event.ctrlKey &&
@@ -717,28 +717,6 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
               ].includes(event.key)
             )
               cancelScrollAnimations();
-            const isMac = navigator.platform.toLowerCase().includes('mac');
-            const modifier = isMac ? event.metaKey : event.ctrlKey;
-            if (
-              !modifier ||
-              event.altKey ||
-              event.shiftKey ||
-              (isMac ? event.ctrlKey : event.metaKey) ||
-              (event.key.toLowerCase() !== 'b' &&
-                event.key.toLowerCase() !== 'i')
-            )
-              return false;
-            const target = event.target;
-            if (
-              !(target instanceof HTMLElement) ||
-              !target.closest('.cm-content') ||
-              target.closest('.cm-vim-panel') ||
-              !view.hasFocus
-            )
-              return false;
-            return formatSelection(
-              event.key.toLowerCase() === 'b' ? 'bold' : 'italic',
-            );
           },
         }),
       ),
