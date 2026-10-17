@@ -607,6 +607,100 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       markdown(),
       Prec.highest(
         EditorView.domEventHandlers({
+          paste: (event, view) => {
+            const target = event.target;
+            const active = current.current;
+            const installed = binding.current;
+            if (
+              readingMode ||
+              !active ||
+              !installed ||
+              !view.hasFocus ||
+              !(target instanceof HTMLElement) ||
+              !target.closest('.cm-content') ||
+              target.closest('.cm-vim-panel') ||
+              !shouldSaveBoundDocument({
+                currentView: view,
+                bindingView: installed.view,
+                currentGeneration: generation.current,
+                bindingGeneration: installed.generation,
+                currentNote: active,
+                boundNote: current.current,
+                blocked: blocked.current,
+              })
+            )
+              return false;
+            const item = Array.from(event.clipboardData?.items ?? []).find(
+              (entry) =>
+                entry.kind === 'file' && entry.type.startsWith('image/'),
+            );
+            const file = item?.getAsFile();
+            if (!file) return false;
+            const supported = new Set([
+              'image/png',
+              'image/jpeg',
+              'image/gif',
+              'image/webp',
+              'image/avif',
+            ]);
+            if (!supported.has(file.type)) return false;
+            event.preventDefault();
+            const captured = {
+              active,
+              installed,
+              generation: generation.current,
+              state: view.state,
+              from: view.state.selection.main.from,
+              to: view.state.selection.main.to,
+            };
+            void file
+              .arrayBuffer()
+              .then(async (buffer) => {
+                const bytes = new Uint8Array(buffer);
+                if (bytes.length > 10 * 1024 * 1024)
+                  throw new Error('Clipboard image exceeds the 10 MB limit.');
+                let binary = '';
+                for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+                  binary += String.fromCharCode(
+                    ...bytes.subarray(offset, offset + 0x8000),
+                  );
+                }
+                const result = await window.vault.pasteImage({
+                  vaultId: active.vaultId,
+                  notePath: active.note.path,
+                  mimeType: file.type,
+                  base64: btoa(binary),
+                });
+                if (
+                  viewRef.current !== view ||
+                  current.current !== captured.active ||
+                  binding.current !== captured.installed ||
+                  generation.current !== captured.generation ||
+                  view.state !== captured.state ||
+                  view.state.selection.main.from !== captured.from ||
+                  view.state.selection.main.to !== captured.to
+                )
+                  return;
+                const link = `![](${result.imagePath})`;
+                view.dispatch({
+                  changes: {
+                    from: captured.from,
+                    to: captured.to,
+                    insert: link,
+                  },
+                  selection: { anchor: captured.from + link.length },
+                  annotations: Transaction.userEvent.of('input.paste'),
+                });
+              })
+              .catch((error: unknown) => {
+                notifyError(
+                  error instanceof Error
+                    ? error.message
+                    : 'Could not paste image.',
+                );
+              });
+            return true;
+          },
           keydown: (event, view) => {
             if (
               !event.metaKey &&
