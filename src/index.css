@@ -1,5 +1,28 @@
 @import 'tailwindcss';
 
+/*
+ * Appearance variables are authoritative for CodeMirror's drawn selection and
+ * Vim cursor colors. !important outranks library theme declarations without
+ * changing cursor visibility, blinking, geometry, or Vim's native-selection
+ * suppression.
+ */
+.cm-editor .cm-selectionLayer .cm-selectionBackground {
+  background-color: var(--storm-selection, rgb(120 160 220 / 35%)) !important;
+}
+
+.cm-editor .cm-fat-cursor {
+  background-color: var(--storm-cursor, rgb(255 150 150 / 70%)) !important;
+}
+
+.cm-editor:not(.cm-focused) .cm-fat-cursor {
+  outline-color: var(--storm-cursor, rgb(255 150 150 / 70%)) !important;
+}
+
+.cm-editor .cm-cursor,
+.cm-editor .cm-dropCursor {
+  border-left-color: var(--storm-cursor, rgb(255 150 150 / 70%)) !important;
+}
+
 /* Collapse the tab strip and its reserved space together without resizing the editor itself. */
 .tab-bar-slot {
   min-height: 0;
@@ -68,6 +91,24 @@
   }
 }
 
+/* Neutral chrome tokens; accents and content palettes remain independent. */
+:root {
+  color-scheme: dark;
+  --ui-bg: 32 33 36;
+  --ui-panel: 0 0 0;
+  --ui-fg: 255 255 255;
+  --ui-border: 255 255 255;
+  --ui-hover: 255 255 255;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+  --ui-bg: 245 245 245;
+  --ui-panel: 255 255 255;
+  --ui-fg: 12 12 12;
+  --ui-border: 0 0 0;
+  --ui-hover: 0 0 0;
+}
+
 /* Browser focus is shown with a quiet surface tint rather than an outline. */
 :focus {
   outline: none;
@@ -85,16 +126,16 @@
 
 /* Shared dark popup language for menus, pickers, forms, and notifications. */
 .app-popup-surface {
-  border: 1px solid rgb(255 255 255 / 15%);
+  border: 1px solid rgb(var(--ui-border) / 15%);
   border-radius: 0.5rem;
-  background: rgb(32 33 36 / 96%);
-  color: rgb(255 255 255 / 95%);
+  background: rgb(var(--ui-bg) / 96%);
+  color: rgb(var(--ui-fg) / 95%);
   box-shadow: 0 16px 40px rgb(0 0 0 / 35%);
   backdrop-filter: blur(16px);
 }
 
 .command-palette-surface {
-  background: rgb(32 33 36 / 58%);
+  background: rgb(var(--ui-bg) / 78%);
   backdrop-filter: blur(16px);
 }
 
@@ -117,7 +158,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 0.5rem;
-  color: rgb(255 255 255 / 70%);
+  color: rgb(var(--ui-fg) / 70%);
   transition:
     background-color 100ms ease,
     color 100ms ease;
@@ -132,6 +173,11 @@
 .app-icon-button:focus-visible:not(:disabled) {
   background-color: rgb(255 255 255 / 10%);
   color: white;
+}
+:root[data-theme='light'] .app-icon-button:hover:not(:disabled),
+:root[data-theme='light'] .app-icon-button:focus-visible:not(:disabled) {
+  background-color: rgb(var(--ui-hover) / 7%);
+  color: rgb(var(--ui-fg));
 }
 
 .app-button {
@@ -148,12 +194,20 @@
   background-color: rgb(255 255 255 / 9%);
   color: white;
 }
+:root[data-theme='light'] .app-button {
+  color: rgb(var(--ui-fg) / 85%);
+}
+:root[data-theme='light'] .app-button:hover:not(:disabled),
+:root[data-theme='light'] .app-button:focus-visible:not(:disabled) {
+  background-color: rgb(var(--ui-hover) / 7%);
+  color: rgb(var(--ui-fg));
+}
 
 .app-input {
-  border: 1px solid rgb(255 255 255 / 16%);
+  border: 1px solid rgb(var(--ui-border) / 16%);
   border-radius: 0.375rem;
-  background-color: rgb(0 0 0 / 24%);
-  color: white;
+  background-color: rgb(var(--ui-panel) / 24%);
+  color: rgb(var(--ui-fg));
 }
 
 .app-input:focus-visible {
@@ -167,6 +221,144 @@
 
 .app-input.border-b {
   border-bottom-width: 1px;
+}
+
+/* Give predominantly neutral utility-styled chrome a light counterpart. */
+:root[data-theme='light']
+  :where(
+    .bg-black\/20,
+    .bg-black\/30,
+    .bg-black\/40,
+    .bg-black\/50,
+    .bg-black\/55,
+    .bg-black\/60,
+    .bg-black\/70,
+    .bg-black\/90,
+    .bg-\[\#202124\],
+    .bg-\[\#17191d\],
+    [class*='bg-[rgb(32_32_32/']
+  ) {
+  background-color: rgb(var(--ui-panel) / 62%);
+}
+:root[data-theme='light'] :where(.bg-\[\#202124\], .bg-\[\#17191d\]) {
+  background-color: rgb(var(--ui-bg));
+}
+:root[data-theme='light'] :where(.bg-white\/5, .bg-white\/10) {
+  background-color: rgb(var(--ui-hover) / 7%);
+}
+:root[data-theme='light'] :where(.bg-neutral-800\/50) {
+  background-color: rgb(0 0 0 / 7%);
+}
+:root[data-theme='light']
+  :where(
+    .text-white,
+    .text-white\/90,
+    .text-white\/85,
+    .text-white\/80,
+    .text-white\/75,
+    .text-white\/70,
+    .text-white\/65,
+    .text-white\/60,
+    .text-white\/55,
+    .text-white\/50,
+    .text-white\/45,
+    .text-white\/40,
+    .text-white\/35,
+    .text-white\/30
+  ) {
+  color: rgb(var(--ui-fg) / 92%);
+}
+:root[data-theme='light']
+  :where(
+    .text-white\/55,
+    .text-white\/50,
+    .text-white\/45,
+    .text-white\/40,
+    .text-white\/35,
+    .text-white\/30
+  ) {
+  color: rgb(var(--ui-fg) / 75%);
+}
+:root[data-theme='light'] .cm-editor .cm-content,
+:root[data-theme='light'] .markdown-preview-content {
+  color: white;
+}
+:root[data-theme='light']
+  :where(
+    .empty-editor-wordmark,
+    .tab-name,
+    .preview-heading,
+    .empty-editor-shortcut
+  ) {
+  color: white;
+}
+.empty-editor-shortcut kbd {
+  color: white;
+}
+.tab-file-icon,
+.tab-name {
+  color: white;
+}
+.tab-surface--inactive {
+  background-color: rgb(32 32 32 / 14%);
+  border-color: rgb(255 255 255 / 5%);
+}
+.tab-surface--inactive:hover {
+  background-color: rgb(32 32 32 / 30%);
+}
+:root[data-theme='light'] .editor-action-button,
+:root[data-theme='light'] .editor-action-button:hover:not(:disabled),
+:root[data-theme='light'] .editor-action-button:focus-visible:not(:disabled),
+:root[data-theme='light'] .editor-new-tab-button,
+:root[data-theme='light'] .editor-new-tab-button:hover:not(:disabled),
+:root[data-theme='light'] .editor-new-tab-button:focus-visible:not(:disabled) {
+  color: white;
+}
+:root[data-theme='light'] .cm-editor .cm-gutters {
+  color: rgb(var(--ui-fg) / 55%);
+}
+:root[data-theme='light']
+  :where(.border-white\/10, .border-white\/15, .border-white\/20) {
+  border-color: rgb(var(--ui-border) / 14%);
+}
+:root[data-theme='light'] [data-pane='explorer'] {
+  background-color: rgb(var(--ui-panel) / 30%);
+}
+:root[data-theme='light'] [data-pane='editor'] > .editor-pane-shell > main {
+  background-color: rgb(var(--ui-panel) / 15%);
+}
+:root[data-theme='light'] .tab-surface {
+  border-color: rgb(12 12 12 / 18%);
+  color: rgb(12 12 12 / 78%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+:root[data-theme='light'] .tab-surface--active {
+  border-color: rgb(12 12 12 / 18%);
+  background-color: rgb(255 255 255 / 35%);
+  color: rgb(12 12 12);
+}
+:root[data-theme='light'] .tab-surface--inactive {
+  background-color: rgb(255 255 255 / 7%);
+  border-color: rgb(12 12 12 / 8%);
+}
+:root[data-theme='light'] .tab-file-icon {
+  color: white;
+}
+:root[data-theme='light'] .tab-surface--inactive .tab-name {
+  color: white;
+}
+:root[data-theme='light'] .tab-surface--inactive:hover {
+  background-color: rgb(255 255 255 / 23%);
+  border-color: rgb(12 12 12 / 14%);
+}
+:root[data-theme='light'] .tab-group-surface {
+  background-color: rgb(255 255 255 / 22%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+:root[data-theme='light'] .editor-pane-shell::before {
+  background: rgb(0 0 0 / 7%);
 }
 
 /* Keep sidebar pointer and keyboard-navigation tint equally subtle. */

@@ -452,7 +452,7 @@ export default function TabBar({
               }
             : undefined
         }
-        className={`group/tab relative flex h-8 w-[10.5rem] shrink-0 items-center rounded-full border px-3 transition-colors focus-within:z-10 ${exiting ? 'tab-presence-exit' : enteringIds.has(id) ? 'tab-presence-enter' : ''} ${activeId === id ? 'border-white/10 bg-[rgb(32_32_32/72%)] text-white' : 'border-transparent bg-[rgb(32_32_32/24%)] text-white/60 hover:bg-[rgb(32_32_32/48%)]'}`}
+        className={`tab-surface group/tab relative flex h-8 w-[10.5rem] shrink-0 items-center rounded-full border px-3 transition-colors focus-within:z-10 ${exiting ? 'tab-presence-exit' : enteringIds.has(id) ? 'tab-presence-enter' : ''} ${activeId === id ? 'tab-surface--active border-white/10 bg-[rgb(32_32_32/72%)] text-white' : 'tab-surface--inactive border-transparent bg-[rgb(32_32_32/24%)] text-white/60 hover:bg-[rgb(32_32_32/48%)]'}`}
         onAnimationEnd={(event) => {
           if (exiting && event.animationName === 'tab-presence-exit') {
             const timer = timers.current.get(id);
@@ -500,9 +500,9 @@ export default function TabBar({
         >
           <FaRegFile
             aria-hidden="true"
-            className="h-3 w-3 shrink-0 opacity-75"
+            className="tab-file-icon h-3 w-3 shrink-0 opacity-75"
           />
-          <span className="truncate">{label}</span>
+          <span className="tab-name truncate">{label}</span>
         </button>
         {commandHeld && index >= 0 && index < 9 && (
           <span
@@ -553,7 +553,7 @@ export default function TabBar({
                 if (payload?.type === 'group') dropGroup(event, group.id);
                 else dropOnGroup(event, group.id);
               }}
-              className={`relative flex shrink-0 items-center gap-1 rounded-xl border border-white/15 border-b-2 bg-[rgb(32_32_32/18%)] px-1 py-1 transition-colors ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-white/25' : ''}`}
+              className={`tab-group-surface relative flex shrink-0 items-center gap-1 rounded-xl border border-white/15 border-b-2 bg-[rgb(32_32_32/18%)] px-1 py-1 transition-colors ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-white/25' : ''}`}
               style={{
                 borderColor: `${TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))]}55`,
                 borderBottomColor:
@@ -626,7 +626,7 @@ export default function TabBar({
           aria-label="New tab (⌘T)"
           aria-keyshortcuts="Meta+T Control+T"
           title={`New tab (${platformKey}T)`}
-          className="app-icon-button relative h-7 w-7 rounded-lg text-white/65"
+          className="editor-new-tab-button app-icon-button relative h-7 w-7 rounded-lg text-white/65"
         >
           {commandHeld ? (
             <span aria-hidden="true" className="text-[11px] leading-none">

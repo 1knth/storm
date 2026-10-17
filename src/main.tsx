@@ -64,10 +64,10 @@ function App() {
   const [appearance, setAppearance] = useState<Appearance>(() =>
     loadAppearance(window.localStorage),
   );
-  useEffect(
-    () => saveAppearance(window.localStorage, appearance),
-    [appearance],
-  );
+  useEffect(() => {
+    document.documentElement.dataset.theme = appearance.theme;
+    saveAppearance(window.localStorage, appearance);
+  }, [appearance]);
   const navigationBusy = useRef(false);
   const vaultTransition = useRef(false);
   const noteRequestId = useRef(0);

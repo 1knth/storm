@@ -2,6 +2,7 @@ import { DEFAULT_HEADING_COLORS } from './components/Editor/markdownHighlighting
 
 export const APPEARANCE_KEY = 'storm.appearance';
 export const DEFAULT_APPEARANCE = {
+  theme: 'dark' as 'dark' | 'light',
   selection: '#e0bfff',
   cursor: '#027DFF',
   headings: DEFAULT_HEADING_COLORS,
@@ -10,6 +11,18 @@ export const DEFAULT_APPEARANCE = {
   mermaidNodeBorder: '#9370DB',
   mermaidText: '#333333',
   mermaidConnectors: '#333333',
+  opacity: {
+    selection: 40,
+    cursor: 100,
+    ...Object.fromEntries(
+      [...Array(6)].map((_, i) => [`heading-${i + 1}`, 100]),
+    ),
+    mermaidBackground: 100,
+    mermaidNodeFill: 100,
+    mermaidNodeBorder: 100,
+    mermaidText: 100,
+    mermaidConnectors: 100,
+  } as Record<string, number>,
 };
 export type Appearance = typeof DEFAULT_APPEARANCE;
 const hex = /^#[\da-fA-F]{6}$/;
@@ -22,6 +35,7 @@ export function validateAppearance(value: unknown): Appearance {
     typeof value === 'string' && hex.test(value) ? value : fallback;
   const headings = Array.isArray(input.headings) ? input.headings : [];
   return {
+    theme: input.theme === 'light' ? 'light' : 'dark',
     selection: color(input.selection, DEFAULT_APPEARANCE.selection),
     cursor: color(input.cursor, DEFAULT_APPEARANCE.cursor),
     headings: DEFAULT_HEADING_COLORS.map((fallback, index) =>
@@ -43,6 +57,22 @@ export function validateAppearance(value: unknown): Appearance {
     mermaidConnectors: color(
       input.mermaidConnectors,
       DEFAULT_APPEARANCE.mermaidConnectors,
+    ),
+    opacity: Object.fromEntries(
+      Object.entries(DEFAULT_APPEARANCE.opacity).map(([key, fallback]) => {
+        const candidate = (
+          input.opacity as Record<string, unknown> | undefined
+        )?.[key];
+        return [
+          key,
+          typeof candidate === 'number' &&
+          Number.isFinite(candidate) &&
+          candidate >= 0 &&
+          candidate <= 100
+            ? candidate
+            : fallback,
+        ];
+      }),
     ),
   };
 }
@@ -67,12 +97,35 @@ export function saveAppearance(
     /* Preferences are optional. */
   }
 }
+export function rgbaColor(color: string, opacity: number): string {
+  const match = /^#([\da-fA-F]{2})([\da-fA-F]{2})([\da-fA-F]{2})$/.exec(color);
+  if (!match) return 'rgba(0, 0, 0, 1)';
+  const alpha = Number.isFinite(opacity)
+    ? Math.min(100, Math.max(0, opacity)) / 100
+    : 1;
+  return `rgba(${parseInt(match[1], 16)}, ${parseInt(match[2], 16)}, ${parseInt(match[3], 16)}, ${alpha})`;
+}
 export function mermaidThemeVariables(appearance: Appearance) {
   return {
-    background: appearance.mermaidBackground,
-    primaryColor: appearance.mermaidNodeFill,
-    primaryBorderColor: appearance.mermaidNodeBorder,
-    primaryTextColor: appearance.mermaidText,
-    lineColor: appearance.mermaidConnectors,
+    background: rgbaColor(
+      appearance.mermaidBackground,
+      appearance.opacity.mermaidBackground,
+    ),
+    primaryColor: rgbaColor(
+      appearance.mermaidNodeFill,
+      appearance.opacity.mermaidNodeFill,
+    ),
+    primaryBorderColor: rgbaColor(
+      appearance.mermaidNodeBorder,
+      appearance.opacity.mermaidNodeBorder,
+    ),
+    primaryTextColor: rgbaColor(
+      appearance.mermaidText,
+      appearance.opacity.mermaidText,
+    ),
+    lineColor: rgbaColor(
+      appearance.mermaidConnectors,
+      appearance.opacity.mermaidConnectors,
+    ),
   };
 }

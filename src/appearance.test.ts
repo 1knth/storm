@@ -5,6 +5,7 @@ import {
   DEFAULT_APPEARANCE,
   loadAppearance,
   mermaidThemeVariables,
+  rgbaColor,
   saveAppearance,
   validateAppearance,
 } from './appearance';
@@ -21,6 +22,11 @@ describe('appearance preferences', () => {
       ...DEFAULT_APPEARANCE.headings.slice(1),
     ]);
   });
+  it('defaults legacy settings to dark and validates persisted theme', () => {
+    deepStrictEqual(validateAppearance({ selection: '#123456' }).theme, 'dark');
+    deepStrictEqual(validateAppearance({ theme: 'light' }).theme, 'light');
+    deepStrictEqual(validateAppearance({ theme: 'invalid' }).theme, 'dark');
+  });
   it('loads malformed storage safely and persists validated values', () => {
     const memory = new Map<string, string>([[APPEARANCE_KEY, '{bad']]);
     const storage = {
@@ -34,13 +40,24 @@ describe('appearance preferences', () => {
     } as never);
     deepStrictEqual(loadAppearance(storage), DEFAULT_APPEARANCE);
   });
+  it('defaults opacity for legacy settings and rejects invalid values', () => {
+    const result = validateAppearance({
+      opacity: { selection: 140, cursor: -1, 'heading-1': NaN },
+    });
+    deepStrictEqual(result.opacity, DEFAULT_APPEARANCE.opacity);
+  });
+  it('clamps RGBA alpha and preserves valid RGB palette colors', () => {
+    strictEqual(rgbaColor('#123456', 40), 'rgba(18, 52, 86, 0.4)');
+    strictEqual(rgbaColor('#123456', 500), 'rgba(18, 52, 86, 1)');
+    strictEqual(rgbaColor('#123456', -1), 'rgba(18, 52, 86, 0)');
+  });
   it('maps Mermaid palette controls onto base theme variables', () => {
     deepStrictEqual(mermaidThemeVariables(DEFAULT_APPEARANCE), {
-      background: DEFAULT_APPEARANCE.mermaidBackground,
-      primaryColor: DEFAULT_APPEARANCE.mermaidNodeFill,
-      primaryBorderColor: DEFAULT_APPEARANCE.mermaidNodeBorder,
-      primaryTextColor: DEFAULT_APPEARANCE.mermaidText,
-      lineColor: DEFAULT_APPEARANCE.mermaidConnectors,
+      background: 'rgba(255, 255, 255, 1)',
+      primaryColor: 'rgba(236, 236, 255, 1)',
+      primaryBorderColor: 'rgba(147, 112, 219, 1)',
+      primaryTextColor: 'rgba(51, 51, 51, 1)',
+      lineColor: 'rgba(51, 51, 51, 1)',
     });
   });
 });

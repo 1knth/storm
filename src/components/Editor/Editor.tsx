@@ -23,6 +23,7 @@ import type { NoteData } from '../../shared/types';
 import { markdownEditorExtensions } from './extensions';
 import { createMarkdownSyntaxHighlighting } from './markdownHighlighting';
 import type { Appearance } from '../../appearance';
+import { rgbaColor } from '../../appearance';
 import MarkdownPreview from './MarkdownPreview';
 import { taskMarkerChange, taskToggleMatchesBinding } from './markdownTasks';
 import type { TaskTogglePayload } from './markdownTasks';
@@ -648,7 +649,12 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       vimCompartment.current.of(vimMode ? vim() : []),
       ...markdownEditorExtensions,
       appearanceCompartment.current.of(
-        createMarkdownSyntaxHighlighting(appearance.headings),
+        createMarkdownSyntaxHighlighting(
+          appearance.headings.map((color, index) =>
+            rgbaColor(color, appearance.opacity[`heading-${index + 1}`]),
+          ),
+          appearance.theme === 'light',
+        ),
       ),
       lineNumbers(),
       EditorView.lineWrapping,
@@ -709,10 +715,6 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           borderLeft: '1.5px solid var(--storm-cursor)',
         },
         '.cm-activeLine': { backgroundColor: 'rgba(224, 191, 255, 0.1)' },
-        '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-          backgroundColor:
-            'color-mix(in srgb, var(--storm-selection) 40%, transparent)',
-        },
       }),
     ];
     const view = new EditorView({
@@ -775,16 +777,21 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     if (!view) return;
     view.dispatch({
       effects: appearanceCompartment.current.reconfigure(
-        createMarkdownSyntaxHighlighting(appearance.headings),
+        createMarkdownSyntaxHighlighting(
+          appearance.headings.map((color, index) =>
+            rgbaColor(color, appearance.opacity[`heading-${index + 1}`]),
+          ),
+          appearance.theme === 'light',
+        ),
       ),
     });
     document.documentElement.style.setProperty(
       '--storm-selection',
-      appearance.selection,
+      rgbaColor(appearance.selection, appearance.opacity.selection),
     );
     document.documentElement.style.setProperty(
       '--storm-cursor',
-      appearance.cursor,
+      rgbaColor(appearance.cursor, appearance.opacity.cursor),
     );
   }, [appearance]);
 
@@ -818,7 +825,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     cancelScrollAnimations();
                     setPreviewVisible((visible) => !visible);
                   }}
-                  className="app-button relative inline-flex h-7 items-center justify-center gap-1.5 px-2 text-xs text-white/60"
+                  className="editor-action-button app-button relative inline-flex h-7 items-center justify-center gap-1.5 px-2 text-xs text-white/60"
                 >
                   {previewVisible ? 'Hide preview' : 'Show preview'}
                   <span
@@ -838,7 +845,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                   aria-pressed={readingMode}
                   title={`Toggle reading mode (${navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'})`}
                   onClick={onToggleReadingMode}
-                  className={`app-icon-button relative ${readingMode ? 'bg-white/10 text-white' : ''}`}
+                  className={`editor-action-button app-icon-button relative ${readingMode ? 'bg-white/10 text-white' : ''}`}
                 >
                   <AiOutlineFullscreen size={14} aria-hidden="true" />
                   <span
@@ -902,19 +909,39 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
               />
             ) : !hasActiveNote ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">
-                <div className="text-2xl font-medium tracking-wide text-white/50">
+                <div className="empty-editor-wordmark text-2xl font-medium tracking-wide text-white/50">
                   storm
                 </div>
-                <div className="flex items-center gap-2 text-sm text-white/30">
+                <div className="empty-editor-shortcut flex items-center gap-2 text-sm">
                   <span>search note</span>
-                  <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs text-white/60">
-                    cmd + p
+                  <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs">
+                    {navigator.platform.toLowerCase().includes('mac')
+                      ? 'cmd + p'
+                      : 'ctrl + p'}
                   </kbd>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-white/30">
+                <div className="empty-editor-shortcut flex items-center gap-2 text-sm">
                   <span>restore last tabs</span>
-                  <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs text-white/60">
-                    cmd + shift + t
+                  <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs">
+                    {navigator.platform.toLowerCase().includes('mac')
+                      ? 'cmd + shift + t'
+                      : 'ctrl + shift + t'}
+                  </kbd>
+                </div>
+                <div className="empty-editor-shortcut flex items-center gap-2 text-sm">
+                  <span>new tab</span>
+                  <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs">
+                    {navigator.platform.toLowerCase().includes('mac')
+                      ? 'cmd + t'
+                      : 'ctrl + t'}
+                  </kbd>
+                </div>
+                <div className="empty-editor-shortcut flex items-center gap-2 text-sm">
+                  <span>close tab</span>
+                  <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs">
+                    {navigator.platform.toLowerCase().includes('mac')
+                      ? 'cmd + w'
+                      : 'ctrl + w'}
                   </kbd>
                 </div>
               </div>

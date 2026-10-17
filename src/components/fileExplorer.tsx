@@ -475,6 +475,23 @@ export default function FileExplorer({
                     Editor, preview, and diagram colors
                   </p>
                   <p className="text-sm font-semibold">Appearance</p>
+                  <label className="flex items-center justify-between gap-3 text-xs text-white/80">
+                    UI theme
+                    <select
+                      aria-label="UI theme"
+                      className="app-input px-2 py-1"
+                      value={appearance.theme}
+                      onChange={(event) =>
+                        onAppearanceChange({
+                          ...appearance,
+                          theme: event.target.value as 'dark' | 'light',
+                        })
+                      }
+                    >
+                      <option value="dark">Dark</option>
+                      <option value="light">Light</option>
+                    </select>
+                  </label>
                   {(
                     [
                       ['Selection highlight', 'selection'],
@@ -499,25 +516,49 @@ export default function FileExplorer({
                         className="flex items-center justify-between gap-3 text-xs text-white/80"
                       >
                         {label}
-                        <input
-                          aria-label={label}
-                          type="color"
-                          value={value}
-                          onChange={(event) => {
-                            const next = key.startsWith('heading-')
-                              ? {
-                                  ...appearance,
-                                  headings: appearance.headings.map(
-                                    (color, i) =>
-                                      i === Number(key.slice(8)) - 1
-                                        ? event.target.value
-                                        : color,
+                        <span className="flex items-center gap-2">
+                          <input
+                            aria-label={label}
+                            type="color"
+                            value={value}
+                            onChange={(event) => {
+                              const next = key.startsWith('heading-')
+                                ? {
+                                    ...appearance,
+                                    headings: appearance.headings.map(
+                                      (color, i) =>
+                                        i === Number(key.slice(8)) - 1
+                                          ? event.target.value
+                                          : color,
+                                    ),
+                                  }
+                                : { ...appearance, [key]: event.target.value };
+                              onAppearanceChange(next);
+                            }}
+                          />
+                          <input
+                            aria-label={`${label} opacity`}
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            className="app-input w-16 px-1 py-1"
+                            value={appearance.opacity[key]}
+                            onChange={(event) =>
+                              onAppearanceChange({
+                                ...appearance,
+                                opacity: {
+                                  ...appearance.opacity,
+                                  [key]: Math.max(
+                                    0,
+                                    Math.min(100, Number(event.target.value)),
                                   ),
-                                }
-                              : { ...appearance, [key]: event.target.value };
-                            onAppearanceChange(next);
-                          }}
-                        />
+                                },
+                              })
+                            }
+                          />
+                          <span>%</span>
+                        </span>
                       </label>
                     );
                   })}
