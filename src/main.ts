@@ -6,6 +6,7 @@ import { VaultService } from './vault/vaultService';
 import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
 import { readVaultImage } from './vault/vaultAssets';
+import { savePastedImage } from './vault/pasteImage';
 import { resolveVaultNote } from './vault/vaultNoteResolver';
 import { createFolder, createMarkdownNote } from './vault/vaultCreation';
 import {
@@ -327,6 +328,27 @@ ipcMain.handle('vault:resolve-note-link', async (_event, request: unknown) => {
         : 'invalid';
     return { ok: false, reason };
   }
+});
+
+ipcMain.handle('vault:paste-image', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    throw new Error('Invalid paste image request');
+  const value = request as Record<string, unknown>;
+  if (
+    typeof value.vaultId !== 'string' ||
+    typeof value.notePath !== 'string' ||
+    typeof value.mimeType !== 'string' ||
+    typeof value.base64 !== 'string'
+  )
+    throw new Error('Invalid paste image request');
+  const vault = await vaultRegistry.getById(value.vaultId);
+  if (!vault) throw new Error('Unknown vault');
+  return savePastedImage(vault.path, {
+    vaultId: value.vaultId,
+    notePath: value.notePath,
+    mimeType: value.mimeType,
+    base64: value.base64,
+  });
 });
 
 ipcMain.handle('vault:read-image', async (_event, request: unknown) => {

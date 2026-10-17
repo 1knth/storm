@@ -63,6 +63,17 @@ export type VaultNoteLinkResult =
   | { ok: true; path: string }
   | { ok: false; reason: 'missing' | 'ambiguous' | 'invalid' };
 
+export interface PasteImageRequest {
+  vaultId: string;
+  notePath: string;
+  mimeType: string;
+  base64: string;
+}
+
+export interface PasteImageResult {
+  imagePath: string;
+}
+
 export interface VaultImageRequest {
   vaultId: string;
   notePath: string;
@@ -143,6 +154,7 @@ declare global {
       readNote: (relativePath: string) => Promise<NoteData>;
       saveNote: (request: SaveNoteRequest) => Promise<SaveNoteResult>;
       readImage: (request: VaultImageRequest) => Promise<VaultImageResult>;
+      pasteImage: (request: PasteImageRequest) => Promise<PasteImageResult>;
       resolveNoteLink: (
         request: VaultNoteLinkRequest,
       ) => Promise<VaultNoteLinkResult>;
