@@ -895,64 +895,78 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-0 p-4 text-white"
     >
       <div
-        className={`tab-bar-slot shrink-0 ${tabsVisible ? 'tab-bar-slot--visible' : 'tab-bar-slot--hidden'}`}
-        aria-hidden={!tabsVisible}
-        inert={!tabsVisible}
+        className={`editor-pane-shell relative flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl ${tabsVisible ? 'editor-pane-shell--visible' : 'editor-pane-shell--hidden'}`}
       >
-        <div
-          className={`tab-bar-content ${tabsVisible ? 'tab-bar-content--visible' : 'tab-bar-content--hidden'}`}
+        <main
+          className={`editor-pane-surface relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border p-0 ${tabsVisible ? 'editor-pane-surface--visible' : 'editor-pane-surface--hidden'}`}
         >
-          {tabs}
-        </div>
-      </div>
-      <div className="editor-pane-shell relative flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl">
-        <main className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/15 bg-black/30 p-0">
-          <div className="flex h-10 shrink-0 items-center justify-end gap-1 px-3">
-            {hasActiveNote && (
-              <>
-                <button
-                  type="button"
-                  aria-label={previewVisible ? 'Hide preview' : 'Show preview'}
-                  aria-pressed={previewVisible}
-                  title={`${previewVisible ? 'Hide' : 'Show'} preview (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧M' : 'Ctrl+Shift+M'})`}
-                  onClick={() => {
-                    cancelScrollAnimations();
-                    setPreviewVisible((visible) => !visible);
-                  }}
-                  className="editor-action-button app-button relative inline-flex h-7 items-center justify-center gap-1.5 px-2 text-xs text-white/60"
-                >
-                  {previewVisible ? 'Hide preview' : 'Show preview'}
-                  <span
-                    aria-hidden="true"
-                    className={`pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
+          <div
+            className={`editor-toolbar flex min-h-0 shrink-0 items-center gap-2 overflow-visible px-2 ${tabsVisible || hasActiveNote ? 'h-11' : 'h-0'}`}
+          >
+            <div
+              className={`tab-bar-slot min-w-0 flex-1 ${tabsVisible ? 'tab-bar-slot--visible' : 'tab-bar-slot--hidden'}`}
+              aria-hidden={!tabsVisible}
+              inert={!tabsVisible}
+            >
+              <div
+                className={`tab-bar-content ${tabsVisible ? 'tab-bar-content--visible' : 'tab-bar-content--hidden'}`}
+              >
+                {tabs}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center justify-end gap-1">
+              {hasActiveNote && (
+                <>
+                  <button
+                    type="button"
+                    aria-label={
+                      previewVisible ? 'Hide preview' : 'Show preview'
+                    }
+                    aria-pressed={previewVisible}
+                    title={`${previewVisible ? 'Hide' : 'Show'} preview (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧M' : 'Ctrl+Shift+M'})`}
+                    onClick={() => {
+                      cancelScrollAnimations();
+                      setPreviewVisible((visible) => !visible);
+                    }}
+                    className="editor-action-button app-button relative inline-flex h-7 items-center justify-center gap-1.5 px-2 text-xs text-white/60"
                   >
-                    {navigator.platform.toLowerCase().includes('mac')
-                      ? '⌘⇧M'
-                      : 'Ctrl+Shift+M'}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={
-                    readingMode ? 'Exit reading mode' : 'Enter reading mode'
-                  }
-                  aria-pressed={readingMode}
-                  title={`Toggle reading mode (${navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'})`}
-                  onClick={onToggleReadingMode}
-                  className={`editor-action-button app-icon-button relative ${readingMode ? 'bg-white/10 text-white' : ''}`}
-                >
-                  <AiOutlineFullscreen size={14} aria-hidden="true" />
-                  <span
-                    aria-hidden="true"
-                    className={`pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
+                    {previewVisible ? 'Hide preview' : 'Show preview'}
+                    <span
+                      aria-hidden="true"
+                      className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
+                    >
+                      <span className="whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white">
+                        {navigator.platform.toLowerCase().includes('mac')
+                          ? '⌘⇧M'
+                          : 'Ctrl+Shift+M'}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={
+                      readingMode ? 'Exit reading mode' : 'Enter reading mode'
+                    }
+                    aria-pressed={readingMode}
+                    title={`Toggle reading mode (${navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'})`}
+                    onClick={onToggleReadingMode}
+                    className={`editor-action-button app-icon-button relative ${readingMode ? 'bg-white/10 text-white' : ''}`}
                   >
-                    {navigator.platform.toLowerCase().includes('mac')
-                      ? '⌘E'
-                      : 'Ctrl+E'}
-                  </span>
-                </button>
-              </>
-            )}
+                    <AiOutlineFullscreen size={14} aria-hidden="true" />
+                    <span
+                      aria-hidden="true"
+                      className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
+                    >
+                      <span className="whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white">
+                        {navigator.platform.toLowerCase().includes('mac')
+                          ? '⌘E'
+                          : 'Ctrl+E'}
+                      </span>
+                    </span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <div className="flex w-full min-h-0 min-w-0 flex-1 overflow-hidden">
             <div
@@ -1004,7 +1018,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 appearance={appearance}
               />
             ) : !hasActiveNote ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">
                 <div className="empty-editor-wordmark text-2xl font-medium tracking-wide text-white/50">
                   storm
                 </div>

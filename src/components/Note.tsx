@@ -50,8 +50,11 @@ export default function Note({
             className="sidebar-hover-tint flex w-full min-h-8 items-center justify-between rounded-md px-2 py-1 text-left text-xs text-white/90 transition-colors hover:bg-white/5 focus-visible:bg-white/5"
           >
             <span className="flex min-w-0 items-center gap-2 truncate">
-              <FaFolder aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-              {entry.name}
+              <FaFolder
+                aria-hidden="true"
+                className="file-tree-icon h-3.5 w-3.5 shrink-0"
+              />
+              <span className="file-tree-label truncate">{entry.name}</span>
             </span>
             <IoIosArrowForward
               aria-hidden="true"
@@ -83,12 +86,15 @@ export default function Note({
           className={`flex min-h-10 w-full flex-col justify-center p-1.5 text-left ${isSelected ? 'rounded-md bg-[#027DFF]/60' : 'rounded-none focus-visible:rounded-md focus-visible:bg-white/5'}`}
         >
           <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-medium leading-4 text-white/90">
-            <FaRegFile aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">
+            <FaRegFile
+              aria-hidden="true"
+              className="file-tree-icon h-3.5 w-3.5 shrink-0"
+            />
+            <span className="file-tree-label truncate">
               {entry.name.slice(0, entry.name.indexOf('.'))}
             </span>
           </span>
-          <span className="block min-h-4 truncate border-b border-solid border-white/20 text-[11px] font-light leading-4 text-white/65">
+          <span className="file-tree-peek block min-h-4 truncate border-b border-solid border-white/20 text-[11px] font-light leading-4 text-white/65">
             <NotePeek markdown={entry.peek} />
           </span>
         </button>
