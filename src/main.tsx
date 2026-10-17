@@ -1820,7 +1820,7 @@ function App() {
       )}
       {creation && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 p-4"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget && !creationPending)
               setCreation(null);
@@ -1831,7 +1831,7 @@ function App() {
             aria-modal="true"
             aria-labelledby="create-title"
             onSubmit={submitCreation}
-            className="app-popup-surface w-full max-w-sm p-5"
+            className="app-popup-surface command-palette-surface w-full max-w-sm p-5"
           >
             <h2 id="create-title" className="mb-3 text-lg font-semibold">
               New {creation.kind === 'note' ? 'Markdown note' : 'folder'}
