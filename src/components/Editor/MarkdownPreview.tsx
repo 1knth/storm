@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { createContext, memo, useContext } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -88,16 +88,18 @@ function remarkWikiImages() {
   };
 }
 
+const AppearanceContext = createContext<Appearance | null>(null);
+
 function MarkdownPre({
   children,
-  appearance,
   ...sourceProps
 }: {
   children?: React.ReactNode;
-  appearance: Appearance;
   'data-source-start'?: number;
   'data-source-end'?: number;
 }) {
+  const appearance = useContext(AppearanceContext);
+  if (!appearance) throw new Error('MarkdownPre requires AppearanceContext');
   const child = Array.isArray(children) ? children[0] : children;
   if (child && typeof child === 'object' && 'props' in child) {
     const props = child.props as {
@@ -142,118 +144,142 @@ function MarkdownPreview({
           Preview
         </h2>
       )}
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        onWheelCapture={onUserScroll}
-        onPointerDownCapture={onUserScroll}
-        onTouchStartCapture={onUserScroll}
-        className="markdown-preview-content min-h-0 flex-1 overflow-auto px-5 pb-6 text-sm leading-7 text-white/85 [&_.katex-display]:max-w-full [&_.katex-display]:overflow-x-auto [&_.katex]:text-inherit [&_a]:text-sky-300 [&_blockquote]:border-l-2 [&_blockquote]:border-white/20 [&_blockquote]:pl-4 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-6 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/15 [&_li]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-black/40 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-white/20 [&_th]:px-3 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-white/20 [&_td]:px-3 [&_td]:py-1 [&_ul]:list-disc [&_ul]:pl-6 [&_img]:max-w-full"
-      >
-        <ReactMarkdown
-          remarkPlugins={[
-            markdownMathRemarkPlugin,
-            remarkGfm,
-            () => remarkTaskOffsets(markdown),
-            remarkWikiImages,
-          ]}
-          rehypePlugins={[sourcePositions, markdownMathRehypePlugin]}
-          components={{
-            h1: ({ children, ...props }) => (
-              <h1 {...props} style={{ color: appearance.headings[0] }}>
-                {children}
-              </h1>
-            ),
-            h2: ({ children, ...props }) => (
-              <h2 {...props} style={{ color: appearance.headings[1] }}>
-                {children}
-              </h2>
-            ),
-            h3: ({ children, ...props }) => (
-              <h3 {...props} style={{ color: appearance.headings[2] }}>
-                {children}
-              </h3>
-            ),
-            h4: ({ children, ...props }) => (
-              <h4 {...props} style={{ color: appearance.headings[3] }}>
-                {children}
-              </h4>
-            ),
-            h5: ({ children, ...props }) => (
-              <h5 {...props} style={{ color: appearance.headings[4] }}>
-                {children}
-              </h5>
-            ),
-            h6: ({ children, ...props }) => (
-              <h6 {...props} style={{ color: appearance.headings[5] }}>
-                {children}
-              </h6>
-            ),
-            table: ({ children, ...props }) => (
-              <div className="my-4 max-w-full overflow-x-auto">
-                <table {...props}>{children}</table>
-              </div>
-            ),
-            li: ({ children, checked, node, ...props }: any) => {
-              const offset = node?.properties['data-task-offset'];
-              if (typeof checked !== 'boolean' || typeof offset !== 'number')
-                return <li {...props}>{children}</li>;
-              const expected = markdown[offset];
-
-              return (
-                <li {...props} className={`${props.className ?? ''} list-none`}>
-                  <label className="inline-flex items-start gap-2">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      aria-label={
-                        checked ? 'Mark task incomplete' : 'Mark task complete'
-                      }
-                      className="mt-2 accent-sky-400"
-                      onChange={() =>
-                        onToggleTask?.({
-                          vaultId,
-                          notePath,
-                          source: markdown,
-                          offset,
-                          expected,
-                        })
-                      }
-                    />
-                    <span>{children}</span>
-                  </label>
-                </li>
-              );
-            },
-            a: ({ children }) => (
-              <a
-                href="#"
-                onClick={(event) => event.preventDefault()}
-                aria-disabled="true"
-              >
-                {children}
-              </a>
-            ),
-            img: ({ src, alt, width, node }) => (
-              <VaultImage
-                vaultId={vaultId}
-                notePath={notePath}
-                src={String(src ?? '')}
-                alt={alt}
-                width={typeof width === 'number' ? width : undefined}
-                kind={
-                  node?.properties['data-vault-kind'] === 'wiki'
-                    ? 'wiki'
-                    : 'markdown'
-                }
-              />
-            ),
-            pre: (props) => <MarkdownPre {...props} appearance={appearance} />,
-          }}
+      <AppearanceContext.Provider value={appearance}>
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          onWheelCapture={onUserScroll}
+          onPointerDownCapture={onUserScroll}
+          onTouchStartCapture={onUserScroll}
+          className="markdown-preview-content min-h-0 flex-1 overflow-auto px-5 pb-6 text-sm leading-7 text-white/85 [&_.katex-display]:max-w-full [&_.katex-display]:overflow-x-auto [&_.katex]:text-inherit [&_a]:text-sky-300 [&_blockquote]:border-l-2 [&_blockquote]:border-white/20 [&_blockquote]:pl-4 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-6 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/15 [&_li]:my-1 [&_li:has(>label)]:list-none [&_li:has(>label)]:pl-0 [&_ul:has(>li>label)]:!list-none [&_ul:has(>li>label)]:!pl-0 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-black/40 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-white/20 [&_th]:px-3 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-white/20 [&_td]:px-3 [&_td]:py-1 [&_ul]:list-disc [&_ul]:pl-6 [&_img]:max-w-full"
         >
-          {markdown}
-        </ReactMarkdown>
-      </div>
+          <ReactMarkdown
+            remarkPlugins={[
+              markdownMathRemarkPlugin,
+              remarkGfm,
+              () => remarkTaskOffsets(markdown),
+              remarkWikiImages,
+            ]}
+            rehypePlugins={[sourcePositions, markdownMathRehypePlugin]}
+            components={{
+              h1: ({ children, ...props }) => (
+                <h1 {...props} style={{ color: appearance.headings[0] }}>
+                  {children}
+                </h1>
+              ),
+              h2: ({ children, ...props }) => (
+                <h2 {...props} style={{ color: appearance.headings[1] }}>
+                  {children}
+                </h2>
+              ),
+              h3: ({ children, ...props }) => (
+                <h3 {...props} style={{ color: appearance.headings[2] }}>
+                  {children}
+                </h3>
+              ),
+              h4: ({ children, ...props }) => (
+                <h4 {...props} style={{ color: appearance.headings[3] }}>
+                  {children}
+                </h4>
+              ),
+              h5: ({ children, ...props }) => (
+                <h5 {...props} style={{ color: appearance.headings[4] }}>
+                  {children}
+                </h5>
+              ),
+              h6: ({ children, ...props }) => (
+                <h6 {...props} style={{ color: appearance.headings[5] }}>
+                  {children}
+                </h6>
+              ),
+              table: ({ children, ...props }) => (
+                <div className="my-4 max-w-full overflow-x-auto">
+                  <table {...props}>{children}</table>
+                </div>
+              ),
+              li: ({ children, node, ...props }: any) => {
+                const offset = node?.properties['data-task-offset'];
+                const childElements = React.Children.toArray(children);
+                const taskInput = childElements.find(
+                  (child) =>
+                    React.isValidElement(child) &&
+                    (child.props as { type?: string }).type === 'checkbox',
+                );
+                if (
+                  !React.isValidElement(taskInput) ||
+                  typeof offset !== 'number'
+                )
+                  return <li {...props}>{children}</li>;
+
+                const checked = Boolean(
+                  (taskInput.props as { checked?: boolean }).checked,
+                );
+                const expected = markdown[offset];
+                const taskContent = childElements.filter(
+                  (child) => child !== taskInput && child !== ' ',
+                );
+
+                return (
+                  <li
+                    {...props}
+                    className={`${props.className ?? ''} !list-none !pl-0`}
+                  >
+                    <label className="inline-flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!onToggleTask}
+                        aria-label={
+                          checked
+                            ? 'Mark task incomplete'
+                            : 'Mark task complete'
+                        }
+                        className="mt-2 accent-sky-400"
+                        onChange={() =>
+                          onToggleTask?.({
+                            vaultId,
+                            notePath,
+                            source: markdown,
+                            offset,
+                            expected,
+                          })
+                        }
+                      />
+                      <span>{taskContent}</span>
+                    </label>
+                  </li>
+                );
+              },
+              a: ({ children }) => (
+                <a
+                  href="#"
+                  onClick={(event) => event.preventDefault()}
+                  aria-disabled="true"
+                >
+                  {children}
+                </a>
+              ),
+              img: ({ src, alt, width, node }) => (
+                <VaultImage
+                  vaultId={vaultId}
+                  notePath={notePath}
+                  src={String(src ?? '')}
+                  alt={alt}
+                  width={typeof width === 'number' ? width : undefined}
+                  kind={
+                    node?.properties['data-vault-kind'] === 'wiki'
+                      ? 'wiki'
+                      : 'markdown'
+                  }
+                />
+              ),
+              pre: MarkdownPre,
+            }}
+          >
+            {markdown}
+          </ReactMarkdown>
+        </div>
+      </AppearanceContext.Provider>
     </section>
   );
 }

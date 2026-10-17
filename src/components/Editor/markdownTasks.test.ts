@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
+import MarkdownPreview from './MarkdownPreview';
+import { DEFAULT_APPEARANCE } from '../../appearance';
 import remarkGfm from 'remark-gfm';
 import {
   remarkTaskOffsets,
@@ -41,6 +43,32 @@ function render(markdown: string) {
 }
 
 describe('Markdown task preview', () => {
+  it('renders actual preview checkboxes enabled for editing and disabled in read-only mode', () => {
+    const source = '- [ ] one\n- [x] two';
+    const renderPreview = (onToggleTask?: () => void) =>
+      renderToStaticMarkup(
+        React.createElement(MarkdownPreview, {
+          markdown: source,
+          vaultId: 'vault-a',
+          notePath: 'tasks.md',
+          appearance: DEFAULT_APPEARANCE,
+          onToggleTask,
+        }),
+      );
+    const activeHtml = renderPreview(() => {});
+    const readOnlyHtml = renderPreview();
+
+    assert.match(activeHtml, /<input type="checkbox"[^>]*\/>/);
+    assert.doesNotMatch(activeHtml, /<input type="checkbox" disabled=""/);
+    assert.equal((activeHtml.match(/type="checkbox"/g) ?? []).length, 2);
+    assert.equal(
+      (readOnlyHtml.match(/type="checkbox" disabled=""/g) ?? []).length,
+      2,
+    );
+    assert.match(activeHtml, /data-task-offset="3"/);
+    assert.match(activeHtml, /data-task-offset="13"/);
+    assert.equal((activeHtml.match(/checked=""/g) ?? []).length, 1);
+  });
   it('renders GFM task checkbox states and associates source marker offsets for duplicate tasks', () => {
     const source = '- [ ] same\n- [x] same';
     const html = render(source);
