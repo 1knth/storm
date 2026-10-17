@@ -21,7 +21,8 @@ import {
 } from '@codemirror/view';
 import type { NoteData } from '../../shared/types';
 import { markdownEditorExtensions } from './extensions';
-import { markdownSyntaxHighlighting } from './markdownHighlighting';
+import { createMarkdownSyntaxHighlighting } from './markdownHighlighting';
+import type { Appearance } from '../../appearance';
 import MarkdownPreview from './MarkdownPreview';
 import { taskMarkerChange, taskToggleMatchesBinding } from './markdownTasks';
 import type { TaskTogglePayload } from './markdownTasks';
@@ -72,11 +73,13 @@ export type EditorHandle = {
 type EditorProps = {
   vimMode: boolean;
   tabs: ReactNode;
+  tabsVisible: boolean;
   vaultId: string | null;
   onLayoutChange?: () => void;
   readingMode?: boolean;
   onToggleReadingMode?: () => void;
   commandHeld?: boolean;
+  appearance: Appearance;
 };
 
 const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
@@ -88,6 +91,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     readingMode = false,
     onToggleReadingMode,
     commandHeld = false,
+    appearance,
+    tabsVisible,
   },
   ref,
 ) {
@@ -95,6 +100,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const vimCompartment = useRef(new Compartment());
+  const appearanceCompartment = useRef(new Compartment());
   const extensions = useRef<Extension[]>([]);
   const current = useRef<{
     note: NoteData;
@@ -125,12 +131,12 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const expectedEditorScroll = useRef<number | null>(null);
   const previewAnimation = useRef({ active: false, cancel: () => {} });
   const editorAnimation = useRef({ active: false, cancel: () => {} });
-  const cancelScrollAnimations = () => {
+  const cancelScrollAnimations = useCallback(() => {
     previewAnimation.current.cancel();
     editorAnimation.current.cancel();
     expectedPreviewScroll.current = null;
     expectedEditorScroll.current = null;
-  };
+  }, []);
   const [previewVisible, setPreviewVisible] = useState(true);
   const formatSelection = useCallback((kind: 'bold' | 'italic') => {
     const view = viewRef.current;
@@ -211,7 +217,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     }));
     return mapPreviewTopAtSourceLine(line, anchors);
   };
-  const syncFromPreview = () => {
+  const syncFromPreview = useCallback(() => {
     if (previewAnimation.current.active) return;
     const pane = previewScrollRef.current;
     const view = viewRef.current;
@@ -243,7 +249,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         expectedEditorScroll.current = top;
       },
     );
-  };
+  }, []);
   const syncFromEditor = () => {
     const pane = previewScrollRef.current;
     const view = viewRef.current;
@@ -641,7 +647,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       ),
       vimCompartment.current.of(vimMode ? vim() : []),
       ...markdownEditorExtensions,
-      markdownSyntaxHighlighting,
+      appearanceCompartment.current.of(
+        createMarkdownSyntaxHighlighting(appearance.headings),
+      ),
       lineNumbers(),
       EditorView.lineWrapping,
       drawSelection({ cursorBlinkRate: 1000 }),
@@ -696,11 +704,14 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           backgroundColor: 'transparent',
           caretColor: 'white',
         },
-        '.cm-content': { caretColor: '#027DFF', padding: '0 16px' },
-        '.cm-cursor, .cm-dropCursor': { borderLeft: '1.5px solid #027DFF' },
+        '.cm-content': { caretColor: 'var(--storm-cursor)', padding: '0 16px' },
+        '.cm-cursor, .cm-dropCursor': {
+          borderLeft: '1.5px solid var(--storm-cursor)',
+        },
         '.cm-activeLine': { backgroundColor: 'rgba(224, 191, 255, 0.1)' },
         '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-          backgroundColor: 'rgba(224, 191, 255, 0.4)',
+          backgroundColor:
+            'color-mix(in srgb, var(--storm-selection) 40%, transparent)',
         },
       }),
     ];
@@ -759,127 +770,158 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       effects: vimCompartment.current.reconfigure(vimMode ? vim() : []),
     });
   }, [vimMode]);
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: appearanceCompartment.current.reconfigure(
+        createMarkdownSyntaxHighlighting(appearance.headings),
+      ),
+    });
+    document.documentElement.style.setProperty(
+      '--storm-selection',
+      appearance.selection,
+    );
+    document.documentElement.style.setProperty(
+      '--storm-cursor',
+      appearance.cursor,
+    );
+  }, [appearance]);
 
   return (
     <section
       data-pane="editor"
-      className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 p-4 text-white"
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-0 p-4 text-white"
     >
-      {tabs}
-      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-black/30 p-0">
-        <div className="flex h-10 shrink-0 items-center justify-end gap-1 px-3">
-          {hasActiveNote && (
-            <>
-              <button
-                type="button"
-                aria-label={previewVisible ? 'Hide preview' : 'Show preview'}
-                aria-pressed={previewVisible}
-                title={`${previewVisible ? 'Hide' : 'Show'} preview (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧M' : 'Ctrl+Shift+M'})`}
-                onClick={() => {
-                  cancelScrollAnimations();
-                  setPreviewVisible((visible) => !visible);
-                }}
-                className="relative inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-white/60 hover:bg-white/10 hover:text-white"
-              >
-                {previewVisible ? 'Hide preview' : 'Show preview'}
-                <span
-                  aria-hidden="true"
-                  className={`pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
-                >
-                  {navigator.platform.toLowerCase().includes('mac')
-                    ? '⌘⇧M'
-                    : 'Ctrl+Shift+M'}
-                </span>
-              </button>
-              <button
-                type="button"
-                aria-label={
-                  readingMode ? 'Exit reading mode' : 'Enter reading mode'
-                }
-                aria-pressed={readingMode}
-                title={`Toggle reading mode (${navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'})`}
-                onClick={onToggleReadingMode}
-                className={`relative inline-flex h-7 w-7 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white ${readingMode ? 'bg-white/10 text-white' : ''}`}
-              >
-                <AiOutlineFullscreen size={14} aria-hidden="true" />
-                <span
-                  aria-hidden="true"
-                  className={`pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
-                >
-                  {navigator.platform.toLowerCase().includes('mac')
-                    ? '⌘E'
-                    : 'Ctrl+E'}
-                </span>
-              </button>
-            </>
-          )}
+      <div
+        className={`tab-bar-slot shrink-0 ${tabsVisible ? 'tab-bar-slot--visible' : 'tab-bar-slot--hidden'}`}
+        aria-hidden={!tabsVisible}
+        inert={!tabsVisible}
+      >
+        <div
+          className={`tab-bar-content ${tabsVisible ? 'tab-bar-content--visible' : 'tab-bar-content--hidden'}`}
+        >
+          {tabs}
         </div>
-        <div className="flex w-full min-h-0 min-w-0 flex-1 overflow-hidden">
-          <div
-            className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${!hasActiveNote ? 'hidden' : ''}`}
-          >
-            <div
-              ref={host}
-              className={`h-full min-h-0 min-w-0 overflow-hidden [&_.cm-editor]:h-full [&_.cm-editor]:min-h-0 [&_.cm-editor]:min-w-0 [&_.cm-scroller]:overflow-auto ${readingMode ? 'invisible' : ''}`}
-            />
-            {readingMode && preview && vaultId === preview.vaultId && (
-              <div className="absolute inset-0 z-10 overflow-hidden">
-                <MarkdownPreview
-                  key={`reading:${preview.vaultId}:${preview.notePath}`}
-                  markdown={preview.markdown}
-                  vaultId={preview.vaultId}
-                  notePath={preview.notePath}
-                  onToggleTask={onToggleTask}
-                  scrollRef={previewScrollRef}
-                  onScroll={syncFromPreview}
-                  onUserScroll={cancelScrollAnimations}
-                  compact
-                />
-              </div>
+      </div>
+      <div className="editor-pane-shell relative flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl">
+        <main className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/15 bg-black/30 p-0">
+          <div className="flex h-10 shrink-0 items-center justify-end gap-1 px-3">
+            {hasActiveNote && (
+              <>
+                <button
+                  type="button"
+                  aria-label={previewVisible ? 'Hide preview' : 'Show preview'}
+                  aria-pressed={previewVisible}
+                  title={`${previewVisible ? 'Hide' : 'Show'} preview (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧M' : 'Ctrl+Shift+M'})`}
+                  onClick={() => {
+                    cancelScrollAnimations();
+                    setPreviewVisible((visible) => !visible);
+                  }}
+                  className="app-button relative inline-flex h-7 items-center justify-center gap-1.5 px-2 text-xs text-white/60"
+                >
+                  {previewVisible ? 'Hide preview' : 'Show preview'}
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
+                  >
+                    {navigator.platform.toLowerCase().includes('mac')
+                      ? '⌘⇧M'
+                      : 'Ctrl+Shift+M'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={
+                    readingMode ? 'Exit reading mode' : 'Enter reading mode'
+                  }
+                  aria-pressed={readingMode}
+                  title={`Toggle reading mode (${navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'})`}
+                  onClick={onToggleReadingMode}
+                  className={`app-icon-button relative ${readingMode ? 'bg-white/10 text-white' : ''}`}
+                >
+                  <AiOutlineFullscreen size={14} aria-hidden="true" />
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
+                  >
+                    {navigator.platform.toLowerCase().includes('mac')
+                      ? '⌘E'
+                      : 'Ctrl+E'}
+                  </span>
+                </button>
+              </>
             )}
-            <div
-              className="pointer-events-none absolute bottom-2 right-3 z-10 text-xs text-white/60"
-              role="status"
-            >
-              {status}
-            </div>
           </div>
-          {hasActiveNote &&
-          previewVisible &&
-          !readingMode &&
-          preview &&
-          vaultId === preview.vaultId ? (
-            <MarkdownPreview
-              key={`${preview.vaultId}:${preview.notePath}`}
-              markdown={preview.markdown}
-              vaultId={preview.vaultId}
-              notePath={preview.notePath}
-              onToggleTask={onToggleTask}
-              scrollRef={previewScrollRef}
-              onScroll={syncFromPreview}
-              onUserScroll={cancelScrollAnimations}
-            />
-          ) : !hasActiveNote ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">
-              <div className="text-2xl font-medium tracking-wide text-white/50">
-                storm
-              </div>
-              <div className="flex items-center gap-2 text-sm text-white/30">
-                <span>search note</span>
-                <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs text-white/60">
-                  cmd + p
-                </kbd>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-white/30">
-                <span>restore last tabs</span>
-                <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs text-white/60">
-                  cmd + shift + t
-                </kbd>
+          <div className="flex w-full min-h-0 min-w-0 flex-1 overflow-hidden">
+            <div
+              className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${!hasActiveNote ? 'hidden' : ''}`}
+            >
+              <div
+                ref={host}
+                className={`h-full min-h-0 min-w-0 overflow-hidden [&_.cm-editor]:h-full [&_.cm-editor]:min-h-0 [&_.cm-editor]:min-w-0 [&_.cm-scroller]:overflow-auto ${readingMode ? 'invisible' : ''}`}
+              />
+              {readingMode && preview && vaultId === preview.vaultId && (
+                <div className="absolute inset-0 z-10 overflow-hidden">
+                  <MarkdownPreview
+                    key={`reading:${preview.vaultId}:${preview.notePath}`}
+                    markdown={preview.markdown}
+                    vaultId={preview.vaultId}
+                    notePath={preview.notePath}
+                    onToggleTask={onToggleTask}
+                    scrollRef={previewScrollRef}
+                    onScroll={syncFromPreview}
+                    onUserScroll={cancelScrollAnimations}
+                    appearance={appearance}
+                    compact
+                  />
+                </div>
+              )}
+              <div
+                className="pointer-events-none absolute bottom-2 right-3 z-10 text-xs text-white/60"
+                role="status"
+              >
+                {status}
               </div>
             </div>
-          ) : null}
-        </div>
-      </main>
+            {hasActiveNote &&
+            previewVisible &&
+            !readingMode &&
+            preview &&
+            vaultId === preview.vaultId ? (
+              <MarkdownPreview
+                key={`${preview.vaultId}:${preview.notePath}`}
+                markdown={preview.markdown}
+                vaultId={preview.vaultId}
+                notePath={preview.notePath}
+                onToggleTask={onToggleTask}
+                scrollRef={previewScrollRef}
+                onScroll={syncFromPreview}
+                onUserScroll={cancelScrollAnimations}
+                appearance={appearance}
+              />
+            ) : !hasActiveNote ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">
+                <div className="text-2xl font-medium tracking-wide text-white/50">
+                  storm
+                </div>
+                <div className="flex items-center gap-2 text-sm text-white/30">
+                  <span>search note</span>
+                  <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs text-white/60">
+                    cmd + p
+                  </kbd>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-white/30">
+                  <span>restore last tabs</span>
+                  <kbd className="rounded-md bg-neutral-800/50 px-2 py-0.5 text-xs text-white/60">
+                    cmd + shift + t
+                  </kbd>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </main>
+      </div>
     </section>
   );
 });

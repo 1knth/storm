@@ -163,7 +163,7 @@ export default function ContextMenu({
       ref={menu}
       role="menu"
       aria-label={label}
-      className="fixed z-[1000] min-w-36 max-w-[calc(100vw-16px)] overflow-auto rounded border border-white/15 bg-[#17191d] p-1 text-sm text-white shadow-xl select-none"
+      className="app-popup-surface fixed z-[1000] min-w-36 max-w-[calc(100vw-16px)] overflow-auto p-1 text-sm select-none"
       style={{
         left: position.left,
         top: position.top,
@@ -263,7 +263,7 @@ export default function ContextMenu({
                 ? setOpenSubmenu(openSubmenu === item.id ? null : item.id)
                 : activate(item)
             }
-            className={`flex w-full items-center justify-between gap-6 rounded px-2 py-1.5 text-left ${item.disabled ? 'cursor-default opacity-45' : 'hover:bg-white/10'} ${item.danger ? 'text-red-300' : ''}`}
+            className={`app-popup-row flex w-full items-center justify-between gap-6 px-2 py-1.5 text-left ${item.disabled ? 'cursor-default opacity-45' : ''} ${item.danger ? 'text-red-300' : ''}`}
           >
             <span className="flex items-center gap-2">
               {item.swatch && (
@@ -343,7 +343,7 @@ export default function ContextMenu({
                     ]?.focus();
                   }
                 }}
-                className="fixed z-[1001] grid grid-cols-4 gap-1.5 rounded border border-white/15 bg-[#17191d] p-2 shadow-xl"
+                className="app-popup-surface fixed z-[1001] grid grid-cols-4 gap-1.5 p-2"
                 style={{
                   left: position.left + 150,
                   top: position.top,

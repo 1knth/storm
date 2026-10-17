@@ -4,8 +4,10 @@ import {
   assignTab,
   cleanTabAssignments,
   getTabId,
+  hasOpenTabs,
   moveTab,
   moveTabGroup,
+  moveTabGroupBlock,
   removeTabGroup,
   validateTabGroupName,
   visibleTabOrder,
@@ -22,6 +24,10 @@ const groups = [
   { id: 'g1', name: 'One', collapsed: true },
   { id: 'g2', name: 'Two', collapsed: false },
 ];
+test('shows the tab bar only when at least one tab is open, regardless of groups', () => {
+  assert.equal(hasOpenTabs([]), false);
+  assert.equal(hasOpenTabs(tabs), true);
+});
 test('uses stable fallback colors and the approved palette for groups', () => {
   const firstColor = tabGroupColor(groups[0], 0);
   const secondColor = tabGroupColor(groups[1], 1);
@@ -30,12 +36,55 @@ test('uses stable fallback colors and the approved palette for groups', () => {
   assert.equal(tabGroupColor({ ...groups[0], color: 'green' }, 0), 'green');
   assert.equal(TAB_GROUP_COLORS.green, '#4ade80');
 });
-test('orders visible tabs by group order and omits members hidden by collapsed groups', () => {
+test('orders mixed strip units by first member and hides collapsed members', () => {
   assert.deepEqual(
     visibleTabOrder(tabs, groups, { a: 'g2', b: 'g1' }).map(
       (tab) => tab.kind === 'empty' && tab.id,
     ),
     ['a', 'c'],
+  );
+  assert.deepEqual(visibleTabOrder(tabs, groups, { b: 'g1' }).map(getTabId), [
+    'a',
+    'c',
+  ]);
+  assert.deepEqual(
+    visibleTabOrder(tabs, groups, { a: 'invalid' }).map(getTabId),
+    ['a', 'b', 'c'],
+  );
+  assert.deepEqual(visibleTabOrder(tabs, [], { a: 'invalid' }).map(getTabId), [
+    'a',
+    'b',
+    'c',
+  ]);
+});
+test('moves group members as a block around tab and group anchors', () => {
+  const ordered = [tabs[0], tabs[1], tabs[2]];
+  const assignments = { a: 'g2', c: 'g2' };
+  assert.deepEqual(
+    moveTabGroupBlock(ordered, groups, assignments, 'g2', {
+      type: 'tab',
+      tabId: 'b',
+    })?.map(getTabId),
+    ['a', 'b', 'c'],
+  );
+  assert.deepEqual(
+    moveTabGroupBlock(ordered, groups, assignments, 'g2', {
+      type: 'group',
+      groupId: 'g1',
+    })?.map(getTabId),
+    ['b', 'a', 'c'],
+  );
+  assert.deepEqual(
+    moveTabGroupBlock(ordered, groups, assignments, 'g2', null)?.map(getTabId),
+    ['b', 'a', 'c'],
+  );
+  assert.equal(
+    moveTabGroupBlock(ordered, groups, assignments, 'missing', null),
+    null,
+  );
+  assert.deepEqual(
+    moveTabGroupBlock(ordered, groups, {}, 'g1', null)?.map(getTabId),
+    ['a', 'b', 'c'],
   );
 });
 test('assign, ungroup, and remove group without closing tabs', () => {

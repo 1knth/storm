@@ -1,11 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { FaPlus } from 'react-icons/fa';
+import { FaRegFile } from 'react-icons/fa6';
 import type { TabSnapshot } from './Editor';
+import { removedTabSnapshots } from './tabPresence';
 import {
   assignTab,
   getTabId,
   validateTabGroupName,
   visibleTabOrder,
+  mixedTabOrder,
   TAB_GROUP_COLORS,
   tabGroupColor,
 } from './tabGroups';
@@ -35,7 +39,10 @@ type Props = {
   onMoveGroup: (
     vaultId: string,
     groupId: string,
-    beforeGroupId: string | null,
+    before:
+      | { type: 'tab'; tabId: string }
+      | { type: 'group'; groupId: string }
+      | null,
   ) => void;
 };
 export default function TabBar({
@@ -56,6 +63,68 @@ export default function TabBar({
   const [dialog, setDialog] = useState<{ id?: string; value: string } | null>(
     null,
   );
+  const [exitingTabs, setExitingTabs] = useState<
+    Array<{ tab: TabSnapshot; rect: DOMRect }>
+  >([]);
+  const tabElements = useRef(new Map<string, HTMLElement>());
+  const tabRects = useRef(new Map<string, DOMRect>());
+  const tabsRef = useRef(new Map(tabs.map((tab) => [getTabId(tab), tab])));
+  const previousIds = useRef(new Set(tabs.map(getTabId)));
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const currentIds = new Set(tabs.map(getTabId));
+  const enteringIds = new Set(
+    tabs.filter((tab) => !previousIds.current.has(getTabId(tab))).map(getTabId),
+  );
+  useLayoutEffect(() => {
+    // Reconcile against the prior committed snapshot before replacing it. The
+    // passive effect runs too late: this map must still contain removed tabs.
+    const removed = [...previousIds.current].filter(
+      (id) => !currentIds.has(id),
+    );
+    if (removed.length) {
+      const snapshots = removedTabSnapshots(
+        previousIds.current,
+        tabsRef.current,
+        tabRects.current,
+        currentIds,
+      );
+      setExitingTabs((current) => [
+        ...current.filter(({ tab }) => !removed.includes(getTabId(tab))),
+        ...snapshots,
+      ]);
+      removed.forEach((id) => {
+        const oldTimer = timers.current.get(id);
+        if (oldTimer) clearTimeout(oldTimer);
+        timers.current.set(
+          id,
+          setTimeout(() => {
+            setExitingTabs((current) =>
+              current.filter(({ tab }) => getTabId(tab) !== id),
+            );
+            timers.current.delete(id);
+          }, 300),
+        );
+      });
+    }
+    tabs.forEach((tab) => {
+      const id = getTabId(tab);
+      const timer = timers.current.get(id);
+      if (timer) {
+        clearTimeout(timer);
+        timers.current.delete(id);
+        setExitingTabs((current) =>
+          current.filter(({ tab: item }) => getTabId(item) !== id),
+        );
+      }
+    });
+    previousIds.current = currentIds;
+    tabsRef.current = new Map(tabs.map((tab) => [getTabId(tab), tab]));
+    for (const [id, element] of tabElements.current) {
+      if (element.isConnected)
+        tabRects.current.set(id, element.getBoundingClientRect());
+    }
+  });
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState<{
     type: 'tab' | 'group';
@@ -156,16 +225,48 @@ export default function TabBar({
     event.stopPropagation();
     const target = (event.currentTarget as HTMLElement).getBoundingClientRect();
     const after = event.clientX >= target.left + target.width / 2;
-    const targetIndex = groups.findIndex((group) => group.id === targetId);
-    const beforeId = after ? (groups[targetIndex + 1]?.id ?? null) : targetId;
+    const units = mixedTabOrder(tabs, groups, assignments);
+    const targetIndex = units.findIndex(
+      (unit) => unit.type === 'group' && unit.group.id === targetId,
+    );
+    const beforeUnit = after ? units[targetIndex + 1] : units[targetIndex];
+    const before = beforeUnit
+      ? beforeUnit.type === 'group'
+        ? { type: 'group' as const, groupId: beforeUnit.group.id }
+        : { type: 'tab' as const, tabId: getTabId(beforeUnit.tab) }
+      : null;
     if (payload.id !== targetId)
-      onMoveGroup(payload.vaultId, payload.id, beforeId);
+      onMoveGroup(payload.vaultId, payload.id, before);
     clearDrag();
   };
   const tabDropTarget = (event: React.DragEvent) =>
     (event.target as HTMLElement).closest<HTMLElement>('[data-tab-id]');
   const dropOnTab = (event: React.DragEvent) => {
+    const payload = validDrag(event);
     const target = tabDropTarget(event);
+    if (payload?.type === 'group' && target) {
+      const targetId = target.dataset.tabId;
+      if (!targetId) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = target.getBoundingClientRect();
+      const after = event.clientX >= rect.left + rect.width / 2;
+      const units = mixedTabOrder(tabs, groups, assignments);
+      const targetIndex = units.findIndex((unit) =>
+        unit.type === 'tab'
+          ? getTabId(unit.tab) === targetId
+          : unit.tabs.some((tab) => getTabId(tab) === targetId),
+      );
+      const unit = after ? units[targetIndex + 1] : units[targetIndex];
+      const before = unit
+        ? unit.type === 'group'
+          ? { type: 'group' as const, groupId: unit.group.id }
+          : { type: 'tab' as const, tabId: getTabId(unit.tab) }
+        : null;
+      onMoveGroup(payload.vaultId, payload.id, before);
+      clearDrag();
+      return true;
+    }
     if (!target) return false;
     const targetId = target.dataset.tabId;
     const targetTab = tabs.find((tab) => getTabId(tab) === targetId);
@@ -316,19 +417,52 @@ export default function TabBar({
     setDialog(null);
     setError('');
   };
-  const renderTab = (tab: TabSnapshot) => {
+  const renderTab = (tab: TabSnapshot, exiting = false) => {
     const id = getTabId(tab);
     const index = order.findIndex((item) => getTabId(item) === id);
     const label =
       tab.kind === 'note' ? tab.note.path.split('/').at(-1) : 'New tab';
     return (
       <div
+        ref={(element) => {
+          if (exiting) return;
+          if (element) tabElements.current.set(id, element);
+          else tabElements.current.delete(id);
+        }}
         key={id}
-        data-tab-id={id}
+        data-tab-id={exiting ? undefined : id}
+        aria-hidden={exiting || undefined}
+        inert={exiting || undefined}
         onDragEnd={clearDrag}
         onDragOver={allowDrop}
         onDrop={dropOnTab}
-        className={`relative flex max-w-56 shrink-0 items-center border-r border-white/10 ${activeId === id ? 'bg-black/50 text-white' : 'text-white/60 hover:bg-white/10'}`}
+        style={
+          exiting
+            ? {
+                position: 'fixed',
+                left: exitingTabs.find((item) => getTabId(item.tab) === id)
+                  ?.rect.left,
+                top: exitingTabs.find((item) => getTabId(item.tab) === id)?.rect
+                  .top,
+                width: exitingTabs.find((item) => getTabId(item.tab) === id)
+                  ?.rect.width,
+                height: exitingTabs.find((item) => getTabId(item.tab) === id)
+                  ?.rect.height,
+                zIndex: 50,
+              }
+            : undefined
+        }
+        className={`group/tab relative flex h-8 w-[10.5rem] shrink-0 items-center rounded-full border px-3 transition-colors focus-within:z-10 ${exiting ? 'tab-presence-exit' : enteringIds.has(id) ? 'tab-presence-enter' : ''} ${activeId === id ? 'border-white/10 bg-[rgb(32_32_32/72%)] text-white' : 'border-transparent bg-[rgb(32_32_32/24%)] text-white/60 hover:bg-[rgb(32_32_32/48%)]'}`}
+        onAnimationEnd={(event) => {
+          if (exiting && event.animationName === 'tab-presence-exit') {
+            const timer = timers.current.get(id);
+            if (timer) clearTimeout(timer);
+            timers.current.delete(id);
+            setExitingTabs((current) =>
+              current.filter(({ tab }) => getTabId(tab) !== id),
+            );
+          }
+        }}
         onClickCapture={(event) => {
           if (dragMoved.current) {
             event.stopPropagation();
@@ -361,10 +495,14 @@ export default function TabBar({
           onDragStart={(event) => startDrag(event, 'tab', id)}
           onClick={() => onSelect(tab)}
           aria-current={activeId === id ? 'page' : undefined}
-          className="truncate px-2 text-[11px]"
+          className="flex min-w-0 flex-1 items-center gap-2 truncate py-1.5 text-[13px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-300/70"
           title={tab.kind === 'note' ? tab.note.path : 'New tab'}
         >
-          {label}
+          <FaRegFile
+            aria-hidden="true"
+            className="h-3 w-3 shrink-0 opacity-75"
+          />
+          <span className="truncate">{label}</span>
         </button>
         {commandHeld && index >= 0 && index < 9 && (
           <span
@@ -379,7 +517,7 @@ export default function TabBar({
           type="button"
           onClick={() => onClose(tab)}
           aria-label={`Close ${label}`}
-          className="min-w-6 px-1.5 text-[11px] text-white/50 hover:text-white"
+          className="ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[12px] text-[#a6b8bd]/70 opacity-0 transition-opacity hover:bg-white/10 hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100"
         >
           ×
         </button>
@@ -392,14 +530,20 @@ export default function TabBar({
         aria-label="Open tabs"
         onDragOver={allowDrop}
         onDrop={(event) => {
-          if (!dropOnTab(event)) dropTab(event, null, null);
+          if (dropOnTab(event)) return;
+          const payload = validDrag(event);
+          if (payload?.type === 'group') {
+            event.preventDefault();
+            onMoveGroup(payload.vaultId, payload.id, null);
+            clearDrag();
+          } else dropTab(event, null, null);
         }}
-        className="relative flex h-7 min-h-7 min-w-0 shrink-0 items-stretch gap-0 overflow-x-auto overflow-y-hidden overscroll-y-none rounded-xl bg-black/50 select-none"
+        className="relative flex h-11 min-h-11 min-w-0 shrink-0 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-y-none bg-transparent select-none"
       >
-        {groups.map((group) => {
-          const members = tabs.filter(
-            (tab) => assignments[getTabId(tab)] === group.id,
-          );
+        {mixedTabOrder(tabs, groups, assignments).map((unit) => {
+          if (unit.type === 'tab') return renderTab(unit.tab);
+          const { group } = unit;
+          const members = unit.tabs;
           return (
             <div
               key={group.id}
@@ -409,8 +553,9 @@ export default function TabBar({
                 if (payload?.type === 'group') dropGroup(event, group.id);
                 else dropOnGroup(event, group.id);
               }}
-              className={`relative flex shrink-0 items-stretch border-r border-white/15 border-b-2 ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-indigo-400/70' : ''}`}
+              className={`relative flex shrink-0 items-center gap-1 rounded-xl border border-white/15 border-b-2 bg-[rgb(32_32_32/18%)] px-1 py-1 transition-colors ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-white/25' : ''}`}
               style={{
+                borderColor: `${TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))]}55`,
                 borderBottomColor:
                   TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))],
               }}
@@ -448,7 +593,8 @@ export default function TabBar({
                   startDrag(event, 'group', group.id);
                 }}
                 onDragEnd={clearDrag}
-                className="px-2 text-[11px] text-white/65 hover:bg-white/10"
+                title={group.name}
+                className="flex max-w-[10.5rem] shrink-0 items-center gap-1.5 rounded-full px-2 py-1.5 text-[11px] font-medium leading-none text-white/75 transition-colors hover:bg-[rgb(32_32_32/48%)] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-300/70"
                 aria-expanded={!group.collapsed}
                 onClick={() => {
                   if (dragMoved.current) {
@@ -464,37 +610,38 @@ export default function TabBar({
                   );
                 }}
               >
-                {group.collapsed ? '▸' : '▾'} {group.name}{' '}
-                <span className="text-white/35">{members.length}</span>
+                <span aria-hidden="true" className="shrink-0 text-white/55">
+                  {group.collapsed ? '▸' : '▾'}
+                </span>
+                <span className="min-w-0 truncate">{group.name}</span>
+                <span className="shrink-0 text-white/40">{members.length}</span>
               </button>
-              {!group.collapsed && members.map(renderTab)}
+              {!group.collapsed && members.map((tab) => renderTab(tab))}
             </div>
           );
         })}
-        {tabs
-          .filter(
-            (tab) =>
-              !assignments[getTabId(tab)] ||
-              !groups.some((group) => group.id === assignments[getTabId(tab)]),
-          )
-          .map(renderTab)}
         <button
           type="button"
           onClick={onNew}
           aria-label="New tab (⌘T)"
           aria-keyshortcuts="Meta+T Control+T"
           title={`New tab (${platformKey}T)`}
-          className="relative flex h-7 w-8 shrink-0 items-center justify-center text-white/65 hover:bg-white/10 hover:text-white"
+          className="app-icon-button relative h-7 w-7 rounded-lg text-white/65"
         >
-          <FaPlus aria-hidden="true" size={12} />
-          <span
-            className={`pointer-events-none absolute left-1/2 top-full z-20 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
-            aria-hidden="true"
-          >
-            {platformKey}T
-          </span>
+          {commandHeld ? (
+            <span aria-hidden="true" className="text-[11px] leading-none">
+              {platformKey}T
+            </span>
+          ) : (
+            <FaPlus aria-hidden="true" size={12} />
+          )}
         </button>
       </nav>
+      {exitingTabs.length > 0 &&
+        createPortal(
+          exitingTabs.map(({ tab }) => renderTab(tab, true)),
+          document.body,
+        )}
       {menu && (
         <ContextMenu
           position={menu.position}

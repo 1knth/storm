@@ -11,6 +11,7 @@ import NumericChart from './NumericChart';
 import { VaultImage } from './VaultImage';
 import { remarkTaskOffsets } from './markdownTasks';
 import type { TaskTogglePayload } from './markdownTasks';
+import type { Appearance } from '../../appearance';
 
 function sourcePositions() {
   return (tree: any) => {
@@ -36,6 +37,7 @@ type Props = {
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   onScroll?: () => void;
   onUserScroll?: () => void;
+  appearance: Appearance;
 };
 
 // Runs on Markdown text nodes only, leaving inline and fenced code literal.
@@ -88,9 +90,11 @@ function remarkWikiImages() {
 
 function MarkdownPre({
   children,
+  appearance,
   ...sourceProps
 }: {
   children?: React.ReactNode;
+  appearance: Appearance;
   'data-source-start'?: number;
   'data-source-end'?: number;
 }) {
@@ -104,7 +108,7 @@ function MarkdownPre({
     if (props.className?.split(/\s+/).includes('language-mermaid'))
       return (
         <div {...sourceProps}>
-          <MermaidBlock source={source} />
+          <MermaidBlock source={source} appearance={appearance} />
         </div>
       );
     if (props.className?.split(/\s+/).includes('language-chart'))
@@ -126,6 +130,7 @@ function MarkdownPreview({
   scrollRef,
   onScroll,
   onUserScroll,
+  appearance,
 }: Props) {
   return (
     <section
@@ -154,6 +159,36 @@ function MarkdownPreview({
           ]}
           rehypePlugins={[sourcePositions, markdownMathRehypePlugin]}
           components={{
+            h1: ({ children, ...props }) => (
+              <h1 {...props} style={{ color: appearance.headings[0] }}>
+                {children}
+              </h1>
+            ),
+            h2: ({ children, ...props }) => (
+              <h2 {...props} style={{ color: appearance.headings[1] }}>
+                {children}
+              </h2>
+            ),
+            h3: ({ children, ...props }) => (
+              <h3 {...props} style={{ color: appearance.headings[2] }}>
+                {children}
+              </h3>
+            ),
+            h4: ({ children, ...props }) => (
+              <h4 {...props} style={{ color: appearance.headings[3] }}>
+                {children}
+              </h4>
+            ),
+            h5: ({ children, ...props }) => (
+              <h5 {...props} style={{ color: appearance.headings[4] }}>
+                {children}
+              </h5>
+            ),
+            h6: ({ children, ...props }) => (
+              <h6 {...props} style={{ color: appearance.headings[5] }}>
+                {children}
+              </h6>
+            ),
             table: ({ children, ...props }) => (
               <div className="my-4 max-w-full overflow-x-auto">
                 <table {...props}>{children}</table>
@@ -213,7 +248,7 @@ function MarkdownPreview({
                 }
               />
             ),
-            pre: MarkdownPre,
+            pre: (props) => <MarkdownPre {...props} appearance={appearance} />,
           }}
         >
           {markdown}
