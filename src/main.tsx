@@ -65,7 +65,7 @@ function App() {
     loadAppearance(window.localStorage),
   );
   useEffect(() => {
-    document.documentElement.dataset.theme = appearance.theme;
+    delete document.documentElement.dataset.theme;
     saveAppearance(window.localStorage, appearance);
   }, [appearance]);
   const navigationBusy = useRef(false);
@@ -1435,6 +1435,77 @@ function App() {
     }
   };
 
+  const unloadAllVaults = async (): Promise<boolean> => {
+    if (navigationBusy.current || !beginVaultChange()) return false;
+    navigationBusy.current = true;
+    try {
+      if (!(await editorRef.current?.flush()))
+        throw new Error(
+          'Could not save the current note; vaults were not unloaded.',
+        );
+      const currentVault = activeVaultIdRef.current;
+      if (currentVault && visitedVaults.current.has(currentVault))
+        rememberCurrentSession(currentVault);
+      if (checkpointTimer.current) {
+        clearTimeout(checkpointTimer.current);
+        checkpointTimer.current = null;
+      }
+      await checkpointInFlight.current;
+      for (const [vaultId, session] of sessions.current) {
+        await window.vault.saveTabLayout(
+          vaultId,
+          serializeTabLayout(
+            session.tabs,
+            session.activeId,
+            session.groups,
+            session.assignments,
+            new Map(session.tabs.map((tab) => [getTabId(tab), tab])),
+          ),
+        );
+      }
+      await window.vault.registryUnloadAll();
+      ++noteRequestId.current;
+      ++pickerPreviewRequest.current;
+      editorRef.current?.clear();
+      sessions.current.clear();
+      visitedVaults.current.clear();
+      tabsRef.current = [];
+      activeIdRef.current = null;
+      groupsRef.current = [];
+      assignmentsRef.current = {};
+      setTabs([]);
+      setActivePath(null);
+      setActiveId(null);
+      setTabGroups([]);
+      setTabGroupAssignments({});
+      setVaults([]);
+      setVaultGroups([]);
+      setActiveVaultId(null);
+      activeVaultIdRef.current = null;
+      setVaultPath(null);
+      setNotes([]);
+      setEntriesLoading(false);
+      setReadingModes({});
+      setCreationName('');
+      setPickerOpen(false);
+      setQuery('');
+      setPickerPreview(null);
+      setPickerPreviewState(null);
+      setCreation(null);
+      setVaultError(null);
+      notifySuccess('All vaults unloaded. Your files were not changed.');
+      return true;
+    } catch (error) {
+      setVaultError(
+        error instanceof Error ? error.message : 'Unable to unload vaults.',
+      );
+      return false;
+    } finally {
+      navigationBusy.current = false;
+      cancelVaultChange();
+    }
+  };
+
   const addVault = async () => {
     if (navigationBusy.current || !beginVaultChange()) return;
     navigationBusy.current = true;
@@ -1650,6 +1721,8 @@ function App() {
             loading={entriesLoading}
             error={vaultError}
             onAddVault={addVault}
+            onUnloadAllVaults={unloadAllVaults}
+            vaultCount={vaults.length}
             collapsed={explorerCollapsed}
             onToggleCollapsed={() =>
               setExplorerCollapsed((collapsed) => !collapsed)
@@ -1765,7 +1838,7 @@ function App() {
       </div>
       {pickerOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/20 p-8 pt-[15vh]"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/20 p-8 pt-[10vh]"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setPickerOpen(false);
           }}
@@ -1774,7 +1847,7 @@ function App() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="open-file-title"
-            className="app-popup-surface command-palette-surface flex max-h-[80vh] w-full max-w-5xl flex-col overflow-hidden"
+            className="app-popup-surface command-palette-surface flex min-h-[min(24rem,80vh)] max-h-[min(80vh,44rem)] w-full max-w-5xl flex-col overflow-hidden"
           >
             <h2 id="open-file-title" className="sr-only">
               Open file
@@ -1795,8 +1868,8 @@ function App() {
               disabled={!vaultPath}
               className="app-input w-full rounded-none border-0 border-b border-white/10 bg-transparent px-5 py-4 outline-none placeholder:text-white/40 focus-visible:border-white/10"
             />
-            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-              <ul className="min-h-0 max-h-[30vh] w-full overflow-y-auto p-2 md:max-h-none md:w-1/2 md:border-r md:border-white/10">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
+              <ul className="min-h-0 max-h-[30vh] w-full shrink-0 overflow-y-auto p-2 md:max-h-none md:w-1/2 md:shrink md:border-r md:border-white/10">
                 {!vaultPath ? (
                   <li className="p-4 text-sm text-white/60">
                     Choose a vault from the file explorer first.
@@ -1829,7 +1902,7 @@ function App() {
               </ul>
               <section
                 aria-label="File preview"
-                className="flex min-h-[28vh] w-full min-w-0 flex-col overflow-hidden md:min-h-[50vh] md:w-1/2"
+                className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden md:w-1/2"
               >
                 <h3 className="shrink-0 border-b border-white/10 px-4 py-3 text-xs font-medium text-white/50">
                   Preview

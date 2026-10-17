@@ -139,6 +139,7 @@ declare global {
         id: string,
       ) => Promise<{ id: string; path: string | null }>;
       registryRemove: (id: string) => Promise<void>;
+      registryUnloadAll: () => Promise<void>;
       choose: () => Promise<{ path: string | null; warning: string | null }>;
       restore: () => Promise<{ path: string | null; error: string | null }>;
       listNotes: () => Promise<VaultEntry[]>;

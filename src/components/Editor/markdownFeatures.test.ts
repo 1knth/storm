@@ -4,7 +4,7 @@ import { CompletionContext } from '@codemirror/autocomplete';
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxTree } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { EditorView, keymap } from '@codemirror/view';
 import { markdownEditorExtensions } from './extensions';
 import { markdownCompletions } from './markdownCompletions';
 import { markdownSyntaxHighlighting } from './markdownHighlighting';
@@ -63,6 +63,41 @@ describe('Markdown editor features', () => {
     assert.equal(state.selection.main.head, 1);
   });
 
+  it('toggles task markers through the configured Enter keymap', () => {
+    for (const [doc, expected] of [
+      ['- [ ] task', '- [x] task'],
+      ['- [ ]', '- [x]'],
+    ]) {
+      let state = EditorState.create({
+        doc,
+        selection: { anchor: doc.length },
+        extensions: [markdown(), ...markdownEditorExtensions],
+      });
+      const view = {
+        get state() {
+          return state;
+        },
+        dispatch: (transaction: Parameters<typeof state.update>[0]) => {
+          state = state.update(transaction).state;
+        },
+      } as EditorView;
+      const enterBindings = state
+        .facet(keymap)
+        .flat()
+        .filter((binding) => binding.key === 'Enter');
+      let handled = false;
+      for (const binding of enterBindings) {
+        if (binding.run?.(view)) {
+          handled = true;
+          break;
+        }
+      }
+
+      assert.equal(handled, true, doc);
+      assert.equal(state.doc.toString(), expected);
+    }
+  });
+
   it('skips an existing matching closer without changing the document', () => {
     let state = EditorState.create({
       doc: '**',
@@ -88,7 +123,11 @@ describe('Markdown editor features', () => {
   it('parses headings, emphasis, and inline code for syntax coloring', () => {
     const state = EditorState.create({
       doc: '# Heading\n**bold** *italic* `code`',
-      extensions: [markdown(), markdownSyntaxHighlighting],
+      extensions: [
+        markdown(),
+        markdownSyntaxHighlighting,
+        ...markdownEditorExtensions,
+      ],
     });
     const names: string[] = [];
     syntaxTree(state).iterate({
@@ -125,6 +164,35 @@ describe('Markdown editor features', () => {
     assert.ok(
       complete('chart')?.options.some((item) => item.label === 'chart line'),
     );
+  });
+
+  it('offers task completion after literal unordered, nested, and ordered list markers', () => {
+    for (const source of ['- [', '  * [', '3. [']) {
+      const result = complete(source);
+      assert.ok(result, source);
+      const task = result.options.find((item) => item.label === 'task');
+      assert.ok(task, source);
+      assert.equal(result.from, 0, source);
+      assert.equal(task.label, 'task');
+    }
+    assert.equal(complete('prose - ['), null);
+    assert.equal(complete('```md\\n- ['), null);
+  });
+
+  it('offers contextual heading, link, quote, and fence snippets only by explicit prefix', () => {
+    for (const [prefix, label] of [
+      ['h1', 'h1'],
+      ['h6', 'h6'],
+      ['link', 'link'],
+      ['quote', 'quote'],
+      ['fence', 'fence'],
+    ]) {
+      assert.ok(
+        complete(prefix)?.options.some((item) => item.label === label),
+        prefix,
+      );
+    }
+    assert.equal(complete('ordinary prose'), null);
   });
 
   it('suggests syntax in supported fences but not arbitrary code fences or inline code', () => {

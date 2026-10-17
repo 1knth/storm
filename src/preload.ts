@@ -65,6 +65,8 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.invoke('vault:registry-activate', id),
   registryRemove: (id: string): Promise<void> =>
     ipcRenderer.invoke('vault:registry-remove', id),
+  registryUnloadAll: (): Promise<void> =>
+    ipcRenderer.invoke('vault:registry-unload-all'),
   choose: (): Promise<{ path: string | null; warning: string | null }> =>
     ipcRenderer.invoke('vault:choose'),
   restore: (): Promise<{ path: string | null; error: string | null }> =>

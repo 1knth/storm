@@ -538,7 +538,7 @@ export default function TabBar({
             clearDrag();
           } else dropTab(event, null, null);
         }}
-        className="relative flex h-11 min-h-11 min-w-0 shrink-0 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-y-none bg-transparent select-none"
+        className="relative flex h-11 min-h-11 w-full min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-y-none bg-transparent select-none"
       >
         {mixedTabOrder(tabs, groups, assignments).map((unit) => {
           if (unit.type === 'tab') return renderTab(unit.tab);
@@ -553,7 +553,7 @@ export default function TabBar({
                 if (payload?.type === 'group') dropGroup(event, group.id);
                 else dropOnGroup(event, group.id);
               }}
-              className={`tab-group-surface relative flex shrink-0 items-center gap-1 rounded-xl border border-white/15 border-b-2 bg-[rgb(32_32_32/18%)] px-1 py-1 transition-colors ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-white/25' : ''}`}
+              className={`tab-group-surface relative flex h-9 min-h-9 max-h-9 shrink-0 items-center gap-1 overflow-hidden rounded-xl border border-white/15 border-b-2 bg-[rgb(32_32_32/18%)] px-1 transition-colors ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-white/25' : ''}`}
               style={{
                 borderColor: `${TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))]}55`,
                 borderBottomColor:
@@ -628,13 +628,15 @@ export default function TabBar({
           title={`New tab (${platformKey}T)`}
           className="editor-new-tab-button app-icon-button relative h-7 w-7 rounded-lg text-white/65"
         >
-          {commandHeld ? (
-            <span aria-hidden="true" className="text-[11px] leading-none">
+          <FaPlus aria-hidden="true" size={12} />
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
+          >
+            <span className="whitespace-nowrap rounded-lg bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white">
               {platformKey}T
             </span>
-          ) : (
-            <FaPlus aria-hidden="true" size={12} />
-          )}
+          </span>
         </button>
       </nav>
       {exitingTabs.length > 0 &&

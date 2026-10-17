@@ -22,10 +22,35 @@ describe('appearance preferences', () => {
       ...DEFAULT_APPEARANCE.headings.slice(1),
     ]);
   });
-  it('defaults legacy settings to dark and validates persisted theme', () => {
-    deepStrictEqual(validateAppearance({ selection: '#123456' }).theme, 'dark');
-    deepStrictEqual(validateAppearance({ theme: 'light' }).theme, 'light');
-    deepStrictEqual(validateAppearance({ theme: 'invalid' }).theme, 'dark');
+  it('ignores legacy theme values and preserves custom appearance settings', () => {
+    const result = validateAppearance({
+      theme: 'light',
+      selection: '#123456',
+      cursor: '#abcdef',
+      headings: [
+        '#111111',
+        '#222222',
+        '#333333',
+        '#444444',
+        '#555555',
+        '#666666',
+      ],
+      opacity: { selection: 25, cursor: 70, 'heading-1': 45 },
+    });
+    strictEqual('theme' in result, false);
+    strictEqual(result.selection, '#123456');
+    strictEqual(result.cursor, '#abcdef');
+    deepStrictEqual(result.headings, [
+      '#111111',
+      '#222222',
+      '#333333',
+      '#444444',
+      '#555555',
+      '#666666',
+    ]);
+    strictEqual(result.opacity.selection, 25);
+    strictEqual(result.opacity.cursor, 70);
+    strictEqual(result.opacity['heading-1'], 45);
   });
   it('loads malformed storage safely and persists validated values', () => {
     const memory = new Map<string, string>([[APPEARANCE_KEY, '{bad']]);
