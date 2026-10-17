@@ -60,7 +60,7 @@ const hasOpenModal = () =>
 function App() {
   const { notifyError, notifySuccess } = useToast();
   const editorRef = useRef<EditorHandle>(null);
-  const [readingMode, setReadingMode] = useState(false);
+  const [readingModes, setReadingModes] = useState<Record<string, boolean>>({});
   const [appearance, setAppearance] = useState<Appearance>(() =>
     loadAppearance(window.localStorage),
   );
@@ -96,6 +96,13 @@ function App() {
   const [vaultGroups, setVaultGroups] = useState<VaultGroup[]>([]);
   const visibleVaults = deriveVisibleVaults(vaults, vaultGroups);
   const [activeVaultId, setActiveVaultId] = useState<string | null>(null);
+  const readingModeKey =
+    activeVaultId && activePath
+      ? JSON.stringify([activeVaultId, activePath])
+      : null;
+  const readingMode = readingModeKey
+    ? readingModes[readingModeKey] === true
+    : false;
   const activeVaultIdRef = useRef<string | null>(null);
   const tabsRef = useRef(tabs);
   const activeIdRef = useRef(activeId);
@@ -1473,13 +1480,16 @@ function App() {
   const toggleReadingMode = () => {
     if (navigationBusy.current || vaultTransition.current || hasOpenModal())
       return;
-    if (!readingMode && (!activePath || !activeId)) return;
-    setReadingMode((value) => !value);
+    if (!readingModeKey || !activeId) return;
+    setReadingModes((modes) => ({
+      ...modes,
+      [readingModeKey]: !modes[readingModeKey],
+    }));
   };
 
   useEffect(
     () => window.vault.onToggleReadMode(toggleReadingMode),
-    [activeId, activePath, readingMode],
+    [activeId, activePath, readingMode, readingModeKey],
   );
 
   return (
