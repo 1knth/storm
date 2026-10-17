@@ -31,6 +31,10 @@ export class VaultService {
     return this.selectedVaultPath;
   }
 
+  clearSelectedVault(): void {
+    this.selectedVaultPath = null;
+  }
+
   async listNotes(): Promise<VaultEntry[]> {
     const rootPath = this.selectedVaultPath;
     if (!rootPath) return [];

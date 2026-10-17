@@ -33,6 +33,8 @@ type FileExplorerProps = {
   onDeleteEntry?: (path: string, kind: 'note' | 'folder') => void;
   creationPending: boolean;
   onAddVault: () => void;
+  onUnloadAllVaults: () => Promise<boolean>;
+  vaultCount: number;
   vaultPath: string | null;
   notes: Awaited<ReturnType<typeof window.vault.listNotes>>;
   loading: boolean;
@@ -61,6 +63,8 @@ export default function FileExplorer({
   onDeleteEntry,
   creationPending,
   onAddVault,
+  onUnloadAllVaults,
+  vaultCount,
   vaultPath,
   notes,
   loading,
@@ -87,6 +91,8 @@ export default function FileExplorer({
   const [settingsTab, setSettingsTab] = useState<'general' | 'appearance'>(
     'general',
   );
+  const [confirmUnload, setConfirmUnload] = useState(false);
+  const [unloading, setUnloading] = useState(false);
   const vaultName = vaultPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? null;
 
   useEffect(() => {
@@ -98,14 +104,17 @@ export default function FileExplorer({
         event.preventDefault();
         onSettingsOpenChange(true);
       }
-      if (event.key === 'Escape') onSettingsOpenChange(false);
+      if (event.key === 'Escape' && !unloading) {
+        if (confirmUnload) setConfirmUnload(false);
+        else onSettingsOpenChange(false);
+      }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => {
       unsubscribe();
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [onSettingsOpenChange]);
+  }, [confirmUnload, onSettingsOpenChange, unloading]);
 
   useEffect(() => {
     if (settingsOpen) changeVaultRef.current?.focus();
@@ -364,12 +373,63 @@ export default function FileExplorer({
                 <button
                   type="button"
                   aria-label="Close settings"
+                  disabled={unloading}
                   onClick={() => onSettingsOpenChange(false)}
                   className="rounded-md px-2 py-1 text-white/60 hover:bg-white/10 hover:text-white"
                 >
                   ×
                 </button>
               </div>
+              {confirmUnload && (
+                <div
+                  className="mb-5 rounded-xl border border-red-400/30 bg-red-500/5 p-4"
+                  role="alertdialog"
+                  aria-labelledby="unload-title"
+                  aria-describedby="unload-description"
+                >
+                  <h3 id="unload-title" className="font-semibold">
+                    Unload all vaults?
+                  </h3>
+                  <p
+                    id="unload-description"
+                    className="mt-2 text-sm text-white/70"
+                  >
+                    This closes all vaults and tabs and clears saved vault
+                    registrations, groups, and tab layouts. It does not delete
+                    or modify any folders or notes.
+                  </p>
+                  <div className="mt-4 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={unloading}
+                      onClick={() => setConfirmUnload(false)}
+                      className="rounded-lg px-3 py-2 text-sm text-white/70 hover:bg-white/10"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      autoFocus
+                      type="button"
+                      disabled={unloading}
+                      onClick={async () => {
+                        setUnloading(true);
+                        try {
+                          const unloaded = await onUnloadAllVaults();
+                          if (unloaded) {
+                            setConfirmUnload(false);
+                            onSettingsOpenChange(false);
+                          }
+                        } finally {
+                          setUnloading(false);
+                        }
+                      }}
+                      className="rounded-lg bg-red-500/20 px-3 py-2 text-sm text-red-100 hover:bg-red-500/30 disabled:opacity-50"
+                    >
+                      {unloading ? 'Unloading…' : 'Unload all vaults'}
+                    </button>
+                  </div>
+                </div>
+              )}
               <div
                 role="tablist"
                 aria-label="Settings"
@@ -408,6 +468,21 @@ export default function FileExplorer({
                       className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
                     >
                       Change vault
+                    </button>
+                  </div>
+                  <div className="mt-5 border-t border-white/10 pt-4">
+                    <p className="font-medium">Unload vaults</p>
+                    <p className="mt-1 text-xs text-white/50">
+                      Close all {vaultCount} loaded vaults and clear their saved
+                      registrations.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={vaultCount === 0 || unloading}
+                      onClick={() => setConfirmUnload(true)}
+                      className="mt-3 rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-100 hover:bg-red-500/25 disabled:opacity-50"
+                    >
+                      Unload all vaults…
                     </button>
                   </div>
                   <label className="mt-6 flex cursor-pointer items-center justify-between gap-4">
