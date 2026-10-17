@@ -65,7 +65,6 @@ function App() {
     loadAppearance(window.localStorage),
   );
   useEffect(() => {
-    document.documentElement.dataset.theme = appearance.theme;
     saveAppearance(window.localStorage, appearance);
   }, [appearance]);
   const navigationBusy = useRef(false);

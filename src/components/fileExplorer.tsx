@@ -475,23 +475,6 @@ export default function FileExplorer({
                     Editor, preview, and diagram colors
                   </p>
                   <p className="text-sm font-semibold">Appearance</p>
-                  <label className="flex items-center justify-between gap-3 text-xs text-white/80">
-                    UI theme
-                    <select
-                      aria-label="UI theme"
-                      className="app-input px-2 py-1"
-                      value={appearance.theme}
-                      onChange={(event) =>
-                        onAppearanceChange({
-                          ...appearance,
-                          theme: event.target.value as 'dark' | 'light',
-                        })
-                      }
-                    >
-                      <option value="dark">Dark</option>
-                      <option value="light">Light</option>
-                    </select>
-                  </label>
                   {(
                     [
                       ['Selection highlight', 'selection'],

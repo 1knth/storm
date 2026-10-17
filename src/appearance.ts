@@ -2,7 +2,6 @@ import { DEFAULT_HEADING_COLORS } from './components/Editor/markdownHighlighting
 
 export const APPEARANCE_KEY = 'storm.appearance';
 export const DEFAULT_APPEARANCE = {
-  theme: 'dark' as 'dark' | 'light',
   selection: '#e0bfff',
   cursor: '#027DFF',
   headings: DEFAULT_HEADING_COLORS,
@@ -35,7 +34,6 @@ export function validateAppearance(value: unknown): Appearance {
     typeof value === 'string' && hex.test(value) ? value : fallback;
   const headings = Array.isArray(input.headings) ? input.headings : [];
   return {
-    theme: input.theme === 'light' ? 'light' : 'dark',
     selection: color(input.selection, DEFAULT_APPEARANCE.selection),
     cursor: color(input.cursor, DEFAULT_APPEARANCE.cursor),
     headings: DEFAULT_HEADING_COLORS.map((fallback, index) =>

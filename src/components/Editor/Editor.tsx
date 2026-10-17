@@ -749,7 +749,6 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           appearance.headings.map((color, index) =>
             rgbaColor(color, appearance.opacity[`heading-${index + 1}`]),
           ),
-          appearance.theme === 'light',
         ),
       ),
       lineNumbers(),
@@ -877,7 +876,6 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           appearance.headings.map((color, index) =>
             rgbaColor(color, appearance.opacity[`heading-${index + 1}`]),
           ),
-          appearance.theme === 'light',
         ),
       ),
     });

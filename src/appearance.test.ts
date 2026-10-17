@@ -22,10 +22,15 @@ describe('appearance preferences', () => {
       ...DEFAULT_APPEARANCE.headings.slice(1),
     ]);
   });
-  it('defaults legacy settings to dark and validates persisted theme', () => {
-    deepStrictEqual(validateAppearance({ selection: '#123456' }).theme, 'dark');
-    deepStrictEqual(validateAppearance({ theme: 'light' }).theme, 'light');
-    deepStrictEqual(validateAppearance({ theme: 'invalid' }).theme, 'dark');
+  it('ignores legacy theme values while retaining custom appearance settings', () => {
+    const appearance = validateAppearance({
+      theme: 'light',
+      selection: '#123456',
+      opacity: { selection: 63 },
+    });
+    strictEqual('theme' in appearance, false);
+    strictEqual(appearance.selection, '#123456');
+    strictEqual(appearance.opacity.selection, 63);
   });
   it('loads malformed storage safely and persists validated values', () => {
     const memory = new Map<string, string>([[APPEARANCE_KEY, '{bad']]);
