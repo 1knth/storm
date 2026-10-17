@@ -12,6 +12,7 @@ export const DEFAULT_HEADING_COLORS = [
 ];
 export function createMarkdownSyntaxHighlighting(
   headingColors: string[] = DEFAULT_HEADING_COLORS,
+  lightTheme = false,
 ) {
   return syntaxHighlighting(
     HighlightStyle.define([
@@ -39,8 +40,11 @@ export function createMarkdownSyntaxHighlighting(
         fontSize: '1em',
         lineHeight: 1,
       },
-      { tag: tags.processingInstruction, color: '#8f82a3' },
-      { tag: tags.labelName, color: '#a9a1b5' },
+      {
+        tag: tags.processingInstruction,
+        color: lightTheme ? '#d0c2df' : '#8f82a3',
+      },
+      { tag: tags.labelName, color: lightTheme ? '#d0c9d8' : '#a9a1b5' },
     ]),
   );
 }
