@@ -82,6 +82,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .editor-pane-shell::before,
+  .editor-pane-surface,
   .tab-bar-slot,
   .tab-bar-content,
   .tab-presence-enter,
@@ -100,6 +102,38 @@
   --ui-border: 255 255 255;
   --ui-hover: 255 255 255;
 }
+
+/* Tab palette stays dark and consistent in the single-mode interface. */
+.tab-surface--active {
+  border-color: rgb(255 255 255 / 24%);
+  background-color: rgb(255 255 255 / 13%);
+  color: white;
+}
+
+.tab-surface--active .tab-name,
+.tab-surface--active .tab-file-icon {
+  color: white;
+}
+
+.tab-surface--inactive {
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.tab-surface--inactive .tab-name,
+.tab-surface--inactive .tab-file-icon {
+  color: rgb(255 255 255 / 30%);
+}
+
+.tab-surface--inactive:hover {
+  background-color: rgb(255 255 255 / 8%);
+}
+
+.tab-surface--inactive:hover .tab-name,
+.tab-surface--inactive:focus-within .tab-name {
+  color: rgb(255 255 255 / 84%);
+}
+
 /* Browser focus is shown with a quiet surface tint rather than an outline. */
 :focus {
   outline: none;
@@ -201,28 +235,14 @@
   border-bottom-width: 1px;
 }
 
-.empty-editor-shortcut kbd {
-  color: white;
-}
-.tab-file-icon,
-.tab-name {
-  color: white;
-}
-.tab-surface--inactive {
-  background-color: rgb(32 32 32 / 14%);
-  border-color: rgb(255 255 255 / 5%);
-}
-.tab-surface--inactive:hover {
-  background-color: rgb(32 32 32 / 30%);
-}
 /* Keep sidebar pointer and keyboard-navigation tint equally subtle. */
 .sidebar-hover-tint:hover,
 .sidebar-hover-tint:focus-visible {
   background-color: rgb(255 255 255 / 5%);
 }
 
-/* This sibling ring is painted behind the pane, so it samples the app backdrop
-   before the pane's dark fill instead of washing that fill with white. */
+/* The ring samples the app backdrop before the pane fill. Hide the entire
+   visual treatment while empty; transition it only across empty/nonempty state. */
 .editor-pane-shell::before {
   position: absolute;
   z-index: 0;
@@ -233,10 +253,29 @@
   backdrop-filter: brightness(2.1) saturate(4) blur(2px);
   content: '';
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms ease;
   mask:
     linear-gradient(#fff 0 0) border-box,
     linear-gradient(#fff 0 0) padding-box;
   mask-composite: exclude;
+}
+
+.editor-pane-shell--visible::before {
+  opacity: 1;
+}
+
+.editor-pane-surface {
+  border-color: transparent;
+  background-color: transparent;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.editor-pane-surface--visible {
+  border-color: rgb(255 255 255 / 15%);
+  background-color: rgb(0 0 0 / 30%);
 }
 
 body {
