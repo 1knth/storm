@@ -7,9 +7,10 @@ import {
   useRef,
   useState,
 } from 'react';
+import { AiOutlineFullscreen } from 'react-icons/ai';
 import { markdown } from '@codemirror/lang-markdown';
-import { vim } from '@replit/codemirror-vim';
-import { Compartment, EditorState, Transaction } from '@codemirror/state';
+import { Vim, vim } from '@replit/codemirror-vim';
+import { Compartment, EditorState, Prec, Transaction } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
 import type { ReactNode } from 'react';
 import {
@@ -25,12 +26,27 @@ import MarkdownPreview from './MarkdownPreview';
 import { taskMarkerChange, taskToggleMatchesBinding } from './markdownTasks';
 import type { TaskTogglePayload } from './markdownTasks';
 import { formatMarkdownSelection } from './markdownFormatting';
+import {
+  previewScrollTopForCursor,
+  smoothScrollTo,
+  previewTopAtSourceLine as mapPreviewTopAtSourceLine,
+  type PreviewAnchor,
+} from './previewScroll';
 import { useToast } from '../Toast';
 import {
   isCurrentSaveCompletion,
   isSaveCompletionContentUnchanged,
   shouldSaveBoundDocument,
 } from './saveBinding';
+
+// Keep these as Vim mappings (not CodeMirror key handlers) so uppercase J/K remain
+// ordinary inserted text outside Vim modes and Vim's counts/operators keep working.
+Vim.map('J', '}', 'normal');
+Vim.map('J', '}', 'visual');
+Vim.map('J', '}', 'operatorPending');
+Vim.map('K', '{', 'normal');
+Vim.map('K', '{', 'visual');
+Vim.map('K', '{', 'operatorPending');
 
 export type NoteTabSnapshot = {
   kind: 'note';
@@ -58,10 +74,21 @@ type EditorProps = {
   tabs: ReactNode;
   vaultId: string | null;
   onLayoutChange?: () => void;
+  readingMode?: boolean;
+  onToggleReadingMode?: () => void;
+  commandHeld?: boolean;
 };
 
 const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
-  { vimMode, tabs, vaultId, onLayoutChange },
+  {
+    vimMode,
+    tabs,
+    vaultId,
+    onLayoutChange,
+    readingMode = false,
+    onToggleReadingMode,
+    commandHeld = false,
+  },
   ref,
 ) {
   const { notifyError } = useToast();
@@ -89,9 +116,192 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     notePath: string;
     markdown: string;
   } | null>(null);
+  const previewSnapshot = useRef(preview);
+  previewSnapshot.current = preview;
   const [hasActiveNote, setHasActiveNote] = useState(false);
   const pendingFocus = useRef(false);
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+  const expectedPreviewScroll = useRef<number | null>(null);
+  const expectedEditorScroll = useRef<number | null>(null);
+  const previewAnimation = useRef({ active: false, cancel: () => {} });
+  const editorAnimation = useRef({ active: false, cancel: () => {} });
+  const cancelScrollAnimations = () => {
+    previewAnimation.current.cancel();
+    editorAnimation.current.cancel();
+    expectedPreviewScroll.current = null;
+    expectedEditorScroll.current = null;
+  };
   const [previewVisible, setPreviewVisible] = useState(true);
+  const formatSelection = useCallback((kind: 'bold' | 'italic') => {
+    const view = viewRef.current;
+    const installed = binding.current;
+    const active = current.current;
+    if (
+      !view ||
+      !installed ||
+      !active ||
+      !shouldSaveBoundDocument({
+        currentView: view,
+        bindingView: installed.view,
+        currentGeneration: generation.current,
+        bindingGeneration: installed.generation,
+        currentNote: active,
+        boundNote: current.current,
+        blocked: blocked.current,
+      })
+    )
+      return false;
+    view.dispatch({
+      ...formatMarkdownSelection(view.state, kind),
+      annotations: Transaction.userEvent.of('input.format'),
+    });
+    return true;
+  }, []);
+  const sourceLineAtPreviewTop = (scrollTop: number) => {
+    const pane = previewScrollRef.current;
+    if (!pane) return null;
+    const anchors = Array.from(
+      pane.querySelectorAll<HTMLElement>('[data-source-start]'),
+    )
+      .map((element) => ({
+        element,
+        start: Number(element.dataset.sourceStart),
+        end: Number(element.dataset.sourceEnd ?? element.dataset.sourceStart),
+        top:
+          element.getBoundingClientRect().top -
+          pane.getBoundingClientRect().top +
+          pane.scrollTop,
+        height: element.offsetHeight,
+      }))
+      .filter(
+        (anchor) =>
+          Number.isFinite(anchor.start) && Number.isFinite(anchor.end),
+      );
+    if (!anchors.length) return null;
+    let previous = anchors[0];
+    for (const anchor of anchors) {
+      if (anchor.top > scrollTop) {
+        const span = Math.max(1, previous.end - previous.start + 1);
+        const progress = Math.max(
+          0,
+          Math.min(
+            1,
+            (scrollTop - previous.top) / Math.max(1, previous.height),
+          ),
+        );
+        return previous.start + (span - 1) * progress;
+      }
+      previous = anchor;
+    }
+    return previous.end;
+  };
+  const previewTopAtSourceLine = (line: number) => {
+    const pane = previewScrollRef.current;
+    if (!pane) return null;
+    const anchors: PreviewAnchor[] = Array.from(
+      pane.querySelectorAll<HTMLElement>('[data-source-start]'),
+    ).map((element) => ({
+      start: Number(element.dataset.sourceStart),
+      end: Number(element.dataset.sourceEnd ?? element.dataset.sourceStart),
+      top:
+        element.getBoundingClientRect().top -
+        pane.getBoundingClientRect().top +
+        pane.scrollTop,
+      height: element.offsetHeight,
+    }));
+    return mapPreviewTopAtSourceLine(line, anchors);
+  };
+  const syncFromPreview = () => {
+    if (previewAnimation.current.active) return;
+    const pane = previewScrollRef.current;
+    const view = viewRef.current;
+    if (!pane || !view) return;
+    if (
+      expectedPreviewScroll.current !== null &&
+      Math.abs(pane.scrollTop - expectedPreviewScroll.current) < 1
+    ) {
+      expectedPreviewScroll.current = null;
+      return;
+    }
+    expectedPreviewScroll.current = null;
+    const line = sourceLineAtPreviewTop(pane.scrollTop);
+    if (line === null) return;
+    const position = view.state.doc.line(
+      Math.max(1, Math.min(view.state.doc.lines, Math.round(line))),
+    ).from;
+    const top = view.lineBlockAt(position).top;
+    expectedEditorScroll.current = Math.max(
+      0,
+      Math.min(view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight, top),
+    );
+    smoothScrollTo(
+      view.scrollDOM,
+      expectedEditorScroll.current,
+      editorAnimation.current,
+      140,
+      (top) => {
+        expectedEditorScroll.current = top;
+      },
+    );
+  };
+  const syncFromEditor = () => {
+    const pane = previewScrollRef.current;
+    const view = viewRef.current;
+    if (!pane || !view) return;
+    const lineBlock = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
+    const line = view.state.doc.lineAt(lineBlock.from).number;
+    const top = previewTopAtSourceLine(line);
+    if (top === null) return;
+    expectedPreviewScroll.current = Math.max(
+      0,
+      Math.min(pane.scrollHeight - pane.clientHeight, top),
+    );
+    smoothScrollTo(
+      pane,
+      expectedPreviewScroll.current,
+      previewAnimation.current,
+      140,
+      (appliedTop) => {
+        expectedPreviewScroll.current = appliedTop;
+      },
+    );
+  };
+  const followCursor = () => {
+    const pane = previewScrollRef.current;
+    const view = viewRef.current;
+    const active = current.current;
+    if (
+      !pane ||
+      !view ||
+      !active ||
+      previewSnapshot.current?.markdown !== view.state.doc.toString() ||
+      previewSnapshot.current.notePath !== active.note.path ||
+      previewSnapshot.current.vaultId !== active.vaultId
+    )
+      return;
+    const line = view.state.doc.lineAt(view.state.selection.main.head).number;
+    const top = previewTopAtSourceLine(line);
+    if (top === null) return;
+    const revealTop = previewScrollTopForCursor(
+      top,
+      pane.scrollTop,
+      pane.clientHeight,
+      pane.scrollHeight,
+    );
+    if (revealTop !== null) {
+      expectedPreviewScroll.current = revealTop;
+      smoothScrollTo(
+        pane,
+        expectedPreviewScroll.current,
+        previewAnimation.current,
+        140,
+        (appliedTop) => {
+          expectedPreviewScroll.current = appliedTop;
+        },
+      );
+    }
+  };
+
   const onToggleTask = useCallback((payload: TaskTogglePayload) => {
     const view = viewRef.current;
     const active = current.current;
@@ -232,6 +442,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   };
 
   const install = (tab: NoteTabSnapshot) => {
+    previewAnimation.current.cancel();
+    editorAnimation.current.cancel();
+    expectedPreviewScroll.current = null;
+    expectedEditorScroll.current = null;
     const view = viewRef.current;
     if (!view) return;
     if (timer.current) clearTimeout(timer.current);
@@ -283,6 +497,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     activate: (tab) => {
       if (tab.kind === 'note') install(tab);
       else {
+        cancelScrollAnimations();
+        expectedPreviewScroll.current = null;
+        expectedEditorScroll.current = null;
         binding.current = null;
         generation.current += 1;
         current.current = null;
@@ -322,24 +539,6 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       else if (current.current) pendingFocus.current = true;
     },
     format: (kind) => {
-      const view = viewRef.current;
-      const installed = binding.current;
-      const active = current.current;
-      if (
-        !view ||
-        !installed ||
-        !active ||
-        !shouldSaveBoundDocument({
-          currentView: view,
-          bindingView: installed.view,
-          currentGeneration: generation.current,
-          bindingGeneration: installed.generation,
-          currentNote: active,
-          boundNote: current.current,
-          blocked: blocked.current,
-        })
-      )
-        return false;
       const target = document.activeElement;
       if (
         !(target instanceof HTMLElement) ||
@@ -347,11 +546,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         target.closest('.cm-vim-panel')
       )
         return false;
-      view.dispatch({
-        ...formatMarkdownSelection(view.state, kind),
-        annotations: Transaction.userEvent.of('input.format'),
-      });
-      return true;
+      return formatSelection(kind);
     },
     isNormalMode: () => {
       const state = viewRef.current?.state as
@@ -369,8 +564,11 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     clear: () => {
       const view = viewRef.current;
       if (!view) return;
+      cancelScrollAnimations();
       if (timer.current) clearTimeout(timer.current);
       timer.current = null;
+      expectedPreviewScroll.current = null;
+      expectedEditorScroll.current = null;
       binding.current = null;
       generation.current += 1;
       current.current = null;
@@ -398,6 +596,49 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     if (!host.current) return;
     extensions.current = [
       markdown(),
+      Prec.highest(
+        EditorView.domEventHandlers({
+          keydown: (event, view) => {
+            if (
+              !event.metaKey &&
+              !event.ctrlKey &&
+              !event.altKey &&
+              [
+                'ArrowUp',
+                'ArrowDown',
+                'PageUp',
+                'PageDown',
+                'Home',
+                'End',
+                ' ',
+              ].includes(event.key)
+            )
+              cancelScrollAnimations();
+            const isMac = navigator.platform.toLowerCase().includes('mac');
+            const modifier = isMac ? event.metaKey : event.ctrlKey;
+            if (
+              !modifier ||
+              event.altKey ||
+              event.shiftKey ||
+              (isMac ? event.ctrlKey : event.metaKey) ||
+              (event.key.toLowerCase() !== 'b' &&
+                event.key.toLowerCase() !== 'i')
+            )
+              return false;
+            const target = event.target;
+            if (
+              !(target instanceof HTMLElement) ||
+              !target.closest('.cm-content') ||
+              target.closest('.cm-vim-panel') ||
+              !view.hasFocus
+            )
+              return false;
+            return formatSelection(
+              event.key.toLowerCase() === 'b' ? 'bold' : 'italic',
+            );
+          },
+        }),
+      ),
       vimCompartment.current.of(vimMode ? vim() : []),
       ...markdownEditorExtensions,
       markdownSyntaxHighlighting,
@@ -415,8 +656,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           installed.generation !== generation.current
         )
           return;
-        if (update.selectionSet || update.docChanged)
+        if (update.selectionSet || update.docChanged) {
           onLayoutChangeRef.current?.();
+          requestAnimationFrame(followCursor);
+        }
         if (!update.docChanged) return;
         if (active) {
           setPreview({
@@ -467,11 +710,40 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     });
     viewRef.current = view;
     const onScroll = () => {
-      if (current.current) onLayoutChangeRef.current?.();
+      if (editorAnimation.current.active) return;
+      if (
+        expectedEditorScroll.current !== null &&
+        Math.abs(view.scrollDOM.scrollTop - expectedEditorScroll.current) < 1
+      ) {
+        expectedEditorScroll.current = null;
+        return;
+      }
+      expectedEditorScroll.current = null;
+      if (current.current) {
+        syncFromEditor();
+        onLayoutChangeRef.current?.();
+      }
+    };
+    const cancelOnUserInput = () => {
+      cancelScrollAnimations();
     };
     view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
+    view.scrollDOM.addEventListener('wheel', cancelOnUserInput, {
+      passive: true,
+    });
+    view.scrollDOM.addEventListener('pointerdown', cancelOnUserInput, {
+      passive: true,
+    });
+    view.scrollDOM.addEventListener('touchstart', cancelOnUserInput, {
+      passive: true,
+    });
     return () => {
       view.scrollDOM.removeEventListener('scroll', onScroll);
+      view.scrollDOM.removeEventListener('wheel', cancelOnUserInput);
+      view.scrollDOM.removeEventListener('pointerdown', cancelOnUserInput);
+      view.scrollDOM.removeEventListener('touchstart', cancelOnUserInput);
+      previewAnimation.current.cancel();
+      editorAnimation.current.cancel();
       if (timer.current) clearTimeout(timer.current);
       if (binding.current?.view === view) {
         binding.current = null;
@@ -495,28 +767,76 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     >
       {tabs}
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-black/30 p-0">
-        <div className="flex h-10 shrink-0 items-center justify-end px-3">
+        <div className="flex h-10 shrink-0 items-center justify-end gap-1 px-3">
           {hasActiveNote && (
-            <button
-              type="button"
-              aria-label={previewVisible ? 'Hide preview' : 'Show preview'}
-              aria-pressed={previewVisible}
-              title={`${previewVisible ? 'Hide' : 'Show'} preview (⌘⇧M)`}
-              onClick={() => setPreviewVisible((visible) => !visible)}
-              className="rounded-md px-2 py-1 text-xs text-white/60 hover:bg-white/10 hover:text-white"
-            >
-              {previewVisible ? 'Hide preview' : 'Show preview'}
-            </button>
+            <>
+              <button
+                type="button"
+                aria-label={previewVisible ? 'Hide preview' : 'Show preview'}
+                aria-pressed={previewVisible}
+                title={`${previewVisible ? 'Hide' : 'Show'} preview (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧M' : 'Ctrl+Shift+M'})`}
+                onClick={() => {
+                  cancelScrollAnimations();
+                  setPreviewVisible((visible) => !visible);
+                }}
+                className="relative inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-white/60 hover:bg-white/10 hover:text-white"
+              >
+                {previewVisible ? 'Hide preview' : 'Show preview'}
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
+                >
+                  {navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘⇧M'
+                    : 'Ctrl+Shift+M'}
+                </span>
+              </button>
+              <button
+                type="button"
+                aria-label={
+                  readingMode ? 'Exit reading mode' : 'Enter reading mode'
+                }
+                aria-pressed={readingMode}
+                title={`Toggle reading mode (${navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'})`}
+                onClick={onToggleReadingMode}
+                className={`relative inline-flex h-7 w-7 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white ${readingMode ? 'bg-white/10 text-white' : ''}`}
+              >
+                <AiOutlineFullscreen size={14} aria-hidden="true" />
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
+                >
+                  {navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘E'
+                    : 'Ctrl+E'}
+                </span>
+              </button>
+            </>
           )}
         </div>
         <div className="flex w-full min-h-0 min-w-0 flex-1 overflow-hidden">
           <div
-            className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${hasActiveNote ? '' : 'hidden'}`}
+            className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${!hasActiveNote ? 'hidden' : ''}`}
           >
             <div
               ref={host}
-              className="h-full min-h-0 min-w-0 overflow-hidden [&_.cm-editor]:h-full [&_.cm-editor]:min-h-0 [&_.cm-editor]:min-w-0 [&_.cm-scroller]:overflow-auto"
+              className={`h-full min-h-0 min-w-0 overflow-hidden [&_.cm-editor]:h-full [&_.cm-editor]:min-h-0 [&_.cm-editor]:min-w-0 [&_.cm-scroller]:overflow-auto ${readingMode ? 'invisible' : ''}`}
             />
+            {readingMode && preview && vaultId === preview.vaultId && (
+              <div className="absolute inset-0 z-10 overflow-hidden">
+                <MarkdownPreview
+                  key={`reading:${preview.vaultId}:${preview.notePath}`}
+                  markdown={preview.markdown}
+                  vaultId={preview.vaultId}
+                  notePath={preview.notePath}
+                  onToggleTask={onToggleTask}
+                  scrollRef={previewScrollRef}
+                  onScroll={syncFromPreview}
+                  onUserScroll={cancelScrollAnimations}
+                  compact
+                />
+              </div>
+            )}
             <div
               className="pointer-events-none absolute bottom-2 right-3 z-10 text-xs text-white/60"
               role="status"
@@ -526,6 +846,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           </div>
           {hasActiveNote &&
           previewVisible &&
+          !readingMode &&
           preview &&
           vaultId === preview.vaultId ? (
             <MarkdownPreview
@@ -534,6 +855,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
               vaultId={preview.vaultId}
               notePath={preview.notePath}
               onToggleTask={onToggleTask}
+              scrollRef={previewScrollRef}
+              onScroll={syncFromPreview}
+              onUserScroll={cancelScrollAnimations}
             />
           ) : !hasActiveNote ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">

@@ -54,8 +54,9 @@ const hasOpenModal = () =>
   ).some((dialog) => isEligibleFocusTarget(dialog));
 
 function App() {
-  const { notifyError } = useToast();
+  const { notifyError, notifySuccess } = useToast();
   const editorRef = useRef<EditorHandle>(null);
+  const [readingMode, setReadingMode] = useState(false);
   const navigationBusy = useRef(false);
   const vaultTransition = useRef(false);
   const noteRequestId = useRef(0);
@@ -329,15 +330,27 @@ function App() {
       editorRef.current?.format?.(kind);
     });
     const unsubscribeNewTab = window.vault.onNewTab(() => {
-      if (!pickerOpen) void createEmptyTab();
+      if (!pickerOpen && !hasOpenModal()) void createEmptyTab();
+    });
+    const unsubscribeCloseTab = window.vault.onCloseActiveTab(() => {
+      if (
+        pickerOpen ||
+        navigationBusy.current ||
+        vaultTransition.current ||
+        hasOpenModal()
+      )
+        return;
+      const activeTab = tabs.find((tab) => getTabId(tab) === activeId);
+      if (activeTab) void closeTab(activeTab);
     });
     return () => {
       unsubscribeOpen();
       unsubscribeToggle();
       unsubscribeFormat();
       unsubscribeNewTab();
+      unsubscribeCloseTab();
     };
-  }, [pickerOpen]);
+  }, [pickerOpen, tabs, activeId]);
 
   useEffect(() => {
     if (!pickerOpen) {
@@ -1386,6 +1399,18 @@ function App() {
     };
   }, []);
 
+  const toggleReadingMode = () => {
+    if (navigationBusy.current || vaultTransition.current || hasOpenModal())
+      return;
+    if (!readingMode && (!activePath || !activeId)) return;
+    setReadingMode((value) => !value);
+  };
+
+  useEffect(
+    () => window.vault.onToggleReadMode(toggleReadingMode),
+    [activeId, activePath, readingMode],
+  );
+
   return (
     <main className="flex h-screen min-h-0 w-full min-w-0 flex-col">
       {shortcutHelpOpen && (
@@ -1436,6 +1461,7 @@ function App() {
               <ShortcutGroup
                 title="App"
                 items={[
+                  'Ctrl+W — Close current tab',
                   (navigator.platform.toLowerCase().includes('mac')
                     ? '⌘'
                     : 'Ctrl') + 'T — New empty tab',
@@ -1463,6 +1489,12 @@ function App() {
                     : 'Ctrl+Shift+') + 'M — Toggle preview',
                   (navigator.platform.toLowerCase().includes('mac')
                     ? '⌘'
+                    : 'Ctrl') + 'E — Toggle reading mode',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + 'B / I — Bold / italic in the editor',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
                     : 'Ctrl') + '1–9 — Select tab',
                   (navigator.platform.toLowerCase().includes('mac')
                     ? '⌃⇧'
@@ -1480,58 +1512,65 @@ function App() {
         </div>
       )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-row">
-        <VaultSidebar
-          vaults={vaults}
-          groups={vaultGroups}
-          visibleVaults={visibleVaults}
-          onGroupsChange={setVaultGroups}
-          onVaultsChange={setVaults}
-          activeVaultId={activeVaultId}
-          onActivate={activateVault}
-          onAdd={addVault}
-          collapsed={explorerCollapsed}
-          onToggleExplorer={() => setExplorerCollapsed(false)}
-          toggleExplorerShortcut={toggleExplorerShortcut}
-          onRemove={removeVault}
-          error={vaultError}
-          commandHeld={commandHeld}
-          vimMode={vimMode}
-          onOpenSettings={() => setSettingsOpen(true)}
-        />
-        <FileExplorer
-          vaultPath={vaultPath}
-          notes={notes}
-          loading={entriesLoading}
-          error={vaultError}
-          onAddVault={addVault}
-          collapsed={explorerCollapsed}
-          onToggleCollapsed={() =>
-            setExplorerCollapsed((collapsed) => !collapsed)
-          }
-          onNoteSelect={selectNote}
-          onDeleteEntry={(path) => void handleDeleteEntry(path)}
-          onCreate={beginCreate}
-          onCreateNote={() => {
-            const path = activePath?.replace(/\\/g, '/') ?? '';
-            beginCreate(
-              'note',
-              path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '',
-            );
-          }}
-          creationPending={creationPending}
-          vimMode={vimMode}
-          onVimModeChange={setVimMode}
-          settingsOpen={settingsOpen}
-          onSettingsOpenChange={setSettingsOpen}
-          openFileShortcut={openFileShortcut}
-          onOpenFileShortcutChange={setOpenFileShortcut}
-          toggleExplorerShortcut={toggleExplorerShortcut}
-          commandHeld={commandHeld}
-          onToggleExplorerShortcutChange={setToggleExplorerShortcut}
-          selectedPath={activePath}
-        />
+        <div className="contents">
+          <VaultSidebar
+            vaults={vaults}
+            groups={vaultGroups}
+            visibleVaults={visibleVaults}
+            onGroupsChange={setVaultGroups}
+            onVaultsChange={setVaults}
+            activeVaultId={activeVaultId}
+            onActivate={activateVault}
+            onAdd={addVault}
+            collapsed={explorerCollapsed}
+            onToggleExplorer={() => setExplorerCollapsed(false)}
+            toggleExplorerShortcut={toggleExplorerShortcut}
+            onRemove={removeVault}
+            error={vaultError}
+            commandHeld={commandHeld}
+            vimMode={vimMode}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+          <FileExplorer
+            vaultPath={vaultPath}
+            notes={notes}
+            loading={entriesLoading}
+            error={vaultError}
+            onAddVault={addVault}
+            collapsed={explorerCollapsed}
+            onToggleCollapsed={() =>
+              setExplorerCollapsed((collapsed) => !collapsed)
+            }
+            onCopyPathError={notifyError}
+            onPathCopied={notifySuccess}
+            onNoteSelect={selectNote}
+            onDeleteEntry={(path) => void handleDeleteEntry(path)}
+            onCreate={beginCreate}
+            onCreateNote={() => {
+              const path = activePath?.replace(/\\/g, '/') ?? '';
+              beginCreate(
+                'note',
+                path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '',
+              );
+            }}
+            creationPending={creationPending}
+            vimMode={vimMode}
+            onVimModeChange={setVimMode}
+            settingsOpen={settingsOpen}
+            onSettingsOpenChange={setSettingsOpen}
+            openFileShortcut={openFileShortcut}
+            onOpenFileShortcutChange={setOpenFileShortcut}
+            toggleExplorerShortcut={toggleExplorerShortcut}
+            commandHeld={commandHeld}
+            onToggleExplorerShortcutChange={setToggleExplorerShortcut}
+            selectedPath={activePath}
+          />
+        </div>
         <Editor
           ref={editorRef}
+          readingMode={readingMode}
+          onToggleReadingMode={toggleReadingMode}
+          commandHeld={commandHeld}
           vimMode={vimMode}
           vaultId={activeVaultId}
           onLayoutChange={() => {

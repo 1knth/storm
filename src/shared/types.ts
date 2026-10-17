@@ -133,12 +133,14 @@ declare global {
       readImage: (request: VaultImageRequest) => Promise<VaultImageResult>;
       onSettingsOpen: (callback: () => void) => () => void;
       onNewTab: (callback: () => void) => () => void;
+      onCloseActiveTab: (callback: () => void) => () => void;
       onOpenFile: (callback: () => void) => () => void;
       onToggleExplorer: (callback: () => void) => () => void;
       onFocusPane: (
         callback: (pane: 'vaults' | 'explorer' | 'editor') => void,
       ) => () => void;
       onTogglePreview: (callback: () => void) => () => void;
+      onToggleReadMode: (callback: () => void) => () => void;
       onFormat: (callback: (kind: 'bold' | 'italic') => void) => () => void;
       onSelectTabIndex: (callback: (index: number) => void) => () => void;
       onActivateVaultIndex: (callback: (index: number) => void) => () => void;

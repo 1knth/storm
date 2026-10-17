@@ -8,9 +8,15 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 
-type Toast = { id: number; message: string; persistent: boolean };
+type Toast = {
+  id: number;
+  message: string;
+  persistent: boolean;
+  variant: 'error' | 'success';
+};
 type ToastContextValue = {
   notifyError: (message: string, persistent?: boolean) => void;
+  notifySuccess: (message: string) => void;
 };
 const ToastContext = createContext<ToastContextValue | null>(null);
 
@@ -31,31 +37,43 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     timers.current.delete(id);
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
-  const notifyError = useCallback((message: string, persistent = false) => {
-    const text = message.trim();
-    if (!text) return;
-    const now = Date.now();
-    if ((recentMessages.current.get(text) ?? 0) > now - 3000) return;
-    recentMessages.current.set(text, now);
-    const id = ++nextId.current;
-    setToasts((current) => {
-      const next = [...current, { id, message: text, persistent }];
-      const removed = next.length > 3 ? next.shift()! : null;
-      if (removed) {
-        const oldTimer = timers.current.get(removed.id);
-        if (oldTimer) clearTimeout(oldTimer);
-        timers.current.delete(removed.id);
+  const notify = useCallback(
+    (message: string, persistent: boolean, variant: Toast['variant']) => {
+      const text = message.trim();
+      if (!text) return;
+      const now = Date.now();
+      if ((recentMessages.current.get(text) ?? 0) > now - 3000) return;
+      recentMessages.current.set(text, now);
+      const id = ++nextId.current;
+      setToasts((current) => {
+        const next = [...current, { id, message: text, persistent, variant }];
+        const removed = next.length > 3 ? next.shift()! : null;
+        if (removed) {
+          const oldTimer = timers.current.get(removed.id);
+          if (oldTimer) clearTimeout(oldTimer);
+          timers.current.delete(removed.id);
+        }
+        return next;
+      });
+      if (!persistent) {
+        const timer = setTimeout(() => {
+          timers.current.delete(id);
+          setToasts((current) => current.filter((toast) => toast.id !== id));
+        }, 7000);
+        timers.current.set(id, timer);
       }
-      return next;
-    });
-    if (!persistent) {
-      const timer = setTimeout(() => {
-        timers.current.delete(id);
-        setToasts((current) => current.filter((toast) => toast.id !== id));
-      }, 7000);
-      timers.current.set(id, timer);
-    }
-  }, []);
+    },
+    [],
+  );
+  const notifyError = useCallback(
+    (message: string, persistent = false) =>
+      notify(message, persistent, 'error'),
+    [notify],
+  );
+  const notifySuccess = useCallback(
+    (message: string) => notify(message, false, 'success'),
+    [notify],
+  );
   useEffect(
     () => () => {
       for (const timer of timers.current.values()) clearTimeout(timer);
@@ -65,7 +83,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <ToastContext.Provider value={{ notifyError }}>
+    <ToastContext.Provider value={{ notifyError, notifySuccess }}>
       {children}
       <div
         className="pointer-events-none fixed bottom-4 right-4 z-[1200] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2"
@@ -75,8 +93,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            role="alert"
-            className="pointer-events-auto flex min-w-0 items-start gap-3 rounded-xl border border-white/15 border-l-2 border-l-red-300/70 bg-[#25282c]/90 px-3 py-2.5 text-[13px] leading-5 text-white/90 shadow-lg backdrop-blur-md"
+            role={toast.variant === 'error' ? 'alert' : 'status'}
+            className={`pointer-events-auto flex min-w-0 items-start gap-3 rounded-xl border border-white/15 border-l-2 ${toast.variant === 'error' ? 'border-l-red-300/70' : 'border-l-emerald-300/70'} bg-[#25282c]/90 px-3 py-2.5 text-[13px] leading-5 text-white/90 shadow-lg backdrop-blur-md`}
           >
             <span className="min-w-0 flex-1 break-words">{toast.message}</span>
             <button

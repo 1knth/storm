@@ -214,7 +214,7 @@ export default function VaultSidebar({
         onClick={() => onActivate(vault.id)}
         aria-current={vault.id === activeVaultId ? 'true' : undefined}
         title={`${vault.name}\n${vault.path}`}
-        className={`relative min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-sm ${commandHeld && index < 9 ? 'pr-20' : 'pr-8'} ${vault.id === activeVaultId ? 'bg-white/10 text-white' : 'sidebar-hover-tint text-white/65 hover:bg-white/5 hover:text-white focus-visible:bg-white/5 focus-visible:text-white'}`}
+        className={`relative min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs ${commandHeld && index < 9 ? 'pr-20' : 'pr-8'} ${vault.id === activeVaultId ? 'bg-white/10 text-white' : 'sidebar-hover-tint text-white/65 hover:bg-white/5 hover:text-white focus-visible:bg-white/5 focus-visible:text-white'}`}
       >
         <span className="block min-w-0 truncate">{vault.name}</span>
         {commandHeld && index < 9 && (
@@ -305,7 +305,7 @@ export default function VaultSidebar({
             title="Create group"
             className="rounded-md p-1.5 text-xs text-white/70 hover:bg-white/10 hover:text-white"
           >
-            <FaFolderTree aria-hidden="true" size={16} />
+            <FaFolderTree aria-hidden="true" size={14} />
           </button>
           <button
             type="button"
@@ -314,7 +314,7 @@ export default function VaultSidebar({
             title="Add vault"
             className="rounded-md p-1.5 text-lg leading-none text-white/70 hover:bg-white/10 hover:text-white"
           >
-            <FaPlus aria-hidden="true" size={16} />
+            <FaPlus aria-hidden="true" size={14} />
           </button>
           {collapsed && (
             <button
@@ -325,7 +325,7 @@ export default function VaultSidebar({
               title={`Show file explorer${toggleExplorerShortcut ? ` (${navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'})` : ''}`}
               className="relative rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white"
             >
-              <RiMenuUnfold4Fill aria-hidden="true" className="h-4 w-4" />
+              <RiMenuUnfold4Fill aria-hidden="true" className="h-3.5 w-3.5" />
               {commandHeld && toggleExplorerShortcut && (
                 <span
                   aria-hidden="true"
@@ -448,7 +448,7 @@ export default function VaultSidebar({
           )}
         </form>
       )}
-      <ul className="mx-1 min-h-0 flex-1 space-y-1 overflow-y-auto">
+      <ul className="mx-1 min-h-0 flex-1 space-y-0 overflow-y-auto">
         {ungrouped.map((vault) =>
           renderVault(vault, visibleVaults.indexOf(vault)),
         )}
@@ -487,20 +487,30 @@ export default function VaultSidebar({
                       ),
                     )
                   }
-                  className="min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left text-xs font-semibold text-white/70 hover:bg-white/10 hover:text-white"
+                  className="flex min-w-0 flex-1 items-center gap-1 truncate rounded px-2 py-1.5 text-left text-xs font-semibold leading-4 text-white/70 hover:text-white"
                 >
-                  {group.collapsed ? '▸' : '▾'}{' '}
+                  <span className="flex h-4 w-3 shrink-0 items-center justify-center text-base leading-none">
+                    {group.collapsed ? '▸' : '▾'}
+                  </span>
                   <span
                     aria-hidden="true"
-                    className="mr-1 inline-block h-2 w-2 rounded-full align-middle"
-                    style={{
-                      backgroundColor:
-                        GROUP_COLORS[group.color ?? groupColorForId(group.id)],
-                    }}
-                  />
-                  <span className="truncate">{group.name}</span>
+                    className="flex h-4 w-2 shrink-0 items-center justify-center"
+                  >
+                    <span
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{
+                        backgroundColor:
+                          GROUP_COLORS[
+                            group.color ?? groupColorForId(group.id)
+                          ],
+                      }}
+                    />
+                  </span>
+                  <span className="flex h-4 min-w-0 items-center truncate">
+                    {group.name}
+                  </span>
                   {members.length > 0 && (
-                    <span className="ml-1 text-[10px] text-white/35">
+                    <span className="flex h-4 shrink-0 items-center text-xs text-white/35">
                       {members.length}
                     </span>
                   )}
@@ -522,7 +532,7 @@ export default function VaultSidebar({
                 </button>
               </div>
               {!group.collapsed && (
-                <ul className="ml-2 space-y-1 border-l border-white/10 pl-1">
+                <ul className="ml-2 space-y-0 border-l border-white/10 pl-1">
                   {members.map((vault) =>
                     renderVault(vault, visibleVaults.indexOf(vault)),
                   )}
@@ -557,7 +567,7 @@ export default function VaultSidebar({
           title="Settings (⌘+,)"
           className="relative rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60"
         >
-          <IoIosSettings aria-hidden="true" className="h-4 w-4" />
+          <IoIosSettings aria-hidden="true" className="h-3.5 w-3.5" />
           {commandHeld && (
             <span
               aria-hidden="true"

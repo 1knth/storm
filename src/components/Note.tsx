@@ -49,12 +49,12 @@ export default function Note({
             className="sidebar-hover-tint flex w-full min-h-8 items-center justify-between rounded-md px-2 py-1 text-left text-xs text-white/90 transition-colors hover:bg-white/5 focus-visible:bg-white/5"
           >
             <span className="flex min-w-0 items-center gap-2 truncate">
-              <FaFolder aria-hidden="true" className="h-4 w-4 shrink-0" />
+              <FaFolder aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
               {entry.name}
             </span>
             <IoIosArrowForward
               aria-hidden="true"
-              className={`h-4 w-4 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+              className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
             />
           </button>
           {expanded && children.length > 0 && (

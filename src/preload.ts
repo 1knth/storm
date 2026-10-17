@@ -101,6 +101,11 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.on('tabs:new', listener);
     return () => ipcRenderer.removeListener('tabs:new', listener);
   },
+  onCloseActiveTab: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('tabs:close-active', listener);
+    return () => ipcRenderer.removeListener('tabs:close-active', listener);
+  },
   onOpenFile: (callback: () => void): (() => void) => {
     const listener = () => callback();
     ipcRenderer.on('file:open', listener);
@@ -141,6 +146,11 @@ contextBridge.exposeInMainWorld('vault', {
     };
     ipcRenderer.on('editor:format', listener);
     return () => ipcRenderer.removeListener('editor:format', listener);
+  },
+  onToggleReadMode: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('reading-mode:toggle', listener);
+    return () => ipcRenderer.removeListener('reading-mode:toggle', listener);
   },
   onTogglePreview: (callback: () => void): (() => void) => {
     const listener = () => callback();
