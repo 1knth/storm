@@ -77,6 +77,7 @@ type EditorProps = {
   tabsVisible: boolean;
   vaultId: string | null;
   onLayoutChange?: () => void;
+  onOpenNote?: (target: string) => void;
   readingMode?: boolean;
   onToggleReadingMode?: () => void;
   commandHeld?: boolean;
@@ -89,6 +90,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     tabs,
     vaultId,
     onLayoutChange,
+    onOpenNote,
     readingMode = false,
     onToggleReadingMode,
     commandHeld = false,
@@ -876,6 +878,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     vaultId={preview.vaultId}
                     notePath={preview.notePath}
                     onToggleTask={onToggleTask}
+                    onOpenNote={onOpenNote}
                     scrollRef={previewScrollRef}
                     onScroll={syncFromPreview}
                     onUserScroll={cancelScrollAnimations}
@@ -902,6 +905,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 vaultId={preview.vaultId}
                 notePath={preview.notePath}
                 onToggleTask={onToggleTask}
+                onOpenNote={onOpenNote}
                 scrollRef={previewScrollRef}
                 onScroll={syncFromPreview}
                 onUserScroll={cancelScrollAnimations}

@@ -11,11 +11,28 @@ test('reads safe local image paths and rejects unsafe or ambiguous paths', async
   const temp = await mkdtemp(path.join(os.tmpdir(), 'storm-vault-image-'));
   const root = path.join(temp, 'vault');
   try {
-    await mkdir(path.join(root, 'notes', 'sub'), { recursive: true });
+    await mkdir(path.join(root, 'notes', 'sub', 'images'), { recursive: true });
     await mkdir(path.join(root, 'assets'), { recursive: true });
     await writeFile(path.join(root, 'assets', 'ok.png'), png);
+    await writeFile(path.join(root, 'Pasted image 20261008152748.png'), png);
     await writeFile(path.join(root, 'notes', 'sub', 'near.png'), png);
-    await writeFile(path.join(root, 'notes', 'sub', 'same.png'), png);
+    await writeFile(
+      path.join(
+        root,
+        'notes',
+        'sub',
+        'images',
+        'Pasted image 20261008152748.png',
+      ),
+      png,
+    );
+    await writeFile(
+      path.join(root, 'notes', 'sub', 'images', 'photo.png'),
+      png,
+    );
+    await mkdir(path.join(root, 'other'), { recursive: true });
+    await writeFile(path.join(root, 'other', 'photo.png'), png);
+    await writeFile(path.join(root, 'other', 'same.png'), png);
     await writeFile(path.join(root, 'assets', 'same.png'), png);
     await writeFile(
       path.join(root, 'notes', 'sub', 'big.png'),
@@ -44,6 +61,34 @@ test('reads safe local image paths and rejects unsafe or ambiguous paths', async
         kind: 'wiki',
       }),
     );
+    const siblingImage = await readVaultImage(root, {
+      notePath: 'notes/sub/n.md',
+      imagePath: 'Pasted image 20261008152748.png',
+      kind: 'wiki',
+    });
+    assert.equal(siblingImage.mimeType, 'image/png');
+    await assert.doesNotReject(
+      readVaultImage(root, {
+        notePath: 'notes/sub/n.md',
+        imagePath: 'images/photo.png',
+      }),
+    );
+    const preferredDuplicate = await readVaultImage(root, {
+      notePath: 'notes/sub/n.md',
+      imagePath: 'photo.png',
+      kind: 'wiki',
+    });
+    assert.equal(
+      Buffer.from(preferredDuplicate.base64, 'base64').length,
+      png.length,
+    );
+    const pastedImage = await readVaultImage(root, {
+      notePath: 'notes/sub/n.md',
+      imagePath: 'Pasted image 20261008152748.png',
+      kind: 'wiki',
+    });
+    assert.equal(pastedImage.mimeType, 'image/png');
+    assert.equal(Buffer.from(pastedImage.base64, 'base64').length, png.length);
     await assert.rejects(
       readVaultImage(root, {
         notePath: 'notes/sub/n.md',
