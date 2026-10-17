@@ -61,6 +61,14 @@ export default function VaultSidebar({
     returnFocusTo: HTMLElement;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [groupCreateMenu, setGroupCreateMenu] = useState<{
+    position: ContextMenuPosition;
+    returnFocusTo: HTMLElement;
+  } | null>(null);
+  const [addMenu, setAddMenu] = useState<{
+    position: ContextMenuPosition;
+    returnFocusTo: HTMLElement;
+  } | null>(null);
   const { notifyError } = useToast();
   const formInput = useRef<HTMLInputElement>(null);
   const refresh = async () => {
@@ -298,9 +306,13 @@ export default function VaultSidebar({
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            onClick={() => {
-              setGroupForm({ name: '', mode: 'choose' });
-            }}
+            onClick={(event) =>
+              setGroupCreateMenu({
+                position: contextMenuPointForElement(event.currentTarget),
+                returnFocusTo: event.currentTarget,
+              })
+            }
+            aria-haspopup="menu"
             aria-label="Create group"
             title="Create group"
             className="app-icon-button"
@@ -309,8 +321,14 @@ export default function VaultSidebar({
           </button>
           <button
             type="button"
-            onClick={onAdd}
+            onClick={(event) =>
+              setAddMenu({
+                position: contextMenuPointForElement(event.currentTarget),
+                returnFocusTo: event.currentTarget,
+              })
+            }
             aria-label="Add vault"
+            aria-haspopup="menu"
             title="Add vault"
             className="app-icon-button"
           >
@@ -341,76 +359,33 @@ export default function VaultSidebar({
         </div>
       </div>
       {groupForm && (
-        <form
-          onSubmit={saveGroup}
-          className="app-popup-surface mb-2 p-2"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault();
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busy)
               setGroupForm(null);
-            }
           }}
         >
-          {!groupForm.id && groupForm.mode === 'choose' ? (
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="group-dialog-title"
+            onSubmit={saveGroup}
+            className="app-popup-surface command-palette-surface w-full max-w-sm p-5"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setGroupForm(null);
+              }
+            }}
+          >
             <>
-              <p className="mb-2 text-xs text-white/70">Create a vault group</p>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setGroupForm({ name: '' });
-                  requestAnimationFrame(() => formInput.current?.focus());
-                }}
-                className="app-popup-row block w-full px-2 py-1 text-left text-xs"
+              <h2
+                id="group-dialog-title"
+                className="mb-3 text-lg font-semibold"
               >
-                Empty group
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    const selection = await window.vault.groupFolderChoose();
-                    if (!selection) return;
-                    setGroupForm({
-                      mode: 'name',
-                      selectionId: selection.selectionId,
-                      folderName: selection.name,
-                      name: selection.name,
-                    });
-                    requestAnimationFrame(() => formInput.current?.focus());
-                  } catch (cause) {
-                    notifyError(
-                      cause instanceof Error
-                        ? cause.message
-                        : 'Unable to select folder',
-                    );
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-                className="app-popup-row block w-full px-2 py-1 text-left text-xs"
-              >
-                Create from folder…
-              </button>
-              <button
-                type="button"
-                onClick={() => setGroupForm(null)}
-                className="app-button mt-1 w-full py-1 text-right text-xs text-white/60"
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              <label className="mb-1 block text-xs text-white/70">
-                {groupForm.id
-                  ? 'Rename group'
-                  : groupForm.folderName
-                    ? `Group name (vaults inside “${groupForm.folderName}”)`
-                    : 'New group'}
-              </label>
+                {groupForm.id ? 'Rename vault group' : 'Create vault group'}
+              </h2>
               {groupForm.folderName && (
                 <p className="mb-2 text-xs text-white/60">
                   Immediate subfolders become vaults; if there are none, the
@@ -418,35 +393,40 @@ export default function VaultSidebar({
                   will be reassigned to this group.
                 </p>
               )}
-              <input
-                ref={formInput}
-                value={groupForm.name}
-                onChange={(event) =>
-                  setGroupForm({ ...groupForm, name: event.target.value })
-                }
-                aria-label="Group name"
-                maxLength={80}
-                className="app-input w-full px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-white/40"
-              />
-              <div className="mt-1 flex justify-end gap-1">
+              <label className="block text-sm">
+                {groupForm.folderName
+                  ? `Group name (vaults inside “${groupForm.folderName}”)`
+                  : 'Group name'}
+                <input
+                  ref={formInput}
+                  value={groupForm.name}
+                  onChange={(event) =>
+                    setGroupForm({ ...groupForm, name: event.target.value })
+                  }
+                  aria-label="Group name"
+                  maxLength={80}
+                  className="app-input mt-1 w-full px-3 py-2 outline-none focus-visible:border-blue-400"
+                />
+              </label>
+              <div className="mt-4 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setGroupForm(null)}
-                  className="app-button px-2 py-1 text-xs text-white/60"
+                  className="app-button px-3 py-2 text-sm"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={busy || !groupForm.name.trim()}
-                  className="app-button px-2 py-1 text-xs text-white disabled:opacity-40"
+                  className="app-button bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50"
                 >
                   Save
                 </button>
               </div>
             </>
-          )}
-        </form>
+          </form>
+        </div>
       )}
       <ul className="mx-1 min-h-0 flex-1 space-y-0 overflow-y-auto">
         {ungrouped.map((vault) =>
@@ -542,6 +522,70 @@ export default function VaultSidebar({
           );
         })}
       </ul>
+      {groupCreateMenu && (
+        <ContextMenu
+          position={groupCreateMenu.position}
+          items={[
+            {
+              id: 'new-group',
+              label: 'New group',
+              onSelect: () => {
+                setGroupForm({ name: '' });
+                requestAnimationFrame(() => formInput.current?.focus());
+              },
+            },
+            {
+              id: 'group-from-folder',
+              label: 'Group from folder',
+              onSelect: async () => {
+                setBusy(true);
+                try {
+                  const selection = await window.vault.groupFolderChoose();
+                  if (!selection) return;
+                  setGroupForm({
+                    selectionId: selection.selectionId,
+                    folderName: selection.name,
+                    name: selection.name,
+                  });
+                  requestAnimationFrame(() => formInput.current?.focus());
+                } catch (cause) {
+                  notifyError(
+                    cause instanceof Error
+                      ? cause.message
+                      : 'Unable to select folder',
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              },
+            },
+          ]}
+          returnFocusTo={groupCreateMenu.returnFocusTo}
+          onClose={(reason) => {
+            setGroupCreateMenu(null);
+            if (reason === 'escape') groupCreateMenu.returnFocusTo.focus();
+          }}
+          label="Create group"
+        />
+      )}
+      {addMenu && (
+        <ContextMenu
+          position={addMenu.position}
+          items={[
+            {
+              id: 'choose-vault',
+              label: 'Choose vault folder…',
+              onSelect: onAdd,
+            },
+          ]}
+          returnFocusTo={addMenu.returnFocusTo}
+          onClose={(reason) => {
+            setAddMenu(null);
+            if (reason === 'escape') addMenu.returnFocusTo.focus();
+          }}
+          label="Add vault"
+        />
+      )}
       {menu && (
         <ContextMenu
           position={menu.position}

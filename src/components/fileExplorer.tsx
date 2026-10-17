@@ -58,7 +58,6 @@ type FileExplorerProps = {
 export default function FileExplorer({
   onNoteSelect,
   onCreate,
-  onCreateNote,
   onDeleteEntry,
   creationPending,
   onAddVault,
@@ -84,6 +83,7 @@ export default function FileExplorer({
   onAppearanceChange,
 }: FileExplorerProps) {
   const changeVaultRef = useRef<HTMLButtonElement>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
   const [settingsTab, setSettingsTab] = useState<'general' | 'appearance'>(
     'general',
   );
@@ -245,15 +245,21 @@ export default function FileExplorer({
           <div className="flex items-center gap-1">
             <button
               type="button"
-              aria-label={`New note (${navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'})`}
-              aria-keyshortcuts={
-                navigator.platform.toLowerCase().includes('mac')
-                  ? 'Meta+N'
-                  : 'Control+N'
-              }
-              title={`New note (${navigator.platform.toLowerCase().includes('mac') ? '⌘N' : 'Ctrl+N'})`}
+              ref={addButtonRef}
+              aria-label="Add note or folder"
+              title="Add note or folder"
               disabled={!vaultPath || creationPending}
-              onClick={onCreateNote}
+              onClick={() => {
+                if (!vaultPath || creationPending) return;
+                const rect = addButtonRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                setContextMenu({
+                  position: { x: rect.left, y: rect.bottom },
+                  returnFocusTo: addButtonRef.current,
+                  parent: '',
+                  target: null,
+                });
+              }}
               className="app-icon-button relative disabled:cursor-not-allowed disabled:opacity-40"
             >
               <FaPlus aria-hidden="true" size={14} />
@@ -311,6 +317,7 @@ export default function FileExplorer({
           position={contextMenu.position}
           returnFocusTo={contextMenu.returnFocusTo}
           onClose={() => setContextMenu(null)}
+          label="Add to vault"
           items={[
             ...(['note', 'folder'] as const).map((kind) => ({
               id: `new-${kind}`,
