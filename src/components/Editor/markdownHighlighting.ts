@@ -19,7 +19,9 @@ export const markdownSyntaxHighlighting = syntaxHighlighting(
     {
       tag: tags.monospace,
       color: '#8ed6c0',
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontFamily: 'inherit',
+      fontSize: '1em',
+      lineHeight: 1,
     },
     { tag: tags.processingInstruction, color: '#8f82a3' },
     { tag: tags.labelName, color: '#a9a1b5' },

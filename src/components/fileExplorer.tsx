@@ -47,6 +47,8 @@ type FileExplorerProps = {
   selectedPath: string | null;
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  onCopyPathError: (message: string) => void;
+  onPathCopied: (message: string) => void;
 };
 
 export default function FileExplorer({
@@ -72,6 +74,8 @@ export default function FileExplorer({
   selectedPath,
   collapsed,
   onToggleCollapsed,
+  onCopyPathError,
+  onPathCopied,
 }: FileExplorerProps) {
   const changeVaultRef = useRef<HTMLButtonElement>(null);
   const vaultName = vaultPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? null;
@@ -208,13 +212,25 @@ export default function FileExplorer({
         <div className="mb-2 flex h-9 shrink-0 flex-row items-center justify-between border-b border-white/10 px-1">
           <div className="flex min-w-0 items-baseline gap-2">
             <h1 className="text-sm font-semibold text-white/80">Directory</h1>
-            {vaultName && (
-              <span
-                className="truncate text-sm text-white/50"
-                title={vaultPath ?? undefined}
+            {vaultName && vaultPath && (
+              <button
+                type="button"
+                aria-label="Copy vault path"
+                title={`Copy path: ${vaultPath}`}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(vaultPath);
+                    onPathCopied('copied path to clipboard');
+                  } catch (error) {
+                    onCopyPathError(
+                      `Could not copy vault path: ${error instanceof Error ? error.message : String(error)}`,
+                    );
+                  }
+                }}
+                className="truncate rounded-sm text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
               >
                 {vaultName}
-              </span>
+              </button>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -231,7 +247,7 @@ export default function FileExplorer({
               onClick={onCreateNote}
               className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <FaPlus aria-hidden="true" size={16} />
+              <FaPlus aria-hidden="true" size={14} />
               <ShortcutHint visible={commandHeld}>
                 {navigator.platform.toLowerCase().includes('mac')
                   ? '⌘N'
@@ -245,7 +261,7 @@ export default function FileExplorer({
               onClick={onToggleCollapsed}
               className="relative rounded-md p-1 text-white/70 hover:bg-white/10 hover:text-white"
             >
-              <RiMenuUnfold4Fill aria-hidden="true" className="h-4 w-4" />
+              <RiMenuUnfold4Fill aria-hidden="true" className="h-3.5 w-3.5" />
               <ShortcutHint visible={commandHeld && toggleExplorerShortcut}>
                 {navigator.platform.toLowerCase().includes('mac')
                   ? '⌘S'

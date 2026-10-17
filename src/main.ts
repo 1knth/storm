@@ -11,10 +11,12 @@ import {
   assertDeletionTargetUnchanged,
   resolveDeletionTarget,
 } from './vault/vaultDeletion';
+import { confirmQuitAndFlush } from './quitConfirmation';
 
 const vaultService = new VaultService();
 const vaultRegistry = new VaultRegistry(app.getPath('userData'));
 let shutdownAllowed = false;
+let quitConfirmationInFlight = false;
 let shutdownInFlight: Promise<boolean> | null = null;
 const closeAllowed = new WeakSet<BrowserWindow>();
 const shutdownAcks = new Map<string, (succeeded: boolean) => void>();
@@ -428,6 +430,14 @@ app.whenReady().then(() => {
             ),
         },
         {
+          label: 'Close Tab',
+          accelerator: 'Control+W',
+          click: () =>
+            BrowserWindow.getFocusedWindow()?.webContents.send(
+              'tabs:close-active',
+            ),
+        },
+        {
           label: 'New Tab',
           accelerator: 'CommandOrControl+T',
           click: () => {
@@ -443,6 +453,15 @@ app.whenReady().then(() => {
               BrowserWindow.getFocusedWindow() ??
               BrowserWindow.getAllWindows()[0];
             window?.webContents.send('file:open');
+          },
+        },
+        {
+          label: 'Toggle Reading Mode',
+          accelerator: 'CommandOrControl+E',
+          click: () => {
+            BrowserWindow.getFocusedWindow()?.webContents.send(
+              'reading-mode:toggle',
+            );
           },
         },
         {
@@ -475,7 +494,11 @@ app.whenReady().then(() => {
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        { role: 'quit' },
+        {
+          label: 'Quit',
+          accelerator: process.platform === 'darwin' ? 'Command+Q' : undefined,
+          click: () => app.quit(),
+        },
       ],
     },
     {
@@ -591,13 +614,40 @@ app.whenReady().then(() => {
 
 app.on('before-quit', (event) => {
   if (shutdownAllowed) return;
+  // Closing the final window is already guarded by its close handler. Don't
+  // show a second quit confirmation after that window has been destroyed.
+  if (BrowserWindow.getAllWindows().length === 0) {
+    shutdownAllowed = true;
+    return;
+  }
   event.preventDefault();
-  void flushBeforeQuit().then((proceed) => {
-    if (proceed) {
+  if (quitConfirmationInFlight) return;
+  quitConfirmationInFlight = true;
+  void (async () => {
+    try {
+      const proceed = await confirmQuitAndFlush(async () => {
+        const choice = await dialog.showMessageBox({
+          ...(BrowserWindow.getFocusedWindow()
+            ? { window: BrowserWindow.getFocusedWindow()! }
+            : {}),
+          type: 'question',
+          buttons: ['Cancel', 'Quit'],
+          defaultId: 0,
+          cancelId: 0,
+          message: 'Are you sure you want to quit Storm?',
+          noLink: true,
+        });
+        return choice.response === 1;
+      }, flushBeforeQuit);
+      if (!proceed) return;
       shutdownAllowed = true;
       app.quit();
+    } catch (error) {
+      console.error('Unable to confirm or prepare application quit', error);
+    } finally {
+      quitConfirmationInFlight = false;
     }
-  });
+  })();
 });
 
 // Quit the app when its last window is closed on every platform.
