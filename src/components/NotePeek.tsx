@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 type NotePeekProps = { markdown: string };
 
 export default function NotePeek({ markdown }: NotePeekProps) {
+  if (!markdown.trim()) return <>...</>;
+
   return (
     <ReactMarkdown
       allowedElements={['p', 'em', 'strong', 'del', 'code', 'a', 'br']}

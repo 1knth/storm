@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { IoIosArrowForward } from 'react-icons/io';
 import { FaFolder } from 'react-icons/fa';
+import { FaRegFile } from 'react-icons/fa6';
 import type { VaultEntry } from '../shared/types';
 import NotePeek from './NotePeek';
 
@@ -79,10 +80,13 @@ export default function Note({
           aria-pressed={isSelected}
           onClick={() => onNoteClick(entry.path)}
           style={{ paddingLeft: `${16 + depth * 16}px` }}
-          className={`flex min-h-10 w-full flex-col justify-center p-1.5 text-left transition-colors ${isSelected ? 'rounded-md bg-[#027DFF]/60' : 'sidebar-hover-tint rounded-none hover:rounded-md hover:bg-white/5 focus-visible:rounded-md focus-visible:bg-white/5'}`}
+          className={`flex min-h-10 w-full flex-col justify-center p-1.5 text-left ${isSelected ? 'rounded-md bg-[#027DFF]/60' : 'rounded-none focus-visible:rounded-md focus-visible:bg-white/5'}`}
         >
-          <span className="truncate text-xs font-medium leading-4 text-white/90">
-            {entry.name.slice(0, entry.name.indexOf('.'))}
+          <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-medium leading-4 text-white/90">
+            <FaRegFile aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">
+              {entry.name.slice(0, entry.name.indexOf('.'))}
+            </span>
           </span>
           <span className="block min-h-4 truncate border-b border-solid border-white/20 text-[11px] font-light leading-4 text-white/65">
             <NotePeek markdown={entry.peek} />

@@ -227,7 +227,7 @@ export default function FileExplorer({
                     );
                   }
                 }}
-                className="truncate rounded-sm text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
+                className="truncate rounded-sm text-left text-sm text-white/50 hover:text-white/80 hover:underline underline-offset-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
               >
                 {vaultName}
               </button>
