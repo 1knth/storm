@@ -14,7 +14,7 @@ import { getCM } from '@replit/codemirror-vim';
 import { markdownCompletionExtension } from './markdownCompletions';
 import { EditorView, keymap } from '@codemirror/view';
 import { markdownTableEnter } from './markdownTables';
-import { markdownTaskEnter } from './markdownTaskEnter';
+import { markdownTaskEnter, markdownTaskX } from './markdownTaskEnter';
 import { formatMarkdownSelection } from './markdownFormatting';
 
 function isListContext(view: EditorView) {
@@ -102,6 +102,10 @@ export const markdownEditorExtensions = [
   history(),
   Prec.highest(
     keymap.of([
+      {
+        key: 'x',
+        run: (view) => markdownTaskX(view),
+      },
       {
         key: 'Enter',
         run: (view) =>
