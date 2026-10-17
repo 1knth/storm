@@ -4,6 +4,49 @@ import { EditorState } from '@codemirror/state';
 import type { NoteData } from '../../shared/types';
 import type { NoteTabSnapshot, TabSnapshot } from './Editor';
 import { serializeTabLayout } from './savedTabLayout';
+import type { TabGroup } from './tabGroups';
+
+test('round-trips tab order, active tab, group colors, collapse state, and assignments', () => {
+  const first = {
+    kind: 'empty',
+    id: 'standalone',
+  } as const;
+  const note: NoteData = {
+    path: 'notes/first.md',
+    content: 'first note',
+    revision: 'revision-1',
+  };
+  const second = {
+    kind: 'note',
+    note,
+    vaultPath: '/vault',
+    vaultId: 'vault',
+    state: EditorState.create({ doc: note.content }),
+    scrollTop: 0,
+  } satisfies NoteTabSnapshot;
+  const tabs: TabSnapshot[] = [first, second, { kind: 'empty', id: 'last' }];
+  const groups = [
+    { id: 'reading', name: 'Reading', collapsed: true, color: 'purple' },
+    { id: 'writing', name: 'Writing', collapsed: false, color: 'orange' },
+  ] satisfies TabGroup[];
+  const layout = serializeTabLayout(
+    tabs,
+    'notes/first.md',
+    groups,
+    { 'notes/first.md': 'reading' },
+    new Map(),
+  );
+  const restored = JSON.parse(JSON.stringify(layout));
+
+  assert.deepEqual(restored.tabs, [
+    { kind: 'empty', id: 'standalone' },
+    { kind: 'note', path: 'notes/first.md', anchor: 0, head: 0, scrollTop: 0 },
+    { kind: 'empty', id: 'last' },
+  ]);
+  assert.equal(restored.activeTab, 'notes/first.md');
+  assert.deepEqual(restored.groups, groups);
+  assert.deepEqual(restored.assignments, { 'notes/first.md': 'reading' });
+});
 
 test('serializes bounded view metadata without note content or editor history', () => {
   const note: NoteData = {

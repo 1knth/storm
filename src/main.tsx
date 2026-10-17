@@ -814,10 +814,7 @@ function App() {
       )
         return;
       const layout = await window.vault.getTabLayout(vaultId);
-      if (!layout) {
-        setVaultError('No saved tab layout for this vault.');
-        return;
-      }
+      if (!layout) return;
       const restored: TabSnapshot[] = [];
       for (const item of layout.tabs) {
         if (item.kind === 'empty') {
@@ -1578,6 +1575,16 @@ function App() {
       current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      !activeVaultId ||
+      !vaultPath ||
+      visitedVaults.current.has(activeVaultId)
+    )
+      return;
+    void restoreSavedTabs();
+  }, [activeVaultId, vaultPath]);
 
   const toggleReadingMode = () => {
     if (navigationBusy.current || vaultTransition.current || hasOpenModal())

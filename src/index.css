@@ -241,16 +241,29 @@
   background-color: rgb(255 255 255 / 5%);
 }
 
-/* The ring samples the app backdrop before the pane fill. Hide the entire
-   visual treatment while empty; transition it only across empty/nonempty state. */
+/* Pane rim samples the app backdrop before the pane fill. Tune these three
+   values for a stronger/weaker glass glow; the rim itself stays neutral white. */
+.editor-pane-shell {
+  --pane-rim-brightness: 2.5;
+  --pane-rim-saturation: 5;
+  --pane-rim-blur: 2px;
+}
+
+/* Hide the complete treatment while empty; show it only with tabs. */
 .editor-pane-shell::before {
   position: absolute;
   z-index: 0;
   inset: 0;
   border-radius: inherit;
-  padding: 2px;
-  background: rgb(255 255 255 / 7%);
-  backdrop-filter: brightness(2.1) saturate(4) blur(2px);
+  padding: 1px;
+  background: linear-gradient(
+    145deg,
+    rgb(255 255 255 / 24%),
+    rgb(255 255 255 / 10%) 38%,
+    rgb(255 255 255 / 18%)
+  );
+  backdrop-filter: brightness(var(--pane-rim-brightness))
+    saturate(var(--pane-rim-saturation)) blur(var(--pane-rim-blur));
   content: '';
   pointer-events: none;
   opacity: 0;
