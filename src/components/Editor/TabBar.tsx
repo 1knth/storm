@@ -452,7 +452,7 @@ export default function TabBar({
               }
             : undefined
         }
-        className={`tab-surface group/tab relative flex h-8 w-[10.5rem] shrink-0 items-center rounded-full border px-3 transition-colors focus-within:z-10 ${exiting ? 'tab-presence-exit' : enteringIds.has(id) ? 'tab-presence-enter' : ''} ${activeId === id ? 'tab-surface--active border-white/10 bg-[rgb(32_32_32/72%)] text-white' : 'tab-surface--inactive border-transparent bg-[rgb(32_32_32/24%)] text-white/60 hover:bg-[rgb(32_32_32/48%)]'}`}
+        className={`tab-surface group/tab relative flex h-8 w-[10.5rem] shrink-0 items-center rounded-full border px-3 transition-[background-color,border-color,color] duration-150 focus-within:z-10 ${exiting ? 'tab-presence-exit' : enteringIds.has(id) ? 'tab-presence-enter' : ''} ${activeId === id ? 'tab-surface--active border-white/10 bg-[rgb(32_32_32/72%)] text-white' : 'tab-surface--inactive border-transparent bg-[rgb(32_32_32/24%)] text-white/60 hover:bg-[rgb(32_32_32/48%)]'}`}
         onAnimationEnd={(event) => {
           if (exiting && event.animationName === 'tab-presence-exit') {
             const timer = timers.current.get(id);
@@ -495,7 +495,7 @@ export default function TabBar({
           onDragStart={(event) => startDrag(event, 'tab', id)}
           onClick={() => onSelect(tab)}
           aria-current={activeId === id ? 'page' : undefined}
-          className="flex min-w-0 flex-1 items-center gap-2 truncate py-1.5 text-[13px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-300/70"
+          className="flex min-w-0 flex-1 items-center gap-2 truncate py-1.5 text-[13px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/35"
           title={tab.kind === 'note' ? tab.note.path : 'New tab'}
         >
           <FaRegFile
@@ -507,7 +507,7 @@ export default function TabBar({
         {commandHeld && index >= 0 && index < 9 && (
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute right-7 top-1/2 z-20 -translate-y-1/2 whitespace-nowrap rounded bg-black/90 px-1 py-0.5 text-[9px] leading-none text-white shadow"
+            className="pointer-events-none absolute right-7 top-1/2 z-20 -translate-y-1/2 whitespace-nowrap rounded-md bg-black/90 px-1 py-0.5 text-[9px] font-medium leading-none text-white shadow"
           >
             {platformKey}
             {index + 1}
@@ -517,7 +517,7 @@ export default function TabBar({
           type="button"
           onClick={() => onClose(tab)}
           aria-label={`Close ${label}`}
-          className="ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[12px] text-[#a6b8bd]/70 opacity-0 transition-opacity hover:bg-white/10 hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100"
+          className="ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[12px] text-white/55 opacity-0 transition-[background-color,color,opacity] duration-150 hover:bg-white/10 hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100"
         >
           ×
         </button>
@@ -553,9 +553,8 @@ export default function TabBar({
                 if (payload?.type === 'group') dropGroup(event, group.id);
                 else dropOnGroup(event, group.id);
               }}
-              className={`tab-group-surface relative flex h-9 min-h-9 max-h-9 shrink-0 items-center gap-1 overflow-hidden rounded-xl border border-white/15 border-b-2 bg-[rgb(32_32_32/18%)] px-1 transition-colors ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-white/25' : ''}`}
+              className={`tab-group-surface relative flex h-9 min-h-9 max-h-9 shrink-0 items-center gap-1 overflow-hidden rounded-none border-0 border-b-2 bg-transparent px-1 transition-colors ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-white/25' : ''}`}
               style={{
-                borderColor: `${TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))]}55`,
                 borderBottomColor:
                   TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))],
               }}
@@ -594,7 +593,10 @@ export default function TabBar({
                 }}
                 onDragEnd={clearDrag}
                 title={group.name}
-                className="flex max-w-[10.5rem] shrink-0 items-center gap-1.5 rounded-full px-2 py-1.5 text-[11px] font-medium leading-none text-white/75 transition-colors hover:bg-[rgb(32_32_32/48%)] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-300/70"
+                className="flex max-w-[10.5rem] shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium leading-none text-white transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/65"
+                style={{
+                  backgroundColor: `${TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))]}40`,
+                }}
                 aria-expanded={!group.collapsed}
                 onClick={() => {
                   if (dragMoved.current) {
