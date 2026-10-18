@@ -1,6 +1,6 @@
 # Architecture and contributor map
 
-Storm is an Electron application. This document describes the current ownership boundaries; it is not a proposed complete rewrite.
+Storm is an Electron application. This document describes the current ownership boundaries; it is not a proposed complete rewrite. For conventions on where new code belongs and how changes should be tested, see [Contributing](CONTRIBUTING.md).
 
 ## Entry points and runtime layers
 
