@@ -252,6 +252,7 @@ function App() {
   const [commandHeld, setCommandHeld] = useState(false);
   const commandHeldRef = useRef(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerSelectionFocus = useRef(false);
   const [query, setQuery] = useState('');
   const [notes, setNotes] = useState<VaultEntry[]>([]);
   const openImagePreview = async (path: string) => {
@@ -481,7 +482,12 @@ function App() {
 
   useEffect(() => {
     if (!pickerOpen) {
-      pickerInvokerRef.current?.focus();
+      if (pickerSelectionFocus.current) {
+        pickerSelectionFocus.current = false;
+        editorRef.current?.focus();
+      } else {
+        pickerInvokerRef.current?.focus();
+      }
       return;
     }
     setQuery('');
@@ -496,10 +502,11 @@ function App() {
     );
 
   const highlightedNote = matchingNotes[highlightedIndex];
-  const openPickerEntry = (entry: VaultEntry) =>
-    entry.kind === 'image'
-      ? openImagePreview(entry.path)
-      : selectNote(entry.path);
+  const openPickerEntry = (entry: VaultEntry) => {
+    if (entry.kind === 'image') return openImagePreview(entry.path);
+    pickerSelectionFocus.current = true;
+    return selectNote(entry.path);
+  };
 
   useEffect(() => {
     const requestId = ++pickerPreviewRequest.current;
