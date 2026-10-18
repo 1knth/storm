@@ -152,6 +152,26 @@ describe('Markdown editor features', () => {
     }
   });
 
+  it('fully parses inline HTML in the configured editor state', () => {
+    const state = EditorState.create({
+      doc: [
+        '| left | right |',
+        '| --- | --- |',
+        '| value | <br><br> |',
+        '| | $$x^2$$ |',
+      ].join('\n'),
+      extensions: [markdown(), ...markdownEditorExtensions],
+    });
+    const names: string[] = [];
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        names.push(node.name);
+      },
+    });
+    assert.ok(names.includes('Document'), 'expected a Markdown document tree');
+    assert.ok(names.includes('HTMLTag'), 'expected embedded HTML to parse');
+  });
+
   it('parses headings, emphasis, and inline code for syntax coloring', () => {
     const state = EditorState.create({
       doc: '# Heading\n**bold** *italic* `code`',
