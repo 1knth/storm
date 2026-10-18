@@ -12,7 +12,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { Vim, vim } from '@replit/codemirror-vim';
 import { Compartment, EditorState, Prec, Transaction } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
-import type { ReactNode } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import {
   drawSelection,
   EditorView,
@@ -40,6 +40,7 @@ import {
   type PreviewAnchor,
 } from './previewScroll';
 import { useToast } from '../Toast';
+import { scrollReadingPreview } from './readingScroll';
 import {
   isCurrentSaveCompletion,
   isSaveCompletionContentUnchanged,
@@ -140,6 +141,21 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const [hasActiveNote, setHasActiveNote] = useState(false);
   const pendingFocus = useRef(false);
   const previewScrollRef = useRef<HTMLDivElement>(null);
+  const onReadingKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const modalOpen = Boolean(
+        document.querySelector(
+          '[role="dialog"], [role="menu"], [role="listbox"]',
+        ),
+      );
+      scrollReadingPreview(
+        event.nativeEvent,
+        previewScrollRef.current,
+        modalOpen,
+      );
+    },
+    [],
+  );
   const expectedPreviewScroll = useRef<number | null>(null);
   const expectedEditorScroll = useRef<number | null>(null);
   const previewAnimation = useRef({ active: false, cancel: () => {} });
@@ -1018,6 +1034,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     scrollRef={previewScrollRef}
                     onScroll={syncFromPreview}
                     onUserScroll={cancelScrollAnimations}
+                    onReadingKeyDown={onReadingKeyDown}
                     appearance={appearance}
                     compact
                   />
