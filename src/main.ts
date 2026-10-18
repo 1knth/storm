@@ -5,6 +5,8 @@ import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
 import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
+
+app.setName('Storm');
 import { readVaultAsset, readVaultImage } from './vault/vaultAssets';
 import { savePastedImage } from './vault/pasteImage';
 import { VaultWriteBarrier } from './vault/writeBarrier';
