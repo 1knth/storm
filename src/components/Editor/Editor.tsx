@@ -139,6 +139,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const previewSnapshot = useRef(preview);
   previewSnapshot.current = preview;
   const [hasActiveNote, setHasActiveNote] = useState(false);
+  const previousReadingMode = useRef(readingMode);
   const pendingFocus = useRef(false);
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const onReadingKeyDown = useCallback(
@@ -361,6 +362,16 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       annotations: Transaction.userEvent.of('input.task'),
     });
   }, []);
+
+  useLayoutEffect(() => {
+    const wasReading = previousReadingMode.current;
+    previousReadingMode.current = readingMode;
+    if (wasReading && !readingMode && hasActiveNote) {
+      // Focus the existing view after it becomes visible; CodeMirror retains
+      // its selection, scroll position, and Vim state while reading mode is on.
+      viewRef.current?.focus();
+    }
+  }, [hasActiveNote, readingMode]);
 
   useLayoutEffect(() => {
     if (!hasActiveNote || !pendingFocus.current) return;
