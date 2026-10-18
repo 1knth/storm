@@ -163,12 +163,6 @@ function App() {
       groupsRef.current,
       assignmentsRef.current,
     );
-    if (!currentTabs.length) {
-      groupsRef.current = normalized.groups;
-      assignmentsRef.current = normalized.assignments;
-      setTabGroups(normalized.groups);
-      setTabGroupAssignments(normalized.assignments);
-    }
     sessions.current.set(vaultId, {
       tabs: currentTabs,
       activeId: currentTabs.some((tab) => getTabId(tab) === activeIdRef.current)

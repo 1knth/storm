@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CompletionContext } from '@codemirror/autocomplete';
 import { markdown } from '@codemirror/lang-markdown';
-import { syntaxTree } from '@codemirror/language';
+import { highlightingFor, syntaxTree } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { markdownEditorExtensions } from './extensions';
 import { markdownCompletions } from './markdownCompletions';
 import { markdownSyntaxHighlighting } from './markdownHighlighting';
+import { tags } from '@lezer/highlight';
 
 function complete(text: string) {
   const state = EditorState.create({
@@ -133,6 +134,24 @@ describe('Markdown editor features', () => {
     assert.equal(state.doc.toString(), '**');
     assert.equal(state.selection.main.head, 2);
   });
+  it('runs Markdown tags through the configured highlighter without crashing', () => {
+    const state = EditorState.create({
+      doc: '# Heading\n**bold** *italic* [link](https://example.com) `code`',
+      extensions: [markdown(), markdownSyntaxHighlighting],
+    });
+
+    for (const tag of [
+      'heading1',
+      'strong',
+      'emphasis',
+      'link',
+      'url',
+      'monospace',
+    ] as const) {
+      assert.ok(highlightingFor(state, [tags[tag]]), `expected ${tag} styling`);
+    }
+  });
+
   it('parses headings, emphasis, and inline code for syntax coloring', () => {
     const state = EditorState.create({
       doc: '# Heading\n**bold** *italic* `code`',
