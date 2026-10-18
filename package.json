@@ -17,6 +17,7 @@
     "make": "electron-forge make",
     "release": "electron-forge release",
     "lint": "oxlint && oxfmt --check",
+    "test": "bun test",
     "lint:fix": "oxlint --fix && oxfmt --write",
     "typecheck": "tsc --noEmit"
   },
