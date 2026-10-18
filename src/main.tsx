@@ -7,6 +7,7 @@ import type { RegisteredVault, VaultEntry, VaultGroup } from './shared/types';
 import { deriveVisibleVaults } from './shared/vaultGroups';
 import Editor from './components/Editor/Editor';
 import MarkdownPreview from './components/Editor/MarkdownPreview';
+import AssetPreviewPane from './components/AssetPreviewDialog';
 import type { EditorHandle, TabSnapshot } from './components/Editor/Editor';
 import TabBar from './components/Editor/TabBar';
 import {
@@ -495,6 +496,11 @@ function App() {
     );
 
   const highlightedNote = matchingNotes[highlightedIndex];
+  const openPickerEntry = (entry: VaultEntry) =>
+    entry.kind === 'image'
+      ? openImagePreview(entry.path)
+      : selectNote(entry.path);
+
   useEffect(() => {
     const requestId = ++pickerPreviewRequest.current;
     if (!pickerOpen || !highlightedNote || !activeVaultId) {
@@ -503,6 +509,10 @@ function App() {
       return;
     }
     setPickerPreview(null);
+    if (highlightedNote.kind === 'image') {
+      setPickerPreviewState(null);
+      return;
+    }
     setPickerPreviewState('loading');
     void window.vault.readNote(highlightedNote.path).then(
       (note) => {
@@ -563,7 +573,7 @@ function App() {
         setHighlightedIndex((index) => Math.max(index - 1, 0));
       } else if (event.key === 'Enter' && matchingNotes[highlightedIndex]) {
         event.preventDefault();
-        void selectNote(matchingNotes[highlightedIndex].path).then(() =>
+        void openPickerEntry(matchingNotes[highlightedIndex]).then(() =>
           setPickerOpen(false),
         );
       }
@@ -669,6 +679,7 @@ function App() {
   };
 
   const pendingExplorerFocus = useRef(false);
+  const pendingExplorerFocusFirst = useRef(false);
   useEffect(() => {
     const rememberFocus = (event: FocusEvent) => {
       const target = event.target;
@@ -717,13 +728,16 @@ function App() {
     if (explorerCollapsed && lastPane.current === 'explorer')
       editorRef.current?.focus();
   }, [explorerCollapsed]);
-  const focusExplorerRow = () => {
+  const focusExplorerRow = (firstRow = false) => {
     const pane = document.querySelector<HTMLElement>('[data-pane="explorer"]');
     const rows = Array.from(
       pane?.querySelectorAll<HTMLElement>('[data-entry-path]') ?? [],
     );
     const row =
-      rows.find((item) => item.dataset.entryPath === activePath) ?? rows[0];
+      (firstRow
+        ? undefined
+        : rows.find((item) => item.dataset.entryPath === activePath)) ??
+      rows[0];
     const rowButton = row?.querySelector<HTMLElement>('button');
     (rowButton ?? pane)?.focus();
   };
@@ -731,7 +745,9 @@ function App() {
   useEffect(() => {
     if (explorerCollapsed || !pendingExplorerFocus.current) return;
     pendingExplorerFocus.current = false;
-    focusExplorerRow();
+    const firstRow = pendingExplorerFocusFirst.current;
+    pendingExplorerFocusFirst.current = false;
+    focusExplorerRow(firstRow);
   }, [explorerCollapsed, activePath, activeVaultId]);
 
   useEffect(() => {
@@ -742,6 +758,7 @@ function App() {
       }
       if (paneName === 'explorer' && explorerCollapsed) {
         pendingExplorerFocus.current = true;
+        pendingExplorerFocusFirst.current = true;
         setExplorerCollapsed(false);
         return;
       }
@@ -754,7 +771,8 @@ function App() {
         return;
       }
       pendingExplorerFocus.current = false;
-      focusExplorerRow();
+      pendingExplorerFocusFirst.current = false;
+      focusExplorerRow(true);
     };
     return window.vault.onFocusPane((paneName) => {
       if (hasOpenModal()) return;
@@ -2081,7 +2099,7 @@ function App() {
                         type="button"
                         onMouseEnter={() => setHighlightedIndex(index)}
                         onClick={() => {
-                          void selectNote(note.path).then(() =>
+                          void openPickerEntry(note).then(() =>
                             setPickerOpen(false),
                           );
                         }}
@@ -2109,6 +2127,13 @@ function App() {
                   <p className="p-4 text-sm text-white/50">
                     Could not load this file.
                   </p>
+                ) : highlightedNote?.kind === 'image' && activeVaultId ? (
+                  <AssetPreviewPane
+                    key={`${activeVaultId}:${highlightedNote.path}`}
+                    vaultId={activeVaultId}
+                    relativePath={highlightedNote.path}
+                    filename={highlightedNote.name}
+                  />
                 ) : pickerPreview ? (
                   <MarkdownPreview
                     compact
