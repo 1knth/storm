@@ -7,14 +7,14 @@ Storm is an Electron application. This document describes the current ownership 
 - `src/main.ts` is the Electron main-process entry point. It owns window/app lifecycle and registers IPC handlers.
 - `src/preload.ts` exposes the narrow `window.vault` bridge to the renderer. `src/shared/` holds types and code shared across processes.
 - `src/renderer.ts` starts the React renderer. `src/main.tsx` owns application-level UI state, including open tabs, tab groups, active focus, and vault selection; it coordinates persistence through the preload API.
-- `src/components/Editor/Editor.tsx` owns an individual editor's editing, save binding, and preview behavior. Pure tab layout/group decisions live in `src/components/Editor/tabGroups.ts` and `savedTabLayout.ts` with focused tests alongside them.
+- `src/components/Editor/Editor.tsx` owns an individual editor's editing, save binding, and preview behavior. Pure tab layout/group decisions live in `src/components/Editor/tabGroups.ts` and `savedTabLayout.ts`; close-tab fallback decisions live in `tabTransitions.ts`, with focused tests alongside them.
 - `src/vault/` owns vault operations and persistence services invoked by main-process IPC. UI components request operations through the preload bridge rather than directly owning vault filesystem writes.
 - `forge.config.mts` and the Vite config files configure packaging and process-specific builds.
 
 ## Ownership and flows
 
 - **Document/editor:** the renderer owns which document is currently shown; an Editor instance owns its editing and view state. The main process does not own editor content state.
-- **Tabs:** `src/main.tsx` coordinates application tab state. Pure ordering, grouping, and layout normalization decisions are kept in the editor tab helper modules so they can be tested without mounting the UI.
+- **Tabs:** `src/main.tsx` coordinates application tab state. Pure ordering, grouping, layout normalization, and close-tab fallback decisions are kept in the editor tab helper modules so they can be tested without mounting the UI. `main.tsx` retains orchestration such as flushing the editor before closing and activating the selected fallback.
 - **Saving:** Editor coordinates save requests and dirty/binding state; the preload bridge carries requests to main-process IPC, where vault services perform validated filesystem operations. Keep this as one write path; a future CLI should integrate through shared vault services rather than introduce a competing direct-write path.
 - **Vault:** main-process vault services own filesystem access and persistence; preload defines the renderer-facing API. React UI owns presentation and user intent, not filesystem access.
 

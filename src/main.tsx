@@ -20,6 +20,7 @@ import {
   visibleTabOrder,
 } from './components/Editor/tabGroups';
 import type { TabAssignments, TabGroup } from './components/Editor/tabGroups';
+import { closeTabTransition } from './components/Editor/tabTransitions';
 import { serializeTabLayout } from './components/Editor/savedTabLayout';
 import { checkpointErrorMessage } from './components/Editor/checkpointError';
 import { ToastProvider, useToast } from './components/Toast';
@@ -1346,7 +1347,12 @@ function App() {
     const targetId = getTabId(target);
     if (activeVaultId) visitedVaults.current.add(activeVaultId);
     if (targetId !== activeId) {
-      const remaining = tabs.filter((tab) => getTabId(tab) !== targetId);
+      const { remaining } = closeTabTransition(
+        tabs,
+        targetId,
+        activeId,
+        getTabId,
+      );
       const normalized = normalizeTabGroupState(
         remaining,
         groupsRef.current,
@@ -1369,9 +1375,13 @@ function App() {
     navigationBusy.current = true;
     try {
       if (!(await editorRef.current?.flush())) return;
-      const remaining = tabs.filter((tab) => getTabId(tab) !== targetId);
-      const next = remaining.at(-1);
-      if (next) activateTab(next);
+      const { remaining, nextActive } = closeTabTransition(
+        tabs,
+        targetId,
+        activeId,
+        getTabId,
+      );
+      if (nextActive) activateTab(nextActive);
       else {
         ++noteRequestId.current;
         editorRef.current?.clear();
