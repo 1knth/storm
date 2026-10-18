@@ -13,10 +13,15 @@ type Toast = {
   message: string;
   persistent: boolean;
   variant: 'error' | 'success';
+  actionLabel?: string;
+  onAction?: () => void;
 };
 type ToastContextValue = {
   notifyError: (message: string, persistent?: boolean) => void;
-  notifySuccess: (message: string) => void;
+  notifySuccess: (
+    message: string,
+    action?: { label: string; onClick: () => void },
+  ) => void;
 };
 const ToastContext = createContext<ToastContextValue | null>(null);
 
@@ -38,7 +43,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
   const notify = useCallback(
-    (message: string, persistent: boolean, variant: Toast['variant']) => {
+    (
+      message: string,
+      persistent: boolean,
+      variant: Toast['variant'],
+      action?: { label: string; onClick: () => void },
+    ) => {
       const text = message.trim();
       if (!text) return;
       const now = Date.now();
@@ -46,7 +56,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       recentMessages.current.set(text, now);
       const id = ++nextId.current;
       setToasts((current) => {
-        const next = [...current, { id, message: text, persistent, variant }];
+        const next = [
+          ...current,
+          {
+            id,
+            message: text,
+            persistent,
+            variant,
+            actionLabel: action?.label,
+            onAction: action?.onClick,
+          },
+        ];
         const removed = next.length > 3 ? next.shift()! : null;
         if (removed) {
           const oldTimer = timers.current.get(removed.id);
@@ -71,7 +91,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [notify],
   );
   const notifySuccess = useCallback(
-    (message: string) => notify(message, false, 'success'),
+    (message: string, action?: { label: string; onClick: () => void }) =>
+      notify(message, false, 'success', action),
     [notify],
   );
   useEffect(
@@ -97,6 +118,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             className={`app-popup-surface pointer-events-auto flex min-w-0 items-start gap-3 border-l-2 ${toast.variant === 'error' ? 'border-l-red-300/70' : 'border-l-emerald-300/70'} px-3 py-2.5 text-[13px] leading-5 text-white/90`}
           >
             <span className="min-w-0 flex-1 break-words">{toast.message}</span>
+            {toast.actionLabel && toast.onAction && (
+              <button
+                type="button"
+                onClick={toast.onAction}
+                className="app-button shrink-0 px-1 text-white/80"
+              >
+                {toast.actionLabel}
+              </button>
+            )}
             <button
               type="button"
               aria-label="Dismiss notification"

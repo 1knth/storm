@@ -63,28 +63,27 @@ describe('Markdown editor features', () => {
     assert.equal(state.selection.main.head, 1);
   });
 
-  it('toggles task markers through the configured Enter keymap', () => {
-    for (const [doc, expected] of [
-      ['- [ ] task', '- [x] task'],
-      ['- [ ]', '- [x]'],
-    ]) {
-      let state = EditorState.create({
-        doc,
-        selection: { anchor: doc.length },
-        extensions: [markdown(), ...markdownEditorExtensions],
-      });
-      const view = {
-        get state() {
-          return state;
-        },
-        dispatch: (transaction: Parameters<typeof state.update>[0]) => {
-          state = state.update(transaction).state;
-        },
-      } as EditorView;
-      const enterBindings = state
-        .facet(keymap)
-        .flat()
-        .filter((binding) => binding.key === 'Enter');
+  it('cycles task markers through the configured Normal-mode Enter keymap', () => {
+    let state = EditorState.create({
+      doc: 'task',
+      extensions: [markdown(), ...markdownEditorExtensions],
+    });
+    const view = {
+      get state() {
+        return state;
+      },
+      cm: { state: { vim: { insertMode: false, visualMode: false } } },
+      dispatch: (transaction: Parameters<typeof state.update>[0]) => {
+        state = state.update(transaction).state;
+      },
+    } as unknown as EditorView;
+    const enterBindings = state
+      .facet(keymap)
+      .flat()
+      .filter((binding) => binding.key === 'Enter');
+
+    for (const expected of ['- task', '- [ ] task']) {
+      state = state.update({ selection: { anchor: state.doc.length } }).state;
       let handled = false;
       for (const binding of enterBindings) {
         if (binding.run?.(view)) {
@@ -92,10 +91,24 @@ describe('Markdown editor features', () => {
           break;
         }
       }
-
-      assert.equal(handled, true, doc);
+      assert.equal(handled, true);
       assert.equal(state.doc.toString(), expected);
     }
+
+    state = state.update({ selection: { anchor: state.doc.length } }).state;
+    const xBindings = state
+      .facet(keymap)
+      .flat()
+      .filter((binding) => binding.key === 'x');
+    let handled = false;
+    for (const binding of xBindings) {
+      if (binding.run?.(view)) {
+        handled = true;
+        break;
+      }
+    }
+    assert.equal(handled, true);
+    assert.equal(state.doc.toString(), '- [x] task');
   });
 
   it('skips an existing matching closer without changing the document', () => {
