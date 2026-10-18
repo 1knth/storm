@@ -29,6 +29,11 @@ import { taskMarkerChange, taskToggleMatchesBinding } from './markdownTasks';
 import type { TaskTogglePayload } from './markdownTasks';
 import { formatMarkdownSelection } from './markdownFormatting';
 import {
+  imagePasteChange,
+  mapImagePasteAnchor,
+  type ImagePasteAnchor,
+} from './imagePasteAnchor';
+import {
   previewScrollTopForCursor,
   smoothScrollTo,
   previewTopAtSourceLine as mapPreviewTopAtSourceLine,
@@ -43,6 +48,10 @@ import {
 
 // Keep these as Vim mappings (not CodeMirror key handlers) so uppercase J/K remain
 // ordinary inserted text outside Vim modes and Vim's counts/operators keep working.
+// Keep j/k as Vim mappings so counts and Vim's wrapped-line motion preserve
+// normal-mode behavior without intercepting Insert, Visual, or operator-pending keys.
+Vim.map('j', 'gj', 'normal');
+Vim.map('k', 'gk', 'normal');
 Vim.map('J', '}', 'normal');
 Vim.map('J', '}', 'visual');
 Vim.map('J', '}', 'operatorPending');
@@ -99,7 +108,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   },
   ref,
 ) {
-  const { notifyError } = useToast();
+  const { notifyError, notifySuccess } = useToast();
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const vimCompartment = useRef(new Compartment());
@@ -117,6 +126,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inFlight = useRef<Promise<boolean> | null>(null);
   const blocked = useRef(false);
+  const pendingImagePastes = useRef<ImagePasteAnchor[]>([]);
   const onLayoutChangeRef = useRef(onLayoutChange);
   onLayoutChangeRef.current = onLayoutChange;
   const [status, setStatus] = useState('');
@@ -645,13 +655,19 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             ]);
             if (!supported.has(file.type)) return false;
             event.preventDefault();
-            const captured = {
-              active,
-              installed,
-              generation: generation.current,
-              state: view.state,
+            const pastePosition = {
               from: view.state.selection.main.from,
               to: view.state.selection.main.to,
+              replaceSelection:
+                view.state.selection.main.from !== view.state.selection.main.to,
+            };
+            pendingImagePastes.current.push(pastePosition);
+            const captured = {
+              vaultId: active.vaultId,
+              notePath: active.note.path,
+              installed,
+              generation: generation.current,
+              pastePosition,
             };
             void file
               .arrayBuffer()
@@ -671,28 +687,55 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                   mimeType: file.type,
                   base64: btoa(binary),
                 });
+                const filename =
+                  result.imagePath.split('/').pop() ?? result.imagePath;
+                const copyPath = async () => {
+                  try {
+                    if (!navigator.clipboard?.writeText)
+                      throw new Error('Clipboard access is unavailable.');
+                    await navigator.clipboard.writeText(result.imagePath);
+                    notifySuccess(`Copied ${result.imagePath}`);
+                  } catch {
+                    notifyError('Could not copy image path to clipboard.');
+                  }
+                };
                 if (
                   viewRef.current !== view ||
-                  current.current !== captured.active ||
+                  !current.current ||
+                  current.current.vaultId !== captured.vaultId ||
+                  current.current.note.path !== captured.notePath ||
                   binding.current !== captured.installed ||
-                  generation.current !== captured.generation ||
-                  view.state !== captured.state ||
-                  view.state.selection.main.from !== captured.from ||
-                  view.state.selection.main.to !== captured.to
-                )
+                  generation.current !== captured.generation
+                ) {
+                  pendingImagePastes.current =
+                    pendingImagePastes.current.filter(
+                      (pending) => pending !== captured.pastePosition,
+                    );
+                  notifySuccess('Image saved; note is no longer active', {
+                    label: 'Copy path',
+                    onClick: () => void copyPath(),
+                  });
                   return;
+                }
                 const link = `![](${result.imagePath})`;
+                const { from } = captured.pastePosition;
                 view.dispatch({
-                  changes: {
-                    from: captured.from,
-                    to: captured.to,
-                    insert: link,
-                  },
-                  selection: { anchor: captured.from + link.length },
+                  changes: imagePasteChange(captured.pastePosition, link),
+                  selection: { anchor: from + link.length },
                   annotations: Transaction.userEvent.of('input.paste'),
+                });
+                pendingImagePastes.current = pendingImagePastes.current.filter(
+                  (pending) => pending !== captured.pastePosition,
+                );
+                notifySuccess(`Image pasted: ${filename}`, {
+                  label: 'Copy path',
+                  onClick: () => void copyPath(),
                 });
               })
               .catch((error: unknown) => {
+                pendingImagePastes.current = pendingImagePastes.current.filter(
+                  (pending) => pending !== captured.pastePosition,
+                );
                 notifyError(
                   error instanceof Error
                     ? error.message
@@ -734,6 +777,11 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       drawSelection({ cursorBlinkRate: 1000 }),
       highlightActiveLine(),
       EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          for (const pending of pendingImagePastes.current) {
+            mapImagePasteAnchor(pending, update.changes);
+          }
+        }
         const active = current.current;
         const installed = binding.current;
         if (
@@ -783,7 +831,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           backgroundColor: 'transparent',
           caretColor: 'white',
         },
-        '.cm-content': { caretColor: 'var(--storm-cursor)', padding: '0 16px' },
+        '.cm-content': {
+          caretColor: 'var(--storm-cursor)',
+          padding: '0 16px 0 0',
+        },
         '.cm-cursor, .cm-dropCursor': {
           borderLeft: '1.5px solid var(--storm-cursor)',
         },
@@ -831,6 +882,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       previewAnimation.current.cancel();
       editorAnimation.current.cancel();
       if (timer.current) clearTimeout(timer.current);
+      pendingImagePastes.current = [];
       if (binding.current?.view === view) {
         binding.current = null;
         generation.current += 1;
