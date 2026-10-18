@@ -195,11 +195,10 @@ export default function FileExplorer({
               if (
                 event.key === 'Enter' ||
                 (event.key === 'h' && expanded) ||
-                (event.key === 'l' && !expanded)
+                event.key === 'l'
               ) {
                 event.preventDefault();
-                if (event.key === 'Enter') button.click();
-                else if (!expanded) button.click();
+                if (event.key === 'Enter' || event.key === 'l') button.click();
               } else if (event.key === 'h') {
                 event.preventDefault();
                 focusRow(
