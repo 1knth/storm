@@ -15,6 +15,7 @@ import type {
   VaultGroup,
   SavedTabLayout,
   DeleteEntryResult,
+  VaultChangeEvent,
 } from './shared/types';
 import type { GroupColor } from './shared/groupColors';
 
@@ -29,6 +30,21 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.invoke('vault:tab-layout-save', vaultId, layout),
   getTabLayout: (vaultId: string): Promise<SavedTabLayout | null> =>
     ipcRenderer.invoke('vault:tab-layout-get', vaultId),
+  onVaultChanged: (
+    callback: (event: VaultChangeEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      if (!payload || typeof payload !== 'object') return;
+      const value = payload as Partial<VaultChangeEvent>;
+      if (
+        typeof value.vaultId === 'string' &&
+        typeof value.revision === 'number'
+      )
+        callback({ vaultId: value.vaultId, revision: value.revision });
+    };
+    ipcRenderer.on('vault:changed', listener);
+    return () => ipcRenderer.removeListener('vault:changed', listener);
+  },
   onRestoreTabs: (callback: () => void): (() => void) => {
     const listener = () => callback();
     ipcRenderer.on('tabs:restore-saved', listener);
