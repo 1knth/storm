@@ -4,7 +4,7 @@ Storm is an Electron application. This document describes the current ownership 
 
 ## Entry points and runtime layers
 
-- `src/main.ts` is the Electron main-process entry point. It owns window/app lifecycle and registers IPC handlers.
+- `src/main.ts` is the Electron main-process entry point and owns window/app lifecycle. Focused IPC registration modules live in `src/main/`; vault filesystem services remain in `src/vault/`.
 - `src/preload.ts` exposes the narrow `window.vault` bridge to the renderer. `src/shared/` holds types and code shared across processes.
 - `src/renderer.ts` starts the React renderer. `src/main.tsx` owns application-level UI state, including open tabs, tab groups, active focus, and vault selection; it coordinates persistence through the preload API.
 - `src/components/Editor/Editor.tsx` owns an individual editor's editing, save binding, and preview behavior. Pure tab layout/group decisions live in `src/components/Editor/tabGroups.ts` and `savedTabLayout.ts`; close-tab fallback decisions live in `tabTransitions.ts`, with focused tests alongside them.

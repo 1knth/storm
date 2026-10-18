@@ -1,0 +1,220 @@
+import { strict as assert } from 'node:assert';
+import { test } from 'node:test';
+import { VaultWriteBarrier } from '../vault/writeBarrier';
+import { registerVaultRegistryIpc } from './registerVaultRegistryIpc';
+import type { VaultRegistry } from '../vault/vaultRegistry';
+import type { VaultService } from '../vault/vaultService';
+
+const event = {};
+
+function setup() {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  const calls: unknown[][] = [];
+  const vault = { id: 'vault-1', path: '/vault' };
+  const registry = {
+    list: async () => ({ vaults: [vault] }),
+    listGroups: () => [],
+    getTabLayout: (...args: unknown[]) => {
+      calls.push(['getTabLayout', ...args]);
+      return null;
+    },
+    saveTabLayout: (...args: unknown[]) => {
+      calls.push(['saveTabLayout', ...args]);
+      return true;
+    },
+    createGroup: (...args: unknown[]) => {
+      calls.push(['createGroup', ...args]);
+      return 'group-1';
+    },
+    renameGroup: (...args: unknown[]) => {
+      calls.push(['renameGroup', ...args]);
+      return true;
+    },
+    removeGroup: (...args: unknown[]) => {
+      calls.push(['removeGroup', ...args]);
+      return true;
+    },
+    setVaultGroup: (...args: unknown[]) => {
+      calls.push(['setVaultGroup', ...args]);
+      return true;
+    },
+    setGroupColor: (...args: unknown[]) => {
+      calls.push(['setGroupColor', ...args]);
+      return true;
+    },
+    setGroupCollapsed: (...args: unknown[]) => {
+      calls.push(['setGroupCollapsed', ...args]);
+      return true;
+    },
+    add: (...args: unknown[]) => {
+      calls.push(['add', ...args]);
+      return vault;
+    },
+    setActive: (...args: unknown[]) => {
+      calls.push(['setActive', ...args]);
+    },
+    remove: (...args: unknown[]) => {
+      calls.push(['remove', ...args]);
+      return true;
+    },
+    unloadAll: async () => {
+      calls.push(['unloadAll']);
+    },
+  };
+  const service = {
+    selectVault: async (...args: unknown[]) => {
+      calls.push(['selectVault', ...args]);
+    },
+    getSelectedVaultPath: () => '/vault',
+    clearSelectedVault: () => {
+      calls.push(['clearSelectedVault']);
+    },
+  };
+  const dependencies = {
+    registry: registry as unknown as VaultRegistry,
+    service: service as unknown as VaultService,
+    writeBarrier: new VaultWriteBarrier(),
+    watchSelectedVault: async () => {
+      calls.push(['watchSelectedVault']);
+      return 'vault-1';
+    },
+    stopWatcher: () => {
+      calls.push(['stopWatcher']);
+    },
+    clearWatchedVaultId: () => {
+      calls.push(['clearWatchedVaultId']);
+    },
+  };
+  registerVaultRegistryIpc(
+    { handle: (name, listener) => handlers.set(name, listener) },
+    dependencies,
+  );
+  return { handlers, calls, registry, dependencies };
+}
+
+const invoke = (
+  handlers: Map<string, (...args: any[]) => unknown>,
+  channel: string,
+  ...args: unknown[]
+) => handlers.get(channel)!(event, ...args);
+
+test('returns registry and group lists', async () => {
+  const { handlers } = setup();
+  assert.deepEqual(await invoke(handlers, 'vault:registry-list'), {
+    vaults: [{ id: 'vault-1', path: '/vault' }],
+  });
+  assert.deepEqual(invoke(handlers, 'vault:groups-list'), []);
+});
+
+test('preserves validation errors for invalid payloads', async () => {
+  const { handlers, calls } = setup();
+  const cases: [string, unknown[], string][] = [
+    ['vault:tab-layout-get', [null], 'Invalid vault ID'],
+    ['vault:tab-layout-save', [1, {}], 'Invalid vault ID'],
+    ['vault:group-create', [false], 'Invalid group name'],
+    ['vault:group-rename', ['id', null], 'Invalid group rename'],
+    ['vault:group-remove', [null], 'Invalid vault group ID'],
+    ['vault:group-set-vault', ['vault', 1], 'Invalid vault group assignment'],
+    ['vault:group-set-color', [null, 'red'], 'Invalid vault group ID'],
+    [
+      'vault:group-set-collapsed',
+      ['id', 'yes'],
+      'Invalid group collapse state',
+    ],
+    ['vault:registry-add', [null], 'Invalid vault directory'],
+    ['vault:registry-activate', [null], 'Invalid vault ID'],
+    ['vault:registry-remove', [null], 'Invalid vault ID'],
+  ];
+  for (const [channel, args, message] of cases) {
+    await assert.rejects(
+      Promise.resolve().then(() =>
+        invoke(handlers, channel, ...args),
+      ) as Promise<unknown>,
+      new RegExp(message),
+    );
+  }
+  assert.deepEqual(calls, []);
+});
+
+test('activates a listed vault in order and returns selected path', async () => {
+  const { handlers, calls } = setup();
+  assert.deepEqual(
+    await invoke(handlers, 'vault:registry-activate', 'vault-1'),
+    { id: 'vault-1', path: '/vault' },
+  );
+  assert.deepEqual(calls, [
+    ['selectVault', '/vault'],
+    ['setActive', 'vault-1'],
+    ['watchSelectedVault'],
+  ]);
+});
+
+test('rejects unknown vaults without selecting or watching', async () => {
+  const { handlers, calls } = setup();
+  await assert.rejects(
+    invoke(handlers, 'vault:registry-activate', 'missing') as Promise<unknown>,
+    /Unknown vault/,
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('does not persist active state or watch if selecting fails', async () => {
+  const { handlers, calls } = setup();
+  const select = handlers.get('vault:registry-activate')!;
+  // A failing service is injected by replacing the captured handler's dependency in a separate registration.
+  const failures = new Map<string, (...args: any[]) => unknown>();
+  const registry = {
+    list: async () => ({ vaults: [{ id: 'vault-1', path: '/vault' }] }),
+  };
+  const service = {
+    selectVault: async () => {
+      throw new Error('selection failed');
+    },
+    getSelectedVaultPath: () => '/vault',
+  };
+  registerVaultRegistryIpc(
+    { handle: (name, listener) => failures.set(name, listener) },
+    {
+      registry: registry as unknown as VaultRegistry,
+      service: service as unknown as VaultService,
+      writeBarrier: new VaultWriteBarrier(),
+      watchSelectedVault: async () => {
+        throw new Error('should not watch');
+      },
+      stopWatcher: () => {},
+      clearWatchedVaultId: () => {},
+    },
+  );
+  void select;
+  await assert.rejects(
+    failures.get('vault:registry-activate')!(
+      event,
+      'vault-1',
+    ) as Promise<unknown>,
+    /selection failed/,
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('waits for pending writes before unloading and clearing selection', async () => {
+  const { handlers, calls, dependencies } = setup();
+  const barrier = dependencies.writeBarrier;
+  let finishWrite!: () => void;
+  const writeFinished = new Promise<void>((resolve) => {
+    finishWrite = resolve;
+  });
+  const writeStarted = barrier.run(async () => {
+    await writeFinished;
+  });
+  const unload = invoke(handlers, 'vault:registry-unload-all');
+  assert.deepEqual(calls, []);
+  finishWrite();
+  await writeStarted;
+  await unload;
+  assert.deepEqual(calls, [
+    ['unloadAll'],
+    ['stopWatcher'],
+    ['clearWatchedVaultId'],
+    ['clearSelectedVault'],
+  ]);
+});

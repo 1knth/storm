@@ -4,7 +4,7 @@ Storm is an Electron + React app. Keep changes behavior-focused and follow the e
 
 ## Where code belongs
 
-- **Electron lifecycle and IPC registration:** `src/main.ts`. Keep app/window setup and IPC orchestration here; put vault filesystem operations in `src/vault/` rather than growing the entry point into a catch-all.
+- **Electron lifecycle and IPC registration:** `src/main.ts` owns app/window setup; focused main-process IPC registration belongs in `src/main/`. Put vault filesystem operations in `src/vault/` rather than growing the entry point into a catch-all.
 - **Renderer startup and app-level coordination:** `src/renderer.ts` starts React; `src/main.tsx` coordinates application state such as vault selection, tabs, and focus. Components render UI and handle local interaction.
 - **Vault and persistence:** `src/vault/` owns filesystem-facing operations. Renderer code requests them through `src/preload.ts`'s narrow `window.vault` bridge. Define shared boundary types in `src/shared/types.ts`; validate inputs at the process boundary before filesystem effects.
 - **Editor behavior:** `src/components/Editor/Editor.tsx` composes the editor. Put cohesive editor features and pure decisions beside it (for example, `tabGroups.ts` and `tabTransitions.ts`), with focused tests alongside pure modules. Keep unrelated UI out of the editor directory.
