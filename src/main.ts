@@ -15,6 +15,7 @@ import {
   resolveDeletionTarget,
 } from './vault/vaultDeletion';
 import { confirmQuitAndFlush } from './quitConfirmation';
+import { VaultWatcher } from './vault/vaultWatcher';
 
 const vaultService = new VaultService();
 const vaultRegistry = new VaultRegistry(app.getPath('userData'));
@@ -22,6 +23,32 @@ let shutdownAllowed = false;
 let quitConfirmationInFlight = false;
 let shutdownInFlight: Promise<boolean> | null = null;
 const vaultWriteBarrier = new VaultWriteBarrier();
+let activeWatchedVaultId: string | null = null;
+const vaultWatcher = new VaultWatcher((vaultId, revision) => {
+  const window = BrowserWindow.getAllWindows().find(
+    (candidate) => !candidate.isDestroyed(),
+  );
+  if (window && !window.webContents.isDestroyed())
+    window.webContents.send('vault:changed', { vaultId, revision });
+});
+async function watchSelectedVault(): Promise<string | null> {
+  const selectedPath = vaultService.getSelectedVaultPath();
+  if (!selectedPath) {
+    vaultWatcher.stop();
+    activeWatchedVaultId = null;
+    return null;
+  }
+  const { vault } = await vaultRegistry.add(selectedPath);
+  await vaultRegistry.setActive(vault.id);
+  if (activeWatchedVaultId !== vault.id) {
+    activeWatchedVaultId = vault.id;
+    vaultWatcher.start(selectedPath, vault.id);
+  }
+  return vault.id;
+}
+function invalidateSelectedVault(vaultId: string): void {
+  if (vaultId === activeWatchedVaultId) vaultWatcher.invalidate(vaultId);
+}
 const closeAllowed = new WeakSet<BrowserWindow>();
 const shutdownAcks = new Map<string, (succeeded: boolean) => void>();
 let openFileMenuItem: Electron.MenuItem | null = null;
@@ -113,6 +140,11 @@ const createWindow = () => {
     },
   });
 
+  mainWindow.on('closed', () => {
+    vaultWatcher.stop();
+    activeWatchedVaultId = null;
+  });
+
   mainWindow.on('close', (event) => {
     if (shutdownAllowed || closeAllowed.has(mainWindow)) return;
     event.preventDefault();
@@ -145,6 +177,7 @@ ipcMain.handle('vault:restore', async () => {
     const savedPath = await readLastVault(app.getPath('userData'));
     if (!savedPath) return { path: null, error: null };
     await vaultService.selectVault(savedPath);
+    await watchSelectedVault();
     return { path: vaultService.getSelectedVaultPath(), error: null };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
@@ -166,8 +199,7 @@ ipcMain.handle('vault:choose', async () => {
   await vaultService.selectVault(selectedPath);
   const validatedPath = vaultService.getSelectedVaultPath()!;
   try {
-    const { vault } = await vaultRegistry.add(validatedPath);
-    await vaultRegistry.setActive(vault.id);
+    await watchSelectedVault();
     return { path: validatedPath, warning: null };
   } catch (error) {
     return {
@@ -299,6 +331,7 @@ ipcMain.handle('vault:registry-activate', async (_event, id: unknown) => {
   if (!selected) throw new Error('Unknown vault');
   await vaultService.selectVault(selected.path);
   await vaultRegistry.setActive(id);
+  await watchSelectedVault();
   return { id, path: vaultService.getSelectedVaultPath() };
 });
 ipcMain.handle('vault:registry-remove', (_event, id: unknown) => {
@@ -308,6 +341,8 @@ ipcMain.handle('vault:registry-remove', (_event, id: unknown) => {
 ipcMain.handle('vault:registry-unload-all', () =>
   vaultWriteBarrier.close(async () => {
     await vaultRegistry.unloadAll();
+    vaultWatcher.stop();
+    activeWatchedVaultId = null;
     vaultService.clearSelectedVault();
   }),
 );
@@ -358,12 +393,14 @@ ipcMain.handle('vault:paste-image', async (_event, request: unknown) => {
   return vaultWriteBarrier.run(async () => {
     const vault = await vaultRegistry.getById(vaultId);
     if (!vault) throw new Error('Unknown vault');
-    return savePastedImage(vault.path, {
+    const result = await savePastedImage(vault.path, {
       vaultId,
       notePath,
       mimeType,
       base64,
     });
+    invalidateSelectedVault(vaultId);
+    return result;
   });
 });
 
@@ -435,7 +472,9 @@ ipcMain.handle('vault:create-note', async (_event, request: unknown) => {
     throw new Error('Invalid creation request');
   const vault = await vaultRegistry.getById(vaultId);
   if (!vault) throw new Error('Unknown vault');
-  return createMarkdownNote(vault.path, parentRelativePath, name);
+  const entry = await createMarkdownNote(vault.path, parentRelativePath, name);
+  invalidateSelectedVault(vaultId);
+  return entry;
 });
 ipcMain.handle('vault:create-folder', async (_event, request: unknown) => {
   if (!request || typeof request !== 'object' || Array.isArray(request))
@@ -452,7 +491,9 @@ ipcMain.handle('vault:create-folder', async (_event, request: unknown) => {
     throw new Error('Invalid creation request');
   const vault = await vaultRegistry.getById(vaultId);
   if (!vault) throw new Error('Unknown vault');
-  return createFolder(vault.path, parentRelativePath, name);
+  const entry = await createFolder(vault.path, parentRelativePath, name);
+  invalidateSelectedVault(vaultId);
+  return entry;
 });
 
 ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
@@ -483,6 +524,7 @@ ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
     return { deleted: false, path: target.relativePath, kind: target.kind };
   await assertDeletionTargetUnchanged(target);
   await shell.trashItem(target.absolutePath);
+  invalidateSelectedVault(vaultId);
   return { deleted: true, path: target.relativePath, kind: target.kind };
 });
 
@@ -492,7 +534,23 @@ ipcMain.handle('vault:read-note', async (_event, relativePath: unknown) =>
   vaultService.readNote(relativePath),
 );
 ipcMain.handle('vault:save-note', async (_event, request: unknown) =>
-  vaultService.saveNote(request),
+  vaultWriteBarrier.run(async () => {
+    const result = await vaultService.saveNote(request);
+    if (request && typeof request === 'object') {
+      const value = request as Record<string, unknown>;
+      if (
+        typeof value.vaultPath === 'string' &&
+        typeof value.path === 'string'
+      ) {
+        const { vaults } = await vaultRegistry.list();
+        const vaultId = vaults.find(
+          (vault) => vault.path === value.vaultPath,
+        )?.id;
+        if (vaultId) invalidateSelectedVault(vaultId);
+      }
+    }
+    return result;
+  }),
 );
 
 app.whenReady().then(() => {
