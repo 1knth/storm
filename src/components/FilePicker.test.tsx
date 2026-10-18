@@ -8,17 +8,22 @@ import FilePicker from './FilePicker';
 function renderPicker(
   highlightedEntry: VaultEntry,
   preview: { path: string; markdown: string } | null,
+  overrides: {
+    hasVault?: boolean;
+    entries?: VaultEntry[];
+    previewState?: 'loading' | 'error' | null;
+  } = {},
 ) {
   return renderToStaticMarkup(
     <FilePicker
-      entries={[highlightedEntry]}
+      entries={overrides.entries ?? [highlightedEntry]}
       highlightedIndex={0}
       query=""
-      hasVault
+      hasVault={overrides.hasVault ?? true}
       inputRef={{ current: null }}
       activeVaultId="vault-1"
       preview={preview}
-      previewState={null}
+      previewState={overrides.previewState ?? null}
       highlightedEntry={highlightedEntry}
       appearance={DEFAULT_APPEARANCE}
       onQueryChange={() => {}}
@@ -29,6 +34,35 @@ function renderPicker(
     />,
   );
 }
+
+test('renders the no-vault and empty-results list states', () => {
+  const entry: VaultEntry = {
+    path: 'notes/example.md',
+    name: 'example.md',
+    kind: 'note',
+    isDirectory: false,
+    peek: '',
+  };
+  assert.match(
+    renderPicker(entry, null, { hasVault: false }),
+    /Choose a vault from the file explorer first/,
+  );
+  assert.match(renderPicker(entry, null, { entries: [] }), /No matching files/);
+});
+
+test('renders the loading preview state', () => {
+  const entry: VaultEntry = {
+    path: 'notes/example.md',
+    name: 'example.md',
+    kind: 'note',
+    isDirectory: false,
+    peek: '',
+  };
+  assert.match(
+    renderPicker(entry, null, { previewState: 'loading' }),
+    /Loading preview/,
+  );
+});
 
 test('renders the image preview pane for a highlighted image entry', () => {
   const entry: VaultEntry = {

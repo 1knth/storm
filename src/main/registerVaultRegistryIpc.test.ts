@@ -8,7 +8,7 @@ import type { VaultService } from '../vault/vaultService';
 const event = {};
 
 function setup() {
-  const handlers = new Map<string, (...args: any[]) => unknown>();
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const calls: unknown[][] = [];
   const vault = { id: 'vault-1', path: '/vault' };
   const registry = {
@@ -93,7 +93,7 @@ function setup() {
 }
 
 const invoke = (
-  handlers: Map<string, (...args: any[]) => unknown>,
+  handlers: Map<string, (...args: unknown[]) => unknown>,
   channel: string,
   ...args: unknown[]
 ) => handlers.get(channel)!(event, ...args);
@@ -159,10 +159,8 @@ test('rejects unknown vaults without selecting or watching', async () => {
 });
 
 test('does not persist active state or watch if selecting fails', async () => {
-  const { handlers, calls } = setup();
-  const select = handlers.get('vault:registry-activate')!;
   // A failing service is injected by replacing the captured handler's dependency in a separate registration.
-  const failures = new Map<string, (...args: any[]) => unknown>();
+  const failures = new Map<string, (...args: unknown[]) => unknown>();
   const registry = {
     list: async () => ({ vaults: [{ id: 'vault-1', path: '/vault' }] }),
   };
@@ -185,7 +183,6 @@ test('does not persist active state or watch if selecting fails', async () => {
       clearWatchedVaultId: () => {},
     },
   );
-  void select;
   await assert.rejects(
     failures.get('vault:registry-activate')!(
       event,
@@ -193,7 +190,6 @@ test('does not persist active state or watch if selecting fails', async () => {
     ) as Promise<unknown>,
     /selection failed/,
   );
-  assert.deepEqual(calls, []);
 });
 
 test('waits for pending writes before unloading and clearing selection', async () => {

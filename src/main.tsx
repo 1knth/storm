@@ -1341,14 +1341,10 @@ function App() {
   const closeTab = async (target: TabSnapshot) => {
     if (navigationBusy.current) return;
     const targetId = getTabId(target);
+    const transition = closeTabTransition(tabs, targetId, activeId, getTabId);
     if (activeVaultId) visitedVaults.current.add(activeVaultId);
-    if (targetId !== activeId) {
-      const { remaining } = closeTabTransition(
-        tabs,
-        targetId,
-        activeId,
-        getTabId,
-      );
+    if (!transition.wasActive) {
+      const { remaining } = transition;
       const normalized = normalizeTabGroupState(
         remaining,
         groupsRef.current,
@@ -1371,12 +1367,7 @@ function App() {
     navigationBusy.current = true;
     try {
       if (!(await editorRef.current?.flush())) return;
-      const { remaining, nextActive } = closeTabTransition(
-        tabs,
-        targetId,
-        activeId,
-        getTabId,
-      );
+      const { remaining, nextActive } = transition;
       if (nextActive) activateTab(nextActive);
       else {
         ++noteRequestId.current;

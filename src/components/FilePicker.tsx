@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import type { Appearance } from '../appearance';
 import type { VaultEntry } from '../shared/types';
 import AssetPreviewPane from './AssetPreviewDialog';
@@ -39,6 +39,72 @@ export default function FilePicker({
   onOpenWikiNote,
   onClose,
 }: FilePickerProps) {
+  let fileList: ReactNode;
+  if (!hasVault) {
+    fileList = (
+      <li className="p-4 text-sm text-white/60">
+        Choose a vault from the file explorer first.
+      </li>
+    );
+  } else if (entries.length === 0) {
+    fileList = (
+      <li className="p-4 text-sm text-white/60">No matching files.</li>
+    );
+  } else {
+    fileList = entries.map((entry, index) => (
+      <li key={entry.path}>
+        <button
+          type="button"
+          onMouseEnter={() => onHighlight(index)}
+          onClick={() => {
+            void Promise.resolve(onOpen(entry)).then(onClose);
+          }}
+          className={`app-popup-row w-full px-3 py-2 text-left text-sm ${index === highlightedIndex ? 'bg-white/10' : ''}`}
+        >
+          <span className="block truncate">{entry.name}</span>
+          <span className="block truncate text-xs text-white/45">
+            {entry.path}
+          </span>
+        </button>
+      </li>
+    ));
+  }
+
+  let previewContent: ReactNode;
+  if (previewState === 'loading') {
+    previewContent = (
+      <p className="p-4 text-sm text-white/50">Loading preview…</p>
+    );
+  } else if (previewState === 'error') {
+    previewContent = (
+      <p className="p-4 text-sm text-white/50">Could not load this file.</p>
+    );
+  } else if (highlightedEntry?.kind === 'image' && activeVaultId) {
+    previewContent = (
+      <AssetPreviewPane
+        key={`${activeVaultId}:${highlightedEntry.path}`}
+        vaultId={activeVaultId}
+        relativePath={highlightedEntry.path}
+        filename={highlightedEntry.name}
+      />
+    );
+  } else if (preview) {
+    previewContent = (
+      <MarkdownPreview
+        compact
+        markdown={preview.markdown}
+        vaultId={activeVaultId ?? ''}
+        notePath={preview.path}
+        onOpenNote={(target) => onOpenWikiNote(target, preview.path)}
+        appearance={appearance}
+      />
+    );
+  } else {
+    previewContent = (
+      <p className="p-4 text-sm text-white/50">Select a file to preview.</p>
+    );
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/20 p-8 pt-[15vh]"
@@ -70,31 +136,7 @@ export default function FilePicker({
         />
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           <ul className="min-h-0 max-h-[30vh] w-full overflow-y-auto p-2 md:max-h-none md:w-1/2 md:border-r md:border-white/10">
-            {!hasVault ? (
-              <li className="p-4 text-sm text-white/60">
-                Choose a vault from the file explorer first.
-              </li>
-            ) : entries.length === 0 ? (
-              <li className="p-4 text-sm text-white/60">No matching files.</li>
-            ) : (
-              entries.map((entry, index) => (
-                <li key={entry.path}>
-                  <button
-                    type="button"
-                    onMouseEnter={() => onHighlight(index)}
-                    onClick={() => {
-                      void Promise.resolve(onOpen(entry)).then(onClose);
-                    }}
-                    className={`app-popup-row w-full px-3 py-2 text-left text-sm ${index === highlightedIndex ? 'bg-white/10' : ''}`}
-                  >
-                    <span className="block truncate">{entry.name}</span>
-                    <span className="block truncate text-xs text-white/45">
-                      {entry.path}
-                    </span>
-                  </button>
-                </li>
-              ))
-            )}
+            {fileList}
           </ul>
           <section
             aria-label="File preview"
@@ -103,33 +145,7 @@ export default function FilePicker({
             <h3 className="shrink-0 border-b border-white/10 px-4 py-3 text-xs font-medium text-white/50">
               Preview
             </h3>
-            {previewState === 'loading' ? (
-              <p className="p-4 text-sm text-white/50">Loading preview…</p>
-            ) : previewState === 'error' ? (
-              <p className="p-4 text-sm text-white/50">
-                Could not load this file.
-              </p>
-            ) : highlightedEntry?.kind === 'image' && activeVaultId ? (
-              <AssetPreviewPane
-                key={`${activeVaultId}:${highlightedEntry.path}`}
-                vaultId={activeVaultId}
-                relativePath={highlightedEntry.path}
-                filename={highlightedEntry.name}
-              />
-            ) : preview ? (
-              <MarkdownPreview
-                compact
-                markdown={preview.markdown}
-                vaultId={activeVaultId ?? ''}
-                notePath={preview.path}
-                onOpenNote={(target) => onOpenWikiNote(target, preview.path)}
-                appearance={appearance}
-              />
-            ) : (
-              <p className="p-4 text-sm text-white/50">
-                Select a file to preview.
-              </p>
-            )}
+            {previewContent}
           </section>
         </div>
         <p className="shrink-0 border-t border-white/10 px-5 py-3 text-xs text-white/40">
