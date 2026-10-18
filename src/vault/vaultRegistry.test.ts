@@ -5,6 +5,14 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { VaultRegistry } from './vaultRegistry';
 import { groupColorForId } from '../shared/groupColors';
+import { serializeTabLayout } from '../components/Editor/savedTabLayout';
+import { getTabId } from '../components/Editor/tabGroups';
+import type {
+  ImageTabSnapshot,
+  NoteTabSnapshot,
+  TabSnapshot,
+} from '../components/Editor/Editor';
+import { EditorState } from '@codemirror/state';
 
 async function temporaryDirectory(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'storm-vault-registry-'));
@@ -63,6 +71,146 @@ test('serializes concurrent group and saved-layout mutations without losing eith
     const reloaded = new VaultRegistry(temp);
     assert.equal((await reloaded.listGroups())[0].id, group.id);
     assert.deepEqual(await reloaded.getTabLayout(vault.id), layout);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('saves and reloads serialized active image checkpoints through vault validation', async () => {
+  const temp = await temporaryDirectory();
+  try {
+    const vaultPath = path.join(temp, 'vault');
+    await mkdir(path.join(vaultPath, 'notes', 'images'), { recursive: true });
+    const registry = new VaultRegistry(temp);
+    const { vault } = await registry.add(vaultPath);
+    const image: ImageTabSnapshot = {
+      kind: 'image',
+      vaultId: vault.id,
+      path: 'notes/images/Pasted image 20261008152748.png',
+      filename: 'Pasted image 20261008152748.png',
+    };
+    const noteData = {
+      path: 'notes/readme.md',
+      content: 'checkpoint note',
+      revision: 'revision-1',
+    };
+    const note: NoteTabSnapshot = {
+      kind: 'note',
+      note: noteData,
+      vaultPath,
+      vaultId: vault.id,
+      state: EditorState.create({ doc: noteData.content }),
+      scrollTop: 0,
+    };
+    const group = {
+      id: 'images',
+      name: 'Images',
+      collapsed: true,
+      color: 'purple' as const,
+    };
+    const cases: {
+      name: string;
+      tabs: TabSnapshot[];
+      groups: (typeof group)[];
+      assignments: Record<string, string>;
+    }[] = [
+      { name: 'image only', tabs: [image], groups: [], assignments: {} },
+      {
+        name: 'mixed with image active',
+        tabs: [note, image],
+        groups: [],
+        assignments: {},
+      },
+      {
+        name: 'grouped image active',
+        tabs: [image, note],
+        groups: [group],
+        assignments: { [getTabId(image)]: group.id },
+      },
+    ];
+
+    for (const scenario of cases) {
+      const expected = serializeTabLayout(
+        scenario.tabs,
+        getTabId(image),
+        scenario.groups,
+        scenario.assignments,
+        new Map(),
+      );
+      await registry.saveTabLayout(vault.id, expected);
+      const reloaded = await new VaultRegistry(temp).getTabLayout(vault.id);
+      assert.deepEqual(reloaded, expected, scenario.name);
+      assert.equal(
+        reloaded?.activeTab,
+        JSON.stringify([vault.id, image.path]),
+        scenario.name,
+      );
+      assert.equal(
+        reloaded?.tabs.some(
+          (tab) => tab.kind === 'image' && tab.path === image.path,
+        ),
+        true,
+        scenario.name,
+      );
+      assert.deepEqual(
+        reloaded?.assignments,
+        scenario.assignments,
+        scenario.name,
+      );
+    }
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('persists image tab layouts and rejects unsafe or duplicate image paths', async () => {
+  const temp = await temporaryDirectory();
+  try {
+    const vaultPath = path.join(temp, 'vault');
+    await mkdir(vaultPath);
+    const registry = new VaultRegistry(temp);
+    const { vault } = await registry.add(vaultPath);
+    const imageId = JSON.stringify([vault.id, 'assets/photo.png']);
+    const layout = {
+      version: 1 as const,
+      tabs: [
+        { kind: 'image' as const, path: 'assets/photo.png' },
+        {
+          kind: 'note' as const,
+          path: 'notes.md',
+          anchor: 2,
+          head: 4,
+          scrollTop: 16,
+        },
+      ],
+      activeTab: imageId,
+      groups: [
+        { id: 'media', name: 'Media', collapsed: true, color: 'purple' },
+      ],
+      assignments: { [imageId]: 'media' },
+    };
+    await registry.saveTabLayout(vault.id, layout);
+    assert.deepEqual(
+      await new VaultRegistry(temp).getTabLayout(vault.id),
+      layout,
+    );
+    await assert.rejects(
+      registry.saveTabLayout(vault.id, {
+        ...layout,
+        tabs: [{ kind: 'image', path: '../outside.png' }],
+      }),
+      /Invalid saved tab layout/,
+    );
+    await assert.rejects(
+      registry.saveTabLayout(vault.id, {
+        ...layout,
+        tabs: [
+          { kind: 'image', path: 'assets/photo.png' },
+          { kind: 'image', path: 'assets/photo.png' },
+        ],
+      }),
+      /Invalid saved tab layout/,
+    );
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

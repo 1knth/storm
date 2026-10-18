@@ -25,6 +25,7 @@ import { createMarkdownSyntaxHighlighting } from './markdownHighlighting';
 import type { Appearance } from '../../appearance';
 import { rgbaColor } from '../../appearance';
 import MarkdownPreview from './MarkdownPreview';
+import AssetPreviewPane from '../AssetPreviewDialog';
 import { taskMarkerChange, taskToggleMatchesBinding } from './markdownTasks';
 import type { TaskTogglePayload } from './markdownTasks';
 import { formatMarkdownSelection } from './markdownFormatting';
@@ -68,8 +69,14 @@ export type NoteTabSnapshot = {
   state: EditorState;
   scrollTop: number;
 };
+export type ImageTabSnapshot = {
+  kind: 'image';
+  vaultId: string;
+  path: string;
+  filename: string;
+};
 export type EmptyTabSnapshot = { kind: 'empty'; id: string };
-export type TabSnapshot = NoteTabSnapshot | EmptyTabSnapshot;
+export type TabSnapshot = NoteTabSnapshot | ImageTabSnapshot | EmptyTabSnapshot;
 export type EditorHandle = {
   flush: () => Promise<boolean>;
   snapshot: () => TabSnapshot | null;
@@ -92,6 +99,7 @@ type EditorProps = {
   onToggleReadingMode?: () => void;
   commandHeld?: boolean;
   appearance: Appearance;
+  imageAsset?: { vaultId: string; path: string; filename: string } | null;
 };
 
 const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
@@ -106,6 +114,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     commandHeld = false,
     appearance,
     tabsVisible,
+    imageAsset = null,
   },
   ref,
 ) {
@@ -584,7 +593,12 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         scrollTop: 0,
       }),
     focus: () => {
-      if (readingMode && previewScrollRef.current) {
+      if (imageAsset) {
+        host.current
+          ?.closest('[data-pane="editor"]')
+          ?.querySelector<HTMLElement>('[data-image-viewer="true"]')
+          ?.focus({ preventScroll: true });
+      } else if (readingMode && previewScrollRef.current) {
         previewScrollRef.current.focus({ preventScroll: true });
       } else if (hasActiveNote) viewRef.current?.focus();
       else if (current.current) pendingFocus.current = true;
@@ -1031,8 +1045,15 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             </div>
           </div>
           <div className="flex w-full min-h-0 min-w-0 flex-1 overflow-hidden">
+            {imageAsset ? (
+              <AssetPreviewPane
+                vaultId={imageAsset.vaultId}
+                relativePath={imageAsset.path}
+                filename={imageAsset.filename}
+              />
+            ) : null}
             <div
-              className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${!hasActiveNote ? 'hidden' : ''}`}
+              className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${!hasActiveNote || imageAsset ? 'hidden' : ''}`}
             >
               <div
                 ref={host}
@@ -1080,7 +1101,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 onUserScroll={cancelScrollAnimations}
                 appearance={appearance}
               />
-            ) : !hasActiveNote ? (
+            ) : !hasActiveNote && !imageAsset ? (
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">
                 <div className="empty-editor-wordmark text-2xl font-medium tracking-wide text-white/50">
                   storm

@@ -24,6 +24,7 @@ export type SavedTabLayout = {
         head: number;
         scrollTop: number;
       }
+    | { kind: 'image'; path: string }
     | { kind: 'empty'; id: string }
   >;
   activeTab: string | null;
@@ -97,9 +98,18 @@ export interface CreateEntryRequest {
 export interface VaultEntry {
   path: string;
   name: string;
+  kind: 'note' | 'image' | 'directory';
   isDirectory: boolean;
   peek: string;
+  mimeType?: string;
 }
+
+export interface VaultAssetRequest {
+  vaultId: string;
+  relativePath: string;
+}
+
+export type VaultAssetResult = VaultImageResult;
 
 export interface DeleteEntryResult {
   deleted: boolean;
@@ -155,6 +165,7 @@ declare global {
       readNote: (relativePath: string) => Promise<NoteData>;
       saveNote: (request: SaveNoteRequest) => Promise<SaveNoteResult>;
       readImage: (request: VaultImageRequest) => Promise<VaultImageResult>;
+      readAsset: (request: VaultAssetRequest) => Promise<VaultAssetResult>;
       pasteImage: (request: PasteImageRequest) => Promise<PasteImageResult>;
       resolveNoteLink: (
         request: VaultNoteLinkRequest,

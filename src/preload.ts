@@ -7,6 +7,8 @@ import type {
   RegisteredVault,
   VaultImageRequest,
   VaultImageResult,
+  VaultAssetRequest,
+  VaultAssetResult,
   PasteImageRequest,
   PasteImageResult,
   VaultNoteLinkRequest,
@@ -97,6 +99,8 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.invoke('vault:save-note', request),
   readImage: (request: VaultImageRequest): Promise<VaultImageResult> =>
     ipcRenderer.invoke('vault:read-image', request),
+  readAsset: (request: VaultAssetRequest): Promise<VaultAssetResult> =>
+    ipcRenderer.invoke('vault:read-asset', request),
   pasteImage: (request: PasteImageRequest): Promise<PasteImageResult> =>
     ipcRenderer.invoke('vault:paste-image', request),
   resolveNoteLink: (

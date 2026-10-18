@@ -421,7 +421,11 @@ export default function TabBar({
     const id = getTabId(tab);
     const index = order.findIndex((item) => getTabId(item) === id);
     const label =
-      tab.kind === 'note' ? tab.note.path.split('/').at(-1) : 'New tab';
+      tab.kind === 'note'
+        ? tab.note.path.split('/').at(-1)
+        : tab.kind === 'image'
+          ? tab.filename
+          : 'New tab';
     return (
       <div
         ref={(element) => {
@@ -496,7 +500,7 @@ export default function TabBar({
           onClick={() => onSelect(tab)}
           aria-current={activeId === id ? 'page' : undefined}
           className="flex min-w-0 flex-1 items-center gap-2 truncate py-1.5 text-[13px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/35"
-          title={tab.kind === 'note' ? tab.note.path : 'New tab'}
+          title={tab.kind === 'note' ? tab.note.path : label}
         >
           <FaRegFile
             aria-hidden="true"

@@ -5,7 +5,7 @@ import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
 import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
-import { readVaultImage } from './vault/vaultAssets';
+import { readVaultAsset, readVaultImage } from './vault/vaultAssets';
 import { savePastedImage } from './vault/pasteImage';
 import { VaultWriteBarrier } from './vault/writeBarrier';
 import { resolveVaultNote } from './vault/vaultNoteResolver';
@@ -365,6 +365,27 @@ ipcMain.handle('vault:paste-image', async (_event, request: unknown) => {
       base64,
     });
   });
+});
+
+ipcMain.handle('vault:read-asset', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    throw new Error('Invalid asset request');
+  const { vaultId, relativePath } = request as Record<string, unknown>;
+  if (typeof vaultId !== 'string' || typeof relativePath !== 'string')
+    throw new Error('Invalid asset request');
+  const vault = await vaultRegistry.getById(vaultId);
+  if (!vault) throw new Error('Unknown vault');
+  try {
+    return { ok: true, ...(await readVaultAsset(vault.path, relativePath)) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const reason = /not found|ENOENT/i.test(message)
+      ? 'not-found'
+      : /unsupported|content does not match/i.test(message)
+        ? 'unsupported'
+        : 'unavailable';
+    return { ok: false, reason };
+  }
 });
 
 ipcMain.handle('vault:read-image', async (_event, request: unknown) => {

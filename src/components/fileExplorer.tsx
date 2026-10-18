@@ -28,6 +28,8 @@ function ShortcutHint({
 
 type FileExplorerProps = {
   onNoteSelect: (path: string, focusEditor?: boolean) => void;
+  onImageSelect: (path: string) => void;
+  vaultId: string | null;
   onCreate: (kind: 'note' | 'folder', parentPath: string) => void;
   onCreateNote: () => void;
   onDeleteEntry?: (path: string, kind: 'note' | 'folder') => void;
@@ -59,6 +61,8 @@ type FileExplorerProps = {
 
 export default function FileExplorer({
   onNoteSelect,
+  onImageSelect,
+  vaultId,
   onCreate,
   onDeleteEntry,
   creationPending,
@@ -134,6 +138,7 @@ export default function FileExplorer({
     const row = target.closest<HTMLElement>('[data-entry-path]');
     const path = row?.dataset.entryPath ?? '';
     const isFolder = row?.dataset.entryDirectory === 'true';
+    const isImage = row?.dataset.entryKind === 'image';
     const returnFocusTo =
       row?.querySelector<HTMLElement>('button') ??
       target.closest<HTMLElement>('[data-pane="explorer"]');
@@ -141,7 +146,8 @@ export default function FileExplorer({
       position,
       returnFocusTo,
       parent: !path || isFolder ? path : path.split('/').slice(0, -1).join('/'),
-      target: path ? { path, kind: isFolder ? 'folder' : 'note' } : null,
+      target:
+        path && !isImage ? { path, kind: isFolder ? 'folder' : 'note' } : null,
     });
   };
 
@@ -204,7 +210,10 @@ export default function FileExplorer({
               }
             } else if (event.key !== 'h') {
               event.preventDefault();
-              if (event.key === 'Enter')
+              if (row.dataset.entryKind === 'image') {
+                if (event.key === 'Enter')
+                  row.querySelector<HTMLButtonElement>('button')?.click();
+              } else if (event.key === 'Enter')
                 onNoteSelect(row.dataset.entryPath ?? '', true);
               else onNoteSelect(row.dataset.entryPath ?? '', false);
             } else {
@@ -316,6 +325,8 @@ export default function FileExplorer({
                 depth={0}
                 selectedId={selectedPath}
                 onNoteClick={onNoteSelect}
+                onImageClick={onImageSelect}
+                vaultId={vaultId}
               />
             ))}
         </ul>

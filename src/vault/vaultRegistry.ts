@@ -41,7 +41,10 @@ interface Settings extends Record<string, unknown> {
 
 const MAX_GROUP_NAME_LENGTH = 80;
 
-function isSavedTabLayout(value: unknown): value is SavedTabLayout {
+function isSavedTabLayout(
+  value: unknown,
+  vaultId: string,
+): value is SavedTabLayout {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const layout = value as SavedTabLayout;
   if (
@@ -66,6 +69,17 @@ function isSavedTabLayout(value: unknown): value is SavedTabLayout {
       )
         return false;
       ids.add(tab.id);
+    } else if (tab.kind === 'image') {
+      if (
+        typeof tab.path !== 'string' ||
+        !tab.path ||
+        tab.path.length > 1000 ||
+        tab.path.startsWith('/') ||
+        tab.path.split(/[\\/]/).includes('..') ||
+        ids.has(JSON.stringify([vaultId, tab.path]))
+      )
+        return false;
+      ids.add(JSON.stringify([vaultId, tab.path]));
     } else if (tab.kind === 'note') {
       if (
         typeof tab.path !== 'string' ||
@@ -329,7 +343,7 @@ export class VaultRegistry {
       await this.load();
       if (!(this.settings.vaults ?? []).some((vault) => vault.id === vaultId))
         throw new Error('Unknown vault');
-      if (!isSavedTabLayout(layout))
+      if (!isSavedTabLayout(layout, vaultId))
         throw new Error('Invalid saved tab layout');
       const layouts = {
         ...this.settings.savedTabLayouts,

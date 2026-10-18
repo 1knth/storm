@@ -78,6 +78,44 @@ function verifyImage(bytes: Buffer, extension: string): string {
   return mime;
 }
 
+export async function readVaultAsset(
+  rootPath: string,
+  relativePath: unknown,
+): Promise<VaultImageResult> {
+  const root = await realpath(rootPath);
+  if (
+    typeof relativePath !== 'string' ||
+    !relativePath ||
+    relativePath.length > 2048 ||
+    path.isAbsolute(relativePath)
+  )
+    throw new Error('Invalid asset path');
+  const segments = relativePath.split(/[\\/]+/);
+  if (
+    segments.some((segment) => !segment || segment === '.' || segment === '..')
+  )
+    throw new Error('Invalid asset path');
+  const target = path.resolve(root, ...segments);
+  if (!inside(root, target)) throw new Error('Asset path is outside the vault');
+  const extension = path.extname(target).toLowerCase();
+  if (!MIME_BY_EXTENSION[extension]) throw new Error('Unsupported image type');
+  const info = await lstat(target);
+  if (!info.isFile() || info.isSymbolicLink())
+    throw new Error('Asset is not a regular file');
+  const realTarget = await realpath(target);
+  if (!inside(root, realTarget))
+    throw new Error('Asset path is outside the vault');
+  if (info.size > MAX_BYTES)
+    throw new Error('Image exceeds the 10 MB size limit');
+  const content = await readFile(realTarget);
+  if (content.length > MAX_BYTES)
+    throw new Error('Image exceeds the 10 MB size limit');
+  return {
+    mimeType: verifyImage(content, extension),
+    base64: content.toString('base64'),
+  };
+}
+
 export async function readVaultImage(
   rootPath: string,
   request: Omit<VaultImageRequest, 'vaultId'>,

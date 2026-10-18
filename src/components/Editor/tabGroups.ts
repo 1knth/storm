@@ -14,7 +14,11 @@ export function tabGroupColor(group: TabGroup, _index: number): TabGroupColor {
 }
 export type TabAssignments = Record<string, string>;
 export const getTabId = (tab: TabSnapshot) =>
-  tab.kind === 'note' ? tab.note.path : tab.id;
+  tab.kind === 'note'
+    ? tab.note.path
+    : tab.kind === 'image'
+      ? JSON.stringify([tab.vaultId, tab.path])
+      : tab.id;
 
 export const hasOpenTabs = (tabs: TabSnapshot[]) => tabs.length > 0;
 
