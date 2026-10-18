@@ -36,6 +36,11 @@ export type SavedTabLayout = {
   assignments: Record<string, string>;
 };
 
+export interface VaultChangeEvent {
+  vaultId: string;
+  revision: number;
+}
+
 export interface NoteData {
   path: string;
   content: string;
@@ -118,6 +123,9 @@ declare global {
       saveTabLayout: (vaultId: string, layout: SavedTabLayout) => Promise<void>;
       getTabLayout: (vaultId: string) => Promise<SavedTabLayout | null>;
       onRestoreTabs: (callback: () => void) => () => void;
+      onVaultChanged: (
+        listener: (event: VaultChangeEvent) => void,
+      ) => () => void;
       groupFolderChoose: () => Promise<{
         selectionId: string;
         name: string;

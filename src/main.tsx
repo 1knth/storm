@@ -254,6 +254,37 @@ function App() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [notes, setNotes] = useState<VaultEntry[]>([]);
+  const notesRefreshRequest = useRef(0);
+  const pendingVaultRefresh = useRef<string | null>(null);
+  const refreshNotes = async (vaultId: string) => {
+    const requestId = ++notesRefreshRequest.current;
+    try {
+      const listed = await window.vault.listNotes();
+      if (
+        requestId === notesRefreshRequest.current &&
+        activeVaultIdRef.current === vaultId
+      )
+        setNotes(listed);
+    } catch (error) {
+      if (
+        requestId === notesRefreshRequest.current &&
+        activeVaultIdRef.current === vaultId
+      )
+        setVaultError(
+          `Could not refresh the file list: ${error instanceof Error ? error.message : String(error)}`,
+        );
+    }
+  };
+  useEffect(() => {
+    return window.vault.onVaultChanged(({ vaultId }) => {
+      if (activeVaultIdRef.current !== vaultId) return;
+      if (vaultTransition.current) {
+        pendingVaultRefresh.current = vaultId;
+        return;
+      }
+      void refreshNotes(vaultId);
+    });
+  }, []);
   const [creation, setCreation] = useState<{
     kind: 'note' | 'folder';
     vaultId: string;
@@ -583,14 +614,8 @@ function App() {
           : await window.vault.createFolder(request);
       created = true;
       setCreation(null);
-      if (activeVaultId === creation.vaultId) {
-        try {
-          setNotes(await window.vault.listNotes());
-        } catch (error) {
-          setVaultError(
-            `Created successfully, but could not refresh the file list: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+      if (activeVaultIdRef.current === creation.vaultId) {
+        await refreshNotes(creation.vaultId);
         if (creation.kind === 'note') void selectNote(entry.path);
       }
     } catch (error) {
@@ -1067,15 +1092,7 @@ function App() {
           `Deleted successfully, but could not save tab layout: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-      if (activeVaultIdRef.current === vaultId) {
-        try {
-          setNotes(await window.vault.listNotes());
-        } catch (error) {
-          setVaultError(
-            `Deleted successfully, but could not refresh the file list: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
+      if (activeVaultIdRef.current === vaultId) await refreshNotes(vaultId);
     } catch (error) {
       notifyError(
         error instanceof Error ? error.message : 'Unable to delete entry.',
@@ -1351,6 +1368,7 @@ function App() {
         throw new Error(
           'Vault folder is unavailable. Choose or move the folder to recover.',
         );
+      ++notesRefreshRequest.current;
       const listed = await window.vault.listNotes();
       const session = sessions.current.get(id);
       let restoredTabs: TabSnapshot[] = [];
@@ -1414,6 +1432,7 @@ function App() {
       setActiveId(restoredId);
       setActivePath(activeTab?.kind === 'note' ? activeTab.note.path : null);
       setActiveVaultId(id);
+      activeVaultIdRef.current = id;
       setVaultPath(activated.path);
       setNotes(listed);
       if (focusExplorer) pendingExplorerFocus.current = true;
@@ -1433,6 +1452,12 @@ function App() {
       navigationBusy.current = false;
       vaultTransition.current = false;
       setEntriesLoading(false);
+      if (pendingVaultRefresh.current) {
+        const pendingVaultId = pendingVaultRefresh.current;
+        pendingVaultRefresh.current = null;
+        if (activeVaultIdRef.current === pendingVaultId)
+          void refreshNotes(pendingVaultId);
+      }
     }
   };
 
@@ -1537,6 +1562,7 @@ function App() {
       }
       await window.vault.registryUnloadAll();
       ++noteRequestId.current;
+      ++notesRefreshRequest.current;
       ++pickerPreviewRequest.current;
       editorRef.current?.clear();
       sessions.current.clear();
@@ -1627,9 +1653,14 @@ function App() {
               'Vault folder is unavailable. Choose or move the folder to recover.',
             );
           setActiveVaultId(active);
+          activeVaultIdRef.current = active;
           setVaultPath(result.path);
           setEntriesLoading(true);
-          setNotes(await window.vault.listNotes());
+          const listRequestId = ++notesRefreshRequest.current;
+          const listed = await window.vault.listNotes();
+          if (current && listRequestId === notesRefreshRequest.current) {
+            setNotes(listed);
+          }
         } catch (error) {
           if (current)
             setVaultError(
