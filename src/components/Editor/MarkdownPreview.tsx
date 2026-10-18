@@ -41,6 +41,7 @@ type Props = {
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   onScroll?: () => void;
   onUserScroll?: () => void;
+  onReadingKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
   appearance: Appearance;
 };
 
@@ -328,6 +329,7 @@ function MarkdownPreview({
   scrollRef,
   onScroll,
   onUserScroll,
+  onReadingKeyDown,
   appearance,
 }: Props) {
   return (
@@ -347,7 +349,9 @@ function MarkdownPreview({
           <ImageContext.Provider value={{ vaultId, notePath }}>
             <div
               ref={scrollRef}
+              tabIndex={compact ? 0 : undefined}
               onScroll={onScroll}
+              onKeyDownCapture={onReadingKeyDown}
               onWheelCapture={onUserScroll}
               onPointerDownCapture={onUserScroll}
               onTouchStartCapture={onUserScroll}
