@@ -6,8 +6,8 @@ import VaultSidebar from './components/VaultSidebar';
 import type { RegisteredVault, VaultEntry, VaultGroup } from './shared/types';
 import { deriveVisibleVaults } from './shared/vaultGroups';
 import Editor from './components/Editor/Editor';
-import MarkdownPreview from './components/Editor/MarkdownPreview';
-import AssetPreviewPane from './components/AssetPreviewDialog';
+import FilePicker from './components/FilePicker';
+import { filterPickerEntries } from './components/filePickerEntries';
 import type { EditorHandle, TabSnapshot } from './components/Editor/Editor';
 import TabBar from './components/Editor/TabBar';
 import {
@@ -20,6 +20,7 @@ import {
   visibleTabOrder,
 } from './components/Editor/tabGroups';
 import type { TabAssignments, TabGroup } from './components/Editor/tabGroups';
+import { closeTabTransition } from './components/Editor/tabTransitions';
 import { serializeTabLayout } from './components/Editor/savedTabLayout';
 import { checkpointErrorMessage } from './components/Editor/checkpointError';
 import { ToastProvider, useToast } from './components/Toast';
@@ -495,11 +496,7 @@ function App() {
     requestAnimationFrame(() => pickerInputRef.current?.focus());
   }, [pickerOpen]);
 
-  const matchingNotes = notes
-    .filter((note) => !note.isDirectory)
-    .filter((note) =>
-      note.path.toLowerCase().includes(query.trim().toLowerCase()),
-    );
+  const matchingNotes = filterPickerEntries(notes, query);
 
   const highlightedNote = matchingNotes[highlightedIndex];
   const openPickerEntry = (entry: VaultEntry) => {
@@ -1344,9 +1341,10 @@ function App() {
   const closeTab = async (target: TabSnapshot) => {
     if (navigationBusy.current) return;
     const targetId = getTabId(target);
+    const transition = closeTabTransition(tabs, targetId, activeId, getTabId);
     if (activeVaultId) visitedVaults.current.add(activeVaultId);
-    if (targetId !== activeId) {
-      const remaining = tabs.filter((tab) => getTabId(tab) !== targetId);
+    if (!transition.wasActive) {
+      const { remaining } = transition;
       const normalized = normalizeTabGroupState(
         remaining,
         groupsRef.current,
@@ -1369,9 +1367,13 @@ function App() {
     navigationBusy.current = true;
     try {
       if (!(await editorRef.current?.flush())) return;
-      const remaining = tabs.filter((tab) => getTabId(tab) !== targetId);
-      const next = remaining.at(-1);
-      if (next) activateTab(next);
+      const { remaining, nextActive } = closeTabTransition(
+        tabsRef.current,
+        targetId,
+        activeId,
+        getTabId,
+      );
+      if (nextActive) activateTab(nextActive);
       else {
         ++noteRequestId.current;
         editorRef.current?.clear();
@@ -2058,112 +2060,26 @@ function App() {
         />
       </div>
       {pickerOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/20 p-8 pt-[15vh]"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setPickerOpen(false);
+        <FilePicker
+          entries={matchingNotes}
+          highlightedIndex={highlightedIndex}
+          query={query}
+          hasVault={Boolean(vaultPath)}
+          inputRef={pickerInputRef}
+          activeVaultId={activeVaultId}
+          preview={pickerPreview}
+          previewState={pickerPreviewState}
+          highlightedEntry={highlightedNote}
+          appearance={appearance}
+          onQueryChange={(value) => {
+            setQuery(value);
+            setHighlightedIndex(0);
           }}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="open-file-title"
-            className="app-popup-surface command-palette-surface flex max-h-[80vh] w-full max-w-5xl flex-col overflow-hidden"
-          >
-            <h2 id="open-file-title" className="sr-only">
-              Open file
-            </h2>
-            <input
-              ref={pickerInputRef}
-              aria-label="Search files"
-              placeholder={
-                vaultPath
-                  ? 'Search files by name or path…'
-                  : 'Choose a vault to open files'
-              }
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setHighlightedIndex(0);
-              }}
-              disabled={!vaultPath}
-              className="app-input w-full rounded-none border-0 border-b border-white/10 bg-transparent px-5 py-4 outline-none placeholder:text-white/40 focus-visible:border-white/10"
-            />
-            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-              <ul className="min-h-0 max-h-[30vh] w-full overflow-y-auto p-2 md:max-h-none md:w-1/2 md:border-r md:border-white/10">
-                {!vaultPath ? (
-                  <li className="p-4 text-sm text-white/60">
-                    Choose a vault from the file explorer first.
-                  </li>
-                ) : matchingNotes.length === 0 ? (
-                  <li className="p-4 text-sm text-white/60">
-                    No matching files.
-                  </li>
-                ) : (
-                  matchingNotes.map((note, index) => (
-                    <li key={note.path}>
-                      <button
-                        type="button"
-                        onMouseEnter={() => setHighlightedIndex(index)}
-                        onClick={() => {
-                          void openPickerEntry(note).then(() =>
-                            setPickerOpen(false),
-                          );
-                        }}
-                        className={`app-popup-row w-full px-3 py-2 text-left text-sm ${index === highlightedIndex ? 'bg-white/10' : ''}`}
-                      >
-                        <span className="block truncate">{note.name}</span>
-                        <span className="block truncate text-xs text-white/45">
-                          {note.path}
-                        </span>
-                      </button>
-                    </li>
-                  ))
-                )}
-              </ul>
-              <section
-                aria-label="File preview"
-                className="flex min-h-[28vh] w-full min-w-0 flex-col overflow-hidden md:min-h-[50vh] md:w-1/2"
-              >
-                <h3 className="shrink-0 border-b border-white/10 px-4 py-3 text-xs font-medium text-white/50">
-                  Preview
-                </h3>
-                {pickerPreviewState === 'loading' ? (
-                  <p className="p-4 text-sm text-white/50">Loading preview…</p>
-                ) : pickerPreviewState === 'error' ? (
-                  <p className="p-4 text-sm text-white/50">
-                    Could not load this file.
-                  </p>
-                ) : highlightedNote?.kind === 'image' && activeVaultId ? (
-                  <AssetPreviewPane
-                    key={`${activeVaultId}:${highlightedNote.path}`}
-                    vaultId={activeVaultId}
-                    relativePath={highlightedNote.path}
-                    filename={highlightedNote.name}
-                  />
-                ) : pickerPreview ? (
-                  <MarkdownPreview
-                    compact
-                    markdown={pickerPreview.markdown}
-                    vaultId={activeVaultId ?? ''}
-                    notePath={pickerPreview.path}
-                    onOpenNote={(target) =>
-                      openWikiNote(target, pickerPreview.path)
-                    }
-                    appearance={appearance}
-                  />
-                ) : (
-                  <p className="p-4 text-sm text-white/50">
-                    Select a file to preview.
-                  </p>
-                )}
-              </section>
-            </div>
-            <p className="shrink-0 border-t border-white/10 px-5 py-3 text-xs text-white/40">
-              ↑↓ to navigate · Enter to open · Esc to close
-            </p>
-          </section>
-        </div>
+          onHighlight={setHighlightedIndex}
+          onOpen={openPickerEntry}
+          onOpenWikiNote={(target, fromPath) => openWikiNote(target, fromPath)}
+          onClose={() => setPickerOpen(false)}
+        />
       )}
       {creation && (
         <div

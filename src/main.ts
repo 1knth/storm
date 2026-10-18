@@ -16,6 +16,7 @@ import {
 } from './vault/vaultDeletion';
 import { confirmQuitAndFlush } from './quitConfirmation';
 import { VaultWatcher } from './vault/vaultWatcher';
+import { registerVaultRegistryIpc } from './main/registerVaultRegistryIpc';
 
 const vaultService = new VaultService();
 const vaultRegistry = new VaultRegistry(app.getPath('userData'));
@@ -265,87 +266,16 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('vault:registry-list', () => vaultRegistry.list());
-ipcMain.handle('vault:groups-list', () => vaultRegistry.listGroups());
-ipcMain.handle('vault:tab-layout-get', (_event, id: unknown) => {
-  if (typeof id !== 'string') throw new Error('Invalid vault ID');
-  return vaultRegistry.getTabLayout(id);
-});
-ipcMain.handle(
-  'vault:tab-layout-save',
-  (_event, id: unknown, layout: unknown) => {
-    if (typeof id !== 'string') throw new Error('Invalid vault ID');
-    return vaultRegistry.saveTabLayout(
-      id,
-      layout as import('./shared/types').SavedTabLayout,
-    );
-  },
-);
-ipcMain.handle('vault:group-create', (_event, name: unknown) => {
-  if (typeof name !== 'string') throw new Error('Invalid group name');
-  return vaultRegistry.createGroup(name);
-});
-ipcMain.handle('vault:group-rename', (_event, id: unknown, name: unknown) => {
-  if (typeof id !== 'string' || typeof name !== 'string')
-    throw new Error('Invalid group rename');
-  return vaultRegistry.renameGroup(id, name);
-});
-ipcMain.handle('vault:group-remove', (_event, id: unknown) => {
-  if (typeof id !== 'string') throw new Error('Invalid vault group ID');
-  return vaultRegistry.removeGroup(id);
-});
-ipcMain.handle(
-  'vault:group-set-vault',
-  (_event, vaultId: unknown, groupId: unknown) => {
-    if (
-      typeof vaultId !== 'string' ||
-      (groupId !== null && typeof groupId !== 'string')
-    )
-      throw new Error('Invalid vault group assignment');
-    return vaultRegistry.setVaultGroup(vaultId, groupId);
-  },
-);
-ipcMain.handle(
-  'vault:group-set-color',
-  (_event, id: unknown, color: unknown) => {
-    if (typeof id !== 'string') throw new Error('Invalid vault group ID');
-    return vaultRegistry.setGroupColor(id, color);
-  },
-);
-ipcMain.handle(
-  'vault:group-set-collapsed',
-  (_event, id: unknown, collapsed: unknown) => {
-    if (typeof id !== 'string' || typeof collapsed !== 'boolean')
-      throw new Error('Invalid group collapse state');
-    return vaultRegistry.setGroupCollapsed(id, collapsed);
-  },
-);
-ipcMain.handle('vault:registry-add', async (_event, directory: unknown) => {
-  if (typeof directory !== 'string') throw new Error('Invalid vault directory');
-  return vaultRegistry.add(directory);
-});
-ipcMain.handle('vault:registry-activate', async (_event, id: unknown) => {
-  if (typeof id !== 'string') throw new Error('Invalid vault ID');
-  const { vaults } = await vaultRegistry.list();
-  const selected = vaults.find((vault) => vault.id === id);
-  if (!selected) throw new Error('Unknown vault');
-  await vaultService.selectVault(selected.path);
-  await vaultRegistry.setActive(id);
-  await watchSelectedVault();
-  return { id, path: vaultService.getSelectedVaultPath() };
-});
-ipcMain.handle('vault:registry-remove', (_event, id: unknown) => {
-  if (typeof id !== 'string') throw new Error('Invalid vault ID');
-  return vaultRegistry.remove(id);
-});
-ipcMain.handle('vault:registry-unload-all', () =>
-  vaultWriteBarrier.close(async () => {
-    await vaultRegistry.unloadAll();
-    vaultWatcher.stop();
+registerVaultRegistryIpc(ipcMain, {
+  registry: vaultRegistry,
+  service: vaultService,
+  writeBarrier: vaultWriteBarrier,
+  watchSelectedVault,
+  stopWatcher: () => vaultWatcher.stop(),
+  clearWatchedVaultId: () => {
     activeWatchedVaultId = null;
-    vaultService.clearSelectedVault();
-  }),
-);
+  },
+});
 
 ipcMain.handle('vault:resolve-note-link', async (_event, request: unknown) => {
   if (!request || typeof request !== 'object' || Array.isArray(request))
