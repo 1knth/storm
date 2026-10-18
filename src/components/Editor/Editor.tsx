@@ -139,6 +139,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const previewSnapshot = useRef(preview);
   previewSnapshot.current = preview;
   const [hasActiveNote, setHasActiveNote] = useState(false);
+  const previousReadingMode = useRef(readingMode);
   const pendingFocus = useRef(false);
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const onReadingKeyDown = useCallback(
@@ -363,6 +364,19 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   }, []);
 
   useLayoutEffect(() => {
+    const wasReading = previousReadingMode.current;
+    previousReadingMode.current = readingMode;
+    if (!wasReading && readingMode && hasActiveNote) {
+      // The key handler lives on the preview, so move focus there when it mounts.
+      previewScrollRef.current?.focus({ preventScroll: true });
+    } else if (wasReading && !readingMode && hasActiveNote) {
+      // CodeMirror retains its selection, scroll position, and Vim state while
+      // reading mode is on.
+      viewRef.current?.focus();
+    }
+  }, [hasActiveNote, readingMode]);
+
+  useLayoutEffect(() => {
     if (!hasActiveNote || !pendingFocus.current) return;
     pendingFocus.current = false;
     viewRef.current?.focus();
@@ -570,7 +584,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         scrollTop: 0,
       }),
     focus: () => {
-      if (hasActiveNote) viewRef.current?.focus();
+      if (readingMode && previewScrollRef.current) {
+        previewScrollRef.current.focus({ preventScroll: true });
+      } else if (hasActiveNote) viewRef.current?.focus();
       else if (current.current) pendingFocus.current = true;
     },
     format: (kind) => {
