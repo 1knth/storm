@@ -79,7 +79,13 @@ export async function createMarkdownNote(
   const relativePath = path.posix.join(parentRelativePath, filename);
   const handle = await open(path.join(target.parent, filename), 'wx');
   await handle.close();
-  return { path: relativePath, name: filename, isDirectory: false, peek: '' };
+  return {
+    path: relativePath,
+    name: filename,
+    kind: 'note',
+    isDirectory: false,
+    peek: '',
+  };
 }
 
 export async function createFolder(
@@ -92,6 +98,7 @@ export async function createFolder(
   return {
     path: path.posix.join(parentRelativePath, target.name),
     name: target.name,
+    kind: 'directory',
     isDirectory: true,
     peek: '',
   };

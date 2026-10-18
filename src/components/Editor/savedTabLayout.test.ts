@@ -2,8 +2,9 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { EditorState } from '@codemirror/state';
 import type { NoteData } from '../../shared/types';
-import type { NoteTabSnapshot, TabSnapshot } from './Editor';
+import type { ImageTabSnapshot, NoteTabSnapshot, TabSnapshot } from './Editor';
 import { serializeTabLayout } from './savedTabLayout';
+import { getTabId } from './tabGroups';
 import type { TabGroup } from './tabGroups';
 
 test('round-trips tab order, active tab, group colors, collapse state, and assignments', () => {
@@ -46,6 +47,58 @@ test('round-trips tab order, active tab, group colors, collapse state, and assig
   assert.equal(restored.activeTab, 'notes/first.md');
   assert.deepEqual(restored.groups, groups);
   assert.deepEqual(restored.assignments, { 'notes/first.md': 'reading' });
+});
+
+test('round-trips image tabs with mixed tab groups and vault-scoped IDs', () => {
+  const image: ImageTabSnapshot = {
+    kind: 'image',
+    vaultId: 'vault-1',
+    path: 'assets/diagram.png',
+    filename: 'diagram.png',
+  };
+  const noteData: NoteData = {
+    path: 'notes/overview.md',
+    content: 'overview',
+    revision: 'revision-2',
+  };
+  const note: NoteTabSnapshot = {
+    kind: 'note',
+    note: noteData,
+    vaultPath: '/vault',
+    vaultId: 'vault-1',
+    state: EditorState.create({ doc: noteData.content }),
+    scrollTop: 12,
+  };
+  const tabs: TabSnapshot[] = [image, note, { kind: 'empty', id: 'blank' }];
+  const groups = [
+    { id: 'assets', name: 'Assets', collapsed: true, color: 'purple' },
+    { id: 'notes', name: 'Notes', collapsed: false, color: 'green' },
+  ] satisfies TabGroup[];
+  const serialized = serializeTabLayout(
+    tabs,
+    getTabId(image),
+    groups,
+    { [getTabId(image)]: 'assets', [getTabId(note)]: 'notes' },
+    new Map(),
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(serialized)), {
+    version: 1,
+    tabs: [
+      { kind: 'image', path: 'assets/diagram.png' },
+      {
+        kind: 'note',
+        path: 'notes/overview.md',
+        anchor: 0,
+        head: 0,
+        scrollTop: 12,
+      },
+      { kind: 'empty', id: 'blank' },
+    ],
+    activeTab: getTabId(image),
+    groups,
+    assignments: { [getTabId(image)]: 'assets', [getTabId(note)]: 'notes' },
+  });
+  assert.notEqual(getTabId(image), JSON.stringify(['vault-2', image.path]));
 });
 
 test('serializes bounded view metadata without note content or editor history', () => {

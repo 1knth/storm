@@ -55,6 +55,7 @@ export class VaultService {
             notes.push({
               path: relativePath,
               name: entry.name,
+              kind: 'directory',
               isDirectory: true,
               peek: '',
             });
@@ -72,8 +73,18 @@ export class VaultService {
           notes.push({
             path: relativePath,
             name: entry.name,
+            kind: 'note',
             isDirectory: false,
             peek,
+          });
+        } else if (entry.isFile() && isSupportedImage(entry.name)) {
+          notes.push({
+            path: relativePath,
+            name: entry.name,
+            kind: 'image',
+            isDirectory: false,
+            peek: '',
+            mimeType: imageMimeType(entry.name)!,
           });
         }
       }
@@ -179,6 +190,24 @@ export class VaultService {
     }
     return { revision: revisionOf(content) };
   }
+}
+
+function imageMimeType(filename: string): string | null {
+  const extension = path.extname(filename).toLowerCase();
+  return (
+    {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.avif': 'image/avif',
+    }[extension] ?? null
+  );
+}
+
+function isSupportedImage(filename: string): boolean {
+  return imageMimeType(filename) !== null;
 }
 
 function revisionOf(content: string): string {

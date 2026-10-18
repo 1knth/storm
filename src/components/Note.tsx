@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { IoIosArrowForward } from 'react-icons/io';
 import { FaFolder } from 'react-icons/fa';
 import { FaRegFile } from 'react-icons/fa6';
@@ -11,6 +11,8 @@ type NoteProps = {
   depth: number;
   selectedId: string | null;
   onNoteClick: (id: string) => void;
+  onImageClick: (path: string) => void;
+  vaultId: string | null;
 };
 
 export default function Note({
@@ -19,6 +21,8 @@ export default function Note({
   depth,
   selectedId,
   onNoteClick,
+  onImageClick,
+  vaultId,
 }: NoteProps) {
   const [expanded, setExpanded] = useState(false);
   const children = entries.filter((candidate) => {
@@ -37,10 +41,50 @@ export default function Note({
   useEffect(() => {
     if (containsSelection) setExpanded(true);
   }, [containsSelection]);
-  const isSelected = !entry.isDirectory && selectedId === entry.path;
+  const isSelected = entry.kind === 'note' && selectedId === entry.path;
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const thumbnailRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (entry.kind !== 'image' || !vaultId) return;
+    const node = thumbnailRef.current;
+    if (!node) return;
+    let cancelled = false;
+    let url: string | null = null;
+    const observer = new IntersectionObserver(
+      ([item]) => {
+        if (!item.isIntersecting) return;
+        observer.disconnect();
+        window.vault
+          .readAsset({ vaultId, relativePath: entry.path })
+          .then((result) => {
+            if (cancelled || !result.ok) return;
+            const binary = atob(result.base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index++)
+              bytes[index] = binary.charCodeAt(index);
+            url = URL.createObjectURL(
+              new Blob([bytes], { type: result.mimeType }),
+            );
+            setThumbnailUrl(url);
+          })
+          .catch(() => {});
+      },
+      { rootMargin: '100px' },
+    );
+    observer.observe(node);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [entry.kind, entry.path, vaultId]);
   return (
-    <li data-entry-path={entry.path} data-entry-directory={entry.isDirectory}>
-      {entry.isDirectory ? (
+    <li
+      data-entry-path={entry.path}
+      data-entry-directory={entry.isDirectory}
+      data-entry-kind={entry.kind}
+    >
+      {entry.kind === 'directory' ? (
         <>
           <button
             type="button"
@@ -71,11 +115,41 @@ export default function Note({
                   depth={depth + 1}
                   selectedId={selectedId}
                   onNoteClick={onNoteClick}
+                  onImageClick={onImageClick}
+                  vaultId={vaultId}
                 />
               ))}
             </ul>
           )}
         </>
+      ) : entry.kind === 'image' ? (
+        <button
+          type="button"
+          id={`note-${encodeURIComponent(entry.path)}`}
+          aria-label={`Preview image ${entry.name}`}
+          aria-pressed={false}
+          onClick={() => onImageClick(entry.path)}
+          style={{ paddingLeft: `${16 + depth * 16}px` }}
+          className="flex min-h-10 w-full flex-col justify-center p-1.5 text-left rounded-none focus-visible:rounded-md focus-visible:bg-white/5"
+        >
+          <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-medium leading-4 text-white/90">
+            <span
+              ref={thumbnailRef}
+              className="file-tree-icon flex h-3.5 w-3.5 shrink-0 items-center justify-center overflow-hidden"
+            >
+              {thumbnailUrl ? (
+                <img
+                  src={thumbnailUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <FaRegFile aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
+            </span>
+            <span className="file-tree-label truncate">{entry.name}</span>
+          </span>
+        </button>
       ) : (
         <button
           type="button"
@@ -94,9 +168,11 @@ export default function Note({
               {entry.name.slice(0, entry.name.indexOf('.'))}
             </span>
           </span>
-          <span className="file-tree-peek block min-h-4 truncate border-b border-solid border-white/20 text-[11px] font-light leading-4 text-white/65">
-            <NotePeek markdown={entry.peek} />
-          </span>
+          {entry.kind === 'note' && (
+            <span className="file-tree-peek block min-h-4 truncate border-b border-solid border-white/20 text-[11px] font-light leading-4 text-white/65">
+              <NotePeek markdown={entry.peek} />
+            </span>
+          )}
         </button>
       )}
     </li>

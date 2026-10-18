@@ -20,6 +20,7 @@ import {
 } from './components/Editor/tabGroups';
 import type { TabAssignments, TabGroup } from './components/Editor/tabGroups';
 import { serializeTabLayout } from './components/Editor/savedTabLayout';
+import { checkpointErrorMessage } from './components/Editor/checkpointError';
 import { ToastProvider, useToast } from './components/Toast';
 import { loadAppearance, saveAppearance } from './appearance';
 import type { Appearance } from './appearance';
@@ -74,6 +75,7 @@ function App() {
   const visitedVaults = useRef(new Set<string>());
   const checkpointTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const checkpointInFlight = useRef<Promise<void> | null>(null);
+  const lastCheckpointError = useRef<string | null>(null);
   const sessions = useRef(
     new Map<
       string,
@@ -139,9 +141,11 @@ function App() {
       )
         .then(save)
         .catch((error) => {
-          setVaultError(
-            `Could not save tab layout: ${error instanceof Error ? error.message : String(error)}`,
-          );
+          const message = checkpointErrorMessage(error);
+          if (lastCheckpointError.current !== message) {
+            lastCheckpointError.current = message;
+            setVaultError(message);
+          }
         });
     }, 1000);
   };
@@ -239,6 +243,7 @@ function App() {
   const [vaultError, setVaultErrorState] = useState<string | null>(null);
   const setVaultError = (message: string | null) => {
     setVaultErrorState(message);
+    if (!message) lastCheckpointError.current = null;
     if (message) notifyError(message);
   };
   const [entriesLoading, setEntriesLoading] = useState(false);
@@ -254,6 +259,42 @@ function App() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [notes, setNotes] = useState<VaultEntry[]>([]);
+  const openImagePreview = async (path: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId || navigationBusy.current || vaultTransition.current) return;
+    const entry = notes.find(
+      (item) => item.path === path && item.kind === 'image',
+    );
+    if (!entry || activeVaultIdRef.current !== vaultId) return;
+    navigationBusy.current = true;
+    try {
+      if (!(await editorRef.current?.flush())) return;
+      const outgoing = editorRef.current?.snapshot();
+      if (outgoing)
+        setTabs((old) =>
+          old.map((tab) =>
+            tab.kind === 'note' && tab.note.path === outgoing.note.path
+              ? outgoing
+              : tab,
+          ),
+        );
+      const image: TabSnapshot = {
+        kind: 'image',
+        vaultId,
+        path: entry.path,
+        filename: entry.name,
+      };
+      const imageId = getTabId(image);
+      const existing = tabsRef.current.find((tab) => getTabId(tab) === imageId);
+      const activeImage = existing ?? image;
+      if (!existing) setTabs((old) => [...old, image]);
+      editorRef.current?.activate(activeImage);
+      setActiveId(imageId);
+      setActivePath(null);
+    } finally {
+      navigationBusy.current = false;
+    }
+  };
   const notesRefreshRequest = useRef(0);
   const pendingVaultRefresh = useRef<string | null>(null);
   const refreshNotes = async (vaultId: string) => {
@@ -749,9 +790,7 @@ function App() {
         )
       )
         return;
-      const activeTab = tabs.find(
-        (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) === activeId,
-      );
+      const activeTab = tabs.find((tab) => getTabId(tab) === activeId);
       const emptyEditor = !activeTab || activeTab.kind === 'empty';
       const pane = target.closest<HTMLElement>('[data-pane]');
       if (pane?.dataset.pane === 'editor') {
@@ -882,6 +921,15 @@ function App() {
           restored.push({ kind: 'empty', id: item.id });
           continue;
         }
+        if (item.kind === 'image') {
+          restored.push({
+            kind: 'image',
+            vaultId,
+            path: item.path,
+            filename: item.path.split(/[\\/]/).at(-1) || item.path,
+          });
+          continue;
+        }
         try {
           const note = await window.vault.readNote(item.path);
           if (
@@ -910,7 +958,9 @@ function App() {
       }
       if (
         !restored.length &&
-        layout.tabs.some((item) => item.kind === 'note')
+        layout.tabs.some(
+          (item) => item.kind === 'note' || item.kind === 'image',
+        )
       ) {
         setVaultError(
           'No saved notes could be restored; current tabs were kept.',
@@ -1026,11 +1076,13 @@ function App() {
         value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
       const deletedPath = normalize(result.path);
       const matchesDeleted = (tab: TabSnapshot) => {
-        if (tab.kind !== 'note' || tab.vaultId !== vaultId) return false;
-        const notePath = normalize(tab.note.path);
+        if (tab.kind === 'empty' || tab.vaultId !== vaultId) return false;
+        const tabPath = normalize(
+          tab.kind === 'note' ? tab.note.path : tab.path,
+        );
         return (
-          notePath === deletedPath ||
-          (result.kind === 'folder' && notePath.startsWith(`${deletedPath}/`))
+          tabPath === deletedPath ||
+          (result.kind === 'folder' && tabPath.startsWith(`${deletedPath}/`))
         );
       };
       const removedActive = freshTabs.find(
@@ -1237,7 +1289,7 @@ function App() {
         ),
       );
     editorRef.current?.activate(tab);
-    setActiveId(tab.kind === 'note' ? tab.note.path : tab.id);
+    setActiveId(getTabId(tab));
     setActivePath(tab.kind === 'note' ? tab.note.path : null);
   };
   const createEmptyTab = async () => {
@@ -1272,7 +1324,7 @@ function App() {
   };
   const closeTab = async (target: TabSnapshot) => {
     if (navigationBusy.current) return;
-    const targetId = target.kind === 'note' ? target.note.path : target.id;
+    const targetId = getTabId(target);
     if (activeVaultId) visitedVaults.current.add(activeVaultId);
     if (targetId !== activeId) {
       const remaining = tabs.filter((tab) => getTabId(tab) !== targetId);
@@ -1298,9 +1350,7 @@ function App() {
     navigationBusy.current = true;
     try {
       if (!(await editorRef.current?.flush())) return;
-      const remaining = tabs.filter(
-        (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) !== targetId,
-      );
+      const remaining = tabs.filter((tab) => getTabId(tab) !== targetId);
       const next = remaining.at(-1);
       if (next) activateTab(next);
       else {
@@ -1391,7 +1441,7 @@ function App() {
       let restoredTabs: TabSnapshot[] = [];
       if (session) {
         for (const tab of session.tabs) {
-          if (tab.kind === 'empty') {
+          if (tab.kind === 'empty' || tab.kind === 'image') {
             restoredTabs.push(tab);
             continue;
           }
@@ -1425,18 +1475,14 @@ function App() {
         ),
       );
       const restoredId = restoredTabs.some(
-        (tab) =>
-          (tab.kind === 'note' ? tab.note.path : tab.id) === session?.activeId,
+        (tab) => getTabId(tab) === session?.activeId,
       )
         ? session!.activeId
-        : restoredTabs.at(-1)
-          ? restoredTabs.at(-1)!.kind === 'note'
-            ? (restoredTabs.at(-1) as Extract<TabSnapshot, { kind: 'note' }>)
-                .note.path
-            : restoredTabs.at(-1)!.id
+        : restoredTabs.length
+          ? getTabId(restoredTabs.at(-1)!)
           : null;
       const activeTab = restoredTabs.find(
-        (tab) => (tab.kind === 'note' ? tab.note.path : tab.id) === restoredId,
+        (tab) => getTabId(tab) === restoredId,
       );
       if (activeTab) editorRef.current?.activate(activeTab);
       else editorRef.current?.clear();
@@ -1878,6 +1924,8 @@ function App() {
             onCopyPathError={notifyError}
             onPathCopied={notifySuccess}
             onNoteSelect={selectNote}
+            onImageSelect={(path) => void openImagePreview(path)}
+            vaultId={activeVaultId}
             onDeleteEntry={(path) => void handleDeleteEntry(path)}
             onCreate={beginCreate}
             onCreateNote={() => {
@@ -1904,6 +1952,12 @@ function App() {
         </div>
         <Editor
           ref={editorRef}
+          imageAsset={(() => {
+            const tab = tabs.find((item) => getTabId(item) === activeId);
+            return tab?.kind === 'image' && tab.vaultId === activeVaultId
+              ? { vaultId: tab.vaultId, path: tab.path, filename: tab.filename }
+              : null;
+          })()}
           readingMode={readingMode}
           onOpenNote={openWikiNote}
           onToggleReadingMode={toggleReadingMode}

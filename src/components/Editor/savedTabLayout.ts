@@ -15,6 +15,7 @@ export function serializeTabLayout(
     tabs: tabs.map((tab) => {
       const latest = snapshots.get(getTabId(tab)) ?? tab;
       if (latest.kind === 'empty') return { kind: 'empty', id: latest.id };
+      if (latest.kind === 'image') return { kind: 'image', path: latest.path };
       const selection = latest.state.selection.main;
       return {
         kind: 'note',
