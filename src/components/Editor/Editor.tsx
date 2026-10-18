@@ -570,7 +570,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         scrollTop: 0,
       }),
     focus: () => {
-      if (hasActiveNote) viewRef.current?.focus();
+      if (readingMode && previewScrollRef.current) {
+        previewScrollRef.current.focus({ preventScroll: true });
+      } else if (hasActiveNote) viewRef.current?.focus();
       else if (current.current) pendingFocus.current = true;
     },
     format: (kind) => {

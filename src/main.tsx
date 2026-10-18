@@ -928,6 +928,23 @@ function App() {
       }
       visitedVaults.current.add(vaultId);
       rememberCurrentSession(vaultId);
+      const restoredActiveId = selected ? getTabId(selected) : null;
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (
+          active &&
+          active !== document.body &&
+          active !== document.documentElement
+        )
+          return;
+        if (
+          hasOpenModal() ||
+          activeVaultIdRef.current !== vaultId ||
+          activeIdRef.current !== restoredActiveId
+        )
+          return;
+        editorRef.current?.focus();
+      });
       setVaultError(null);
     } catch (error) {
       setVaultError(
@@ -1416,6 +1433,24 @@ function App() {
       setActiveVaultId(id);
       setVaultPath(activated.path);
       setNotes(listed);
+      const restoredActiveId = activeTab ? getTabId(activeTab) : null;
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (
+          active &&
+          active !== document.body &&
+          active !== document.documentElement
+        )
+          return;
+        if (
+          focusExplorer ||
+          hasOpenModal() ||
+          activeVaultIdRef.current !== id ||
+          activeIdRef.current !== restoredActiveId
+        )
+          return;
+        editorRef.current?.focus();
+      });
       if (focusExplorer) pendingExplorerFocus.current = true;
     } catch (error) {
       if (activeVaultId) {
