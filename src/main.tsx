@@ -1367,7 +1367,12 @@ function App() {
     navigationBusy.current = true;
     try {
       if (!(await editorRef.current?.flush())) return;
-      const { remaining, nextActive } = transition;
+      const { remaining, nextActive } = closeTabTransition(
+        tabsRef.current,
+        targetId,
+        activeId,
+        getTabId,
+      );
       if (nextActive) activateTab(nextActive);
       else {
         ++noteRequestId.current;

@@ -3,7 +3,7 @@ import type { VaultService } from '../vault/vaultService';
 import type { VaultWriteBarrier } from '../vault/writeBarrier';
 
 export interface IpcHandlerRegistrar {
-  handle(channel: string, listener: (...args: any[]) => unknown): void;
+  handle(channel: string, listener: (...args: unknown[]) => unknown): void;
 }
 
 export function registerVaultRegistryIpc(
