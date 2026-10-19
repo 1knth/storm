@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { AiOutlineFullscreen } from 'react-icons/ai';
+import { FaBolt } from 'react-icons/fa';
 import { markdown } from '@codemirror/lang-markdown';
 import { Vim, vim } from '@replit/codemirror-vim';
 import { Compartment, EditorState, Prec, Transaction } from '@codemirror/state';
@@ -42,6 +43,14 @@ import {
 } from './previewScroll';
 import { useToast } from '../Toast';
 import { scrollReadingPreview } from './readingScroll';
+import {
+  agentWritingLockExtensions,
+  matchesAgentEditor,
+  shouldBlockAgentEditorMouseDown,
+} from './agentEditorAdapter';
+import type { AgentEditorAdapter } from './agentEditorAdapter';
+import type { AgentSessionStatus } from '../../shared/agentProtocol';
+import { AgentStatusBar } from './AgentStatusBar';
 import {
   isCurrentSaveCompletion,
   isSaveCompletionContentUnchanged,
@@ -87,6 +96,12 @@ export type EditorHandle = {
   focus: () => void;
   isNormalMode: () => boolean;
   format?: (kind: 'bold' | 'italic') => boolean;
+  /** Apply owner state only while its vault/path identity is the active note. */
+  syncManagedState: (
+    vaultId: string,
+    path: string,
+    state: EditorState,
+  ) => boolean;
 };
 type EditorProps = {
   vimMode: boolean;
@@ -100,6 +115,9 @@ type EditorProps = {
   commandHeld?: boolean;
   appearance: Appearance;
   imageAsset?: { vaultId: string; path: string; filename: string } | null;
+  agentDocument?: AgentEditorAdapter | null;
+  agentStatus?: AgentSessionStatus;
+  onStopAgent?: (sessionId: string) => void;
 };
 
 const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
@@ -115,6 +133,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     appearance,
     tabsVisible,
     imageAsset = null,
+    agentDocument = null,
+    agentStatus,
+    onStopAgent,
   },
   ref,
 ) {
@@ -123,6 +144,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const viewRef = useRef<EditorView | null>(null);
   const vimCompartment = useRef(new Compartment());
   const appearanceCompartment = useRef(new Compartment());
+  const writingLockCompartment = useRef(new Compartment());
   const extensions = useRef<Extension[]>([]);
   const current = useRef<{
     note: NoteData;
@@ -139,6 +161,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const pendingImagePastes = useRef<ImagePasteAnchor[]>([]);
   const onLayoutChangeRef = useRef(onLayoutChange);
   onLayoutChangeRef.current = onLayoutChange;
+  const agentDocumentRef = useRef(agentDocument);
+  agentDocumentRef.current = agentDocument;
   const [status, setStatus] = useState('');
   const [preview, setPreview] = useState<{
     vaultId: string;
@@ -177,6 +201,24 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     expectedEditorScroll.current = null;
   }, []);
   const [previewVisible, setPreviewVisible] = useState(true);
+  const [agentStatusVisibleForNotes, setAgentStatusVisibleForNotes] = useState<
+    Set<string>
+  >(() => new Set());
+  const activeNoteKey = current.current
+    ? JSON.stringify([current.current.vaultId, current.current.note.path])
+    : null;
+  const agentStatusVisible = Boolean(
+    activeNoteKey && agentStatusVisibleForNotes.has(activeNoteKey),
+  );
+  const toggleAgentStatusVisibility = () => {
+    if (!activeNoteKey) return;
+    setAgentStatusVisibleForNotes((visibleNotes) => {
+      const next = new Set(visibleNotes);
+      if (next.has(activeNoteKey)) next.delete(activeNoteKey);
+      else next.add(activeNoteKey);
+      return next;
+    });
+  };
   const formatSelection = useCallback((kind: 'bold' | 'italic') => {
     const view = viewRef.current;
     const installed = binding.current;
@@ -357,7 +399,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         active ? { vaultId: active.vaultId, notePath: active.note.path } : null,
       ) ||
       blocked.current ||
-      view.state.doc.toString() !== payload.source
+      !view.state.doc.toString().startsWith(payload.source)
     )
       return;
     const changes = taskMarkerChange(
@@ -399,7 +441,20 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     [],
   );
 
+  const managedActive = () => {
+    const active = current.current;
+    return Boolean(
+      active &&
+      matchesAgentEditor(
+        agentDocumentRef.current ?? undefined,
+        active.vaultId,
+        active.note.path,
+      ),
+    );
+  };
+
   const save = async (): Promise<boolean> => {
+    if (managedActive()) return agentDocumentRef.current!.flush();
     if (timer.current) {
       clearTimeout(timer.current);
       timer.current = null;
@@ -535,6 +590,25 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
 
   useImperativeHandle(ref, () => ({
     flush: save,
+    syncManagedState: (vaultId, path, state) => {
+      const view = viewRef.current;
+      const active = current.current;
+      if (
+        !view ||
+        !active ||
+        !matchesAgentEditor(
+          agentDocumentRef.current ?? undefined,
+          vaultId,
+          path,
+        ) ||
+        active.vaultId !== vaultId ||
+        active.note.path !== path
+      )
+        return false;
+      if (view.state !== state) view.setState(state);
+      setPreview({ vaultId, notePath: path, markdown: state.doc.toString() });
+      return true;
+    },
     snapshot: () => {
       const view = viewRef.current;
       const active = current.current;
@@ -663,6 +737,16 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       markdown(),
       Prec.highest(
         EditorView.domEventHandlers({
+          mousedown: (event) => {
+            if (
+              !shouldBlockAgentEditorMouseDown(
+                Boolean(agentDocumentRef.current?.writing),
+              )
+            )
+              return false;
+            event.preventDefault();
+            return true;
+          },
           paste: (event, view) => {
             const target = event.target;
             const active = current.current;
@@ -810,6 +894,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         }),
       ),
       vimCompartment.current.of(vimMode ? vim() : []),
+      writingLockCompartment.current.of([]),
       ...markdownEditorExtensions,
       appearanceCompartment.current.of(
         createMarkdownSyntaxHighlighting(
@@ -848,6 +933,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             notePath: active.note.path,
             markdown: update.state.doc.toString(),
           });
+        }
+        if (managedActive()) {
+          agentDocumentRef.current!.onStateChange(update.state);
+          return;
         }
         dirty.current = true;
         setStatus('');
@@ -940,9 +1029,14 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
 
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: vimCompartment.current.reconfigure(vimMode ? vim() : []),
+      effects: [
+        vimCompartment.current.reconfigure(vimMode ? vim() : []),
+        writingLockCompartment.current.reconfigure(
+          agentWritingLockExtensions(Boolean(agentDocument?.writing)),
+        ),
+      ],
     });
-  }, [vimMode]);
+  }, [vimMode, agentDocument?.writing]);
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -1021,6 +1115,20 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                   <button
                     type="button"
                     aria-label={
+                      agentStatusVisible
+                        ? 'Hide agent status'
+                        : 'Show agent status'
+                    }
+                    title="Toggle agent mode status"
+                    aria-pressed={agentStatusVisible}
+                    onClick={toggleAgentStatusVisibility}
+                    className="editor-action-button app-icon-button"
+                  >
+                    <FaBolt size={12} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={
                       readingMode ? 'Exit reading mode' : 'Enter reading mode'
                     }
                     aria-pressed={readingMode}
@@ -1044,6 +1152,11 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
               )}
             </div>
           </div>
+          <AgentStatusBar
+            status={agentStatus}
+            onStop={onStopAgent}
+            visible={agentStatusVisible}
+          />
           <div className="flex w-full min-h-0 min-w-0 flex-1 overflow-hidden">
             {imageAsset ? (
               <AssetPreviewPane

@@ -20,6 +20,119 @@ import type {
   VaultChangeEvent,
 } from './shared/types';
 import type { GroupColor } from './shared/groupColors';
+import type {
+  AgentBridgeRequest,
+  AgentBridgeResult,
+  AgentBridgeStatusEvent,
+  StormAgentBridge,
+} from './shared/agentBridge';
+
+const stormAgent: StormAgentBridge = {
+  onRequest(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (isAgentRequest(value)) callback(value);
+    };
+    ipcRenderer.on('agent:renderer-request', listener);
+    return () => ipcRenderer.removeListener('agent:renderer-request', listener);
+  },
+  respond(requestId, result) {
+    if (
+      typeof requestId === 'string' &&
+      requestId.length <= 128 &&
+      isAgentResult(result)
+    )
+      ipcRenderer.send('agent:renderer-response', requestId, result);
+  },
+  onStatus(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (isAgentStatus(value)) callback(value);
+    };
+    ipcRenderer.on('agent:status', listener);
+    return () => ipcRenderer.removeListener('agent:status', listener);
+  },
+  cancel(sessionId, reason) {
+    if (
+      typeof sessionId === 'string' &&
+      sessionId.length > 0 &&
+      sessionId.length <= 128
+    )
+      ipcRenderer.send(
+        'agent:renderer-cancel',
+        sessionId,
+        typeof reason === 'string' ? reason.slice(0, 500) : undefined,
+      );
+  },
+  saveNote(request) {
+    return ipcRenderer.invoke('agent:save-note', request);
+  },
+};
+contextBridge.exposeInMainWorld('stormAgent', stormAgent);
+
+function isAgentRequest(value: unknown): value is AgentBridgeRequest {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  if (typeof item.requestId !== 'string' || item.requestId.length > 128)
+    return false;
+  if (item.type === 'snapshot')
+    return (
+      typeof item.absolutePath === 'string' &&
+      typeof item.vaultId === 'string' &&
+      typeof item.vaultRoot === 'string'
+    );
+  if (item.type === 'append')
+    return (
+      typeof item.sessionId === 'string' &&
+      typeof item.absolutePath === 'string' &&
+      typeof item.operationId === 'string' &&
+      Number.isSafeInteger(item.sequence) &&
+      typeof item.text === 'string' &&
+      new TextEncoder().encode(item.text).byteLength <= 262144
+    );
+  return (
+    (item.type === 'finish' || item.type === 'cancel') &&
+    typeof item.sessionId === 'string'
+  );
+}
+function isAgentResult(value: unknown): value is AgentBridgeResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  if (item.ok === false)
+    return typeof item.code === 'string' && typeof item.message === 'string';
+  return (
+    item.ok === true &&
+    Number.isSafeInteger(item.documentVersion) &&
+    typeof item.diskRevision === 'string' &&
+    (item.content === undefined || typeof item.content === 'string') &&
+    (item.saveState === undefined ||
+      item.saveState === 'pending' ||
+      item.saveState === 'saved' ||
+      item.saveState === 'failed')
+  );
+}
+function isAgentStatus(value: unknown): value is AgentBridgeStatusEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
+  const session = event.session;
+  if (!session || typeof session !== 'object' || Array.isArray(session))
+    return false;
+  const status = session as Record<string, unknown>;
+  return (
+    typeof status.sessionId === 'string' &&
+    typeof status.absolutePath === 'string' &&
+    [
+      'connected',
+      'writing',
+      'finished',
+      'cancelled',
+      'disconnected',
+      'failed',
+    ].includes(String(status.state)) &&
+    Number.isSafeInteger(status.documentVersion) &&
+    typeof status.diskRevision === 'string' &&
+    Number.isSafeInteger(status.pendingOperations) &&
+    (event.reason === undefined || typeof event.reason === 'string')
+  );
+}
 
 contextBridge.exposeInMainWorld('vault', {
   registryList: (): Promise<{
