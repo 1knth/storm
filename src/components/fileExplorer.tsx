@@ -709,85 +709,141 @@ export default function FileExplorer({
                 {settingsTab === 'appearance' && (
                   <div className="space-y-4">
                     <p className="mb-3 text-sm text-white/60">
-                      Editor, preview, and diagram colors
+                      Fine-tune editor highlights, Mermaid diagrams, and charts.
                     </p>
-                    <fieldset className="space-y-2">
-                      <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/50">
-                        Editor &amp; diagram colors
-                      </legend>
-                      {(
+                    {(
+                      [
                         [
-                          ['Selection highlight', 'selection'],
-                          ['Active line', 'activeLine'],
-                          ['Cursor', 'cursor'],
-                          ...appearance.headings.map((_, i) => [
-                            `Heading ${i + 1}`,
-                            `heading-${i + 1}`,
-                          ]),
-                          ['Mermaid background', 'mermaidBackground'],
-                          ['Mermaid node fill', 'mermaidNodeFill'],
-                          ['Mermaid node border', 'mermaidNodeBorder'],
-                          ['Mermaid group fill', 'mermaidGroupFill'],
-                          ['Mermaid group border', 'mermaidGroupBorder'],
-                          ['Mermaid group text', 'mermaidGroupText'],
-                          ['Mermaid text', 'mermaidText'],
-                          ['Mermaid connectors', 'mermaidConnectors'],
-                        ] as [string, string][]
-                      ).map(([label, key]) => {
-                        const value = key.startsWith('heading-')
-                          ? appearance.headings[Number(key.slice(8)) - 1]
-                          : (appearance[
-                              key as keyof typeof appearance
-                            ] as string);
-                        return (
-                          <div
-                            key={key}
-                            className="flex items-center justify-between gap-3 text-xs text-white/80"
-                          >
-                            <span>{label}</span>
-                            <span className="flex items-center gap-2">
-                              <input
-                                aria-label={label}
-                                type="color"
-                                style={{ colorScheme: 'dark' }}
-                                value={value}
-                                onChange={(event) => {
-                                  const next = key.startsWith('heading-')
-                                    ? {
-                                        ...appearance,
-                                        headings: appearance.headings.map(
-                                          (color, i) =>
-                                            i === Number(key.slice(8)) - 1
-                                              ? event.target.value
-                                              : color,
-                                        ),
-                                      }
-                                    : {
-                                        ...appearance,
-                                        [key]: event.target.value,
-                                      };
-                                  onAppearanceChange(next);
-                                }}
-                              />
-                              <OpacityInput
-                                label={label}
-                                value={appearance.opacity[key]}
-                                onCommit={(value) =>
-                                  onAppearanceChange({
-                                    ...appearance,
-                                    opacity: {
-                                      ...appearance.opacity,
-                                      [key]: value,
-                                    },
-                                  })
-                                }
-                              />
-                              <span>%</span>
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </fieldset>
+                          'Editor',
+                          [
+                            ['Selection highlight', 'selection'],
+                            ['Active line', 'activeLine'],
+                            ['Cursor', 'cursor'],
+                            ...appearance.headings.map((_, i) => [
+                              `Heading ${i + 1}`,
+                              `heading-${i + 1}`,
+                            ]),
+                          ],
+                        ],
+                        [
+                          'Mermaid · canvas & nodes',
+                          [
+                            ['Background', 'mermaidBackground'],
+                            ['Node fill', 'mermaidNodeFill'],
+                            ['Node border', 'mermaidNodeBorder'],
+                            ['Group fill', 'mermaidGroupFill'],
+                            ['Group border', 'mermaidGroupBorder'],
+                            ['Group text', 'mermaidGroupText'],
+                            ['Diagram text', 'mermaidText'],
+                          ],
+                        ],
+                        [
+                          'Mermaid · connectors & sequence',
+                          [
+                            ['Diagram connectors', 'mermaidConnectors'],
+                            ['Sequence arrows & lines', 'mermaidSignalColor'],
+                          ],
+                        ],
+                        [
+                          'Charts',
+                          [
+                            ['Text & labels', 'chartText'],
+                            ['Grid lines', 'chartGrid'],
+                            ...appearance.chartSeries.map((_, i) => [
+                              `Series ${i + 1}`,
+                              `chartSeries-${i + 1}`,
+                            ]),
+                          ],
+                        ],
+                      ] as [string, [string, string][]][]
+                    ).map(([group, colors]) => (
+                      <fieldset
+                        key={group}
+                        className="space-y-2 border-t border-white/10 pt-3 first:border-0 first:pt-0"
+                      >
+                        <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/55">
+                          {group}
+                        </legend>
+                        {colors.map(([label, key]) => {
+                          const headingIndex = key.startsWith('heading-')
+                            ? Number(key.slice(8)) - 1
+                            : -1;
+                          const seriesIndex = key.startsWith('chartSeries-')
+                            ? Number(key.slice(12)) - 1
+                            : -1;
+                          const value =
+                            headingIndex >= 0
+                              ? appearance.headings[headingIndex]
+                              : seriesIndex >= 0
+                                ? appearance.chartSeries[seriesIndex]
+                                : (appearance[
+                                    key as keyof typeof appearance
+                                  ] as string);
+                          return (
+                            <div
+                              key={key}
+                              className="grid grid-cols-[1fr_auto] items-center gap-3 text-xs text-white/80"
+                            >
+                              <label htmlFor={`appearance-${key}`}>
+                                {label}
+                              </label>
+                              <span className="flex items-center gap-2">
+                                <input
+                                  id={`appearance-${key}`}
+                                  aria-label={label}
+                                  type="color"
+                                  style={{ colorScheme: 'dark' }}
+                                  value={value}
+                                  onChange={(event) => {
+                                    const next =
+                                      headingIndex >= 0
+                                        ? {
+                                            ...appearance,
+                                            headings: appearance.headings.map(
+                                              (color, i) =>
+                                                i === headingIndex
+                                                  ? event.target.value
+                                                  : color,
+                                            ),
+                                          }
+                                        : seriesIndex >= 0
+                                          ? {
+                                              ...appearance,
+                                              chartSeries:
+                                                appearance.chartSeries.map(
+                                                  (color, i) =>
+                                                    i === seriesIndex
+                                                      ? event.target.value
+                                                      : color,
+                                                ),
+                                            }
+                                          : {
+                                              ...appearance,
+                                              [key]: event.target.value,
+                                            };
+                                    onAppearanceChange(next);
+                                  }}
+                                />
+                                <OpacityInput
+                                  label={label}
+                                  value={appearance.opacity[key]}
+                                  onCommit={(value) =>
+                                    onAppearanceChange({
+                                      ...appearance,
+                                      opacity: {
+                                        ...appearance.opacity,
+                                        [key]: value,
+                                      },
+                                    })
+                                  }
+                                />
+                                <span>%</span>
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </fieldset>
+                    ))}
                     <button
                       type="button"
                       className="app-button text-xs"

@@ -88,6 +88,7 @@ describe('appearance preferences', () => {
     }
     strictEqual(variables.labelBoxBkgColor, 'rgba(254, 254, 254, 1)');
     strictEqual(variables.labelBoxBorderColor, 'rgba(64, 80, 96, 1)');
+    strictEqual(variables.signalTextColor, 'rgba(16, 32, 48, 0.75)');
     strictEqual(variables.clusterBkg, 'rgba(244, 244, 244, 1)');
     strictEqual(variables.clusterBorder, 'rgba(147, 112, 219, 1)');
   });
@@ -131,6 +132,41 @@ describe('appearance preferences', () => {
     strictEqual(rgbaColor('#123456', 500), 'rgba(18, 52, 86, 1)');
     strictEqual(rgbaColor('#123456', -1), 'rgba(18, 52, 86, 0)');
   });
+  it('validates chart controls and supplies chart defaults for old settings', () => {
+    const legacy = validateAppearance({});
+    deepStrictEqual(legacy.chartSeries, DEFAULT_APPEARANCE.chartSeries);
+    strictEqual(legacy.chartText, DEFAULT_APPEARANCE.chartText);
+    const custom = validateAppearance({
+      chartText: '#123456',
+      chartGrid: 'invalid',
+      chartSeries: ['#abcdef'],
+      opacity: { chartText: 42, 'chartSeries-1': 71 },
+    });
+    strictEqual(custom.chartText, '#123456');
+    strictEqual(custom.chartGrid, DEFAULT_APPEARANCE.chartGrid);
+    strictEqual(custom.chartSeries[0], '#abcdef');
+    strictEqual(custom.chartSeries[1], DEFAULT_APPEARANCE.chartSeries[1]);
+    strictEqual(custom.opacity.chartText, 42);
+    strictEqual(custom.opacity['chartSeries-1'], 71);
+  });
+  it('keeps sequence message text and arrow colors independent and migrates old settings', () => {
+    const legacy = validateAppearance({
+      mermaidText: '#123456',
+      mermaidConnectors: '#abcdef',
+      opacity: { mermaidConnectors: 38 },
+    });
+    strictEqual(legacy.mermaidText, '#123456');
+    strictEqual(legacy.mermaidSignalColor, '#abcdef');
+    strictEqual(legacy.opacity.mermaidSignalColor, 38);
+    const current = validateAppearance({
+      mermaidText: '#123456',
+      mermaidSignalColor: '#abcdef',
+      opacity: { mermaidSignalColor: 45 },
+    });
+    const variables = mermaidThemeVariables(current);
+    strictEqual(variables.signalTextColor, 'rgba(18, 52, 86, 1)');
+    strictEqual(variables.signalColor, 'rgba(171, 205, 239, 0.45)');
+  });
   it('maps Mermaid palette controls onto base theme variables', () => {
     deepStrictEqual(mermaidThemeVariables(DEFAULT_APPEARANCE), {
       background: 'rgba(255, 255, 255, 1)',
@@ -147,6 +183,7 @@ describe('appearance preferences', () => {
       labelBoxBorderColor: 'rgba(51, 51, 51, 1)',
       primaryTextColor: 'rgba(51, 51, 51, 1)',
       lineColor: 'rgba(51, 51, 51, 1)',
+      signalColor: 'rgba(51, 51, 51, 1)',
     });
   });
 });

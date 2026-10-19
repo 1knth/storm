@@ -313,7 +313,7 @@ function MarkdownPre({
     if (props.className?.split(/\s+/).includes('language-chart'))
       return (
         <div {...sourceProps}>
-          <NumericChart source={source} />
+          <NumericChart source={source} appearance={appearance} />
         </div>
       );
   }
