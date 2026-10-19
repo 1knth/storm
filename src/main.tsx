@@ -33,6 +33,10 @@ import { loadAppearance, saveAppearance } from './appearance';
 import type { Appearance } from './appearance';
 import { createAgentDocumentHost } from './documents/agentDocumentHost';
 import { isAgentTabProtected } from './documents/agentTabProtection';
+import {
+  STARTUP_VAULT_ERROR,
+  shouldNotifyVaultError,
+} from './startupVaultError';
 
 function ShortcutGroup({ title, items }: { title: string; items: string[] }) {
   return (
@@ -443,10 +447,14 @@ function App() {
     rememberCurrentSession(vaultId);
   };
   const [vaultError, setVaultErrorState] = useState<string | null>(null);
+  const vaultErrorRef = useRef<string | null>(null);
   const setVaultError = (message: string | null) => {
+    const shouldNotify = shouldNotifyVaultError(vaultErrorRef.current, message);
+    if (message && !shouldNotify) return;
+    vaultErrorRef.current = message;
     setVaultErrorState(message);
     if (!message) lastCheckpointError.current = null;
-    if (message) notifyError(message);
+    if (shouldNotify) notifyError(message);
   };
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
@@ -1184,9 +1192,7 @@ function App() {
           (item) => item.kind === 'note' || item.kind === 'image',
         )
       ) {
-        setVaultError(
-          'No saved notes could be restored; current tabs were kept.',
-        );
+        setVaultError(STARTUP_VAULT_ERROR);
         return;
       }
       const savedGroups = layout.groups.map(
@@ -2052,23 +2058,15 @@ function App() {
             if (current && listRequestId === notesRefreshRequest.current) {
               setNotes(listed);
             }
-          } catch (error) {
-            if (current)
-              setVaultError(
-                error instanceof Error ? error.message : 'Unable to load vault',
-              );
+          } catch {
+            if (current) setVaultError(STARTUP_VAULT_ERROR);
           } finally {
             if (current) setEntriesLoading(false);
           }
         },
       )
-      .catch((error) => {
-        if (current)
-          setVaultError(
-            error instanceof Error
-              ? error.message
-              : 'Unable to load vault registry',
-          );
+      .catch(() => {
+        if (current) setVaultError(STARTUP_VAULT_ERROR);
       });
     return () => {
       current = false;
