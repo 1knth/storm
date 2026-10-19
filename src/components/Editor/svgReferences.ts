@@ -3,14 +3,19 @@ const LOCAL_FRAGMENT = /^#[\w.-]+$/;
 
 /** Keep local SVG paint-server references, but never external CSS resources. */
 export function hasExternalCssReference(css: string): boolean {
-  if (/@import\b|@font-face\b/i.test(css)) return true;
-  if (/[\\\\/*]/.test(css)) return true;
+  // Comments are inert separators: replacing them with whitespace prevents a
+  // comment from joining tokens (for example, `u/**/rl`) during inspection.
+  const inspectedCss = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  if (inspectedCss.includes('/*') || inspectedCss.includes('*/')) return true;
+  if (/\\|@import\b|@font-face\b/i.test(inspectedCss)) return true;
 
   CSS_URL.lastIndex = 0;
-  for (const match of css.matchAll(CSS_URL)) {
+  for (const match of inspectedCss.matchAll(CSS_URL)) {
     if (!LOCAL_FRAGMENT.test(match[2].trim())) return true;
   }
-  return false;
+  // Reject malformed or unquoted URL functions rather than overlooking them.
+  const withoutValidUrls = inspectedCss.replace(CSS_URL, '');
+  return /url\s*\(/i.test(withoutValidUrls);
 }
 
 /** Remove external CSS references without rewriting or trusting their contents. */
