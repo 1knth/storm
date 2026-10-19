@@ -15,13 +15,18 @@ import {
   isGroupColor,
   type GroupColor,
 } from '../shared/groupColors';
-import type { SavedTabLayout } from '../shared/types';
+import type {
+  SavedTabLayout,
+  SidebarRootRef,
+  SidebarMoveRequest,
+} from '../shared/types';
 
 export interface RegisteredVault {
   id: string;
   name: string;
   path: string;
   groupId?: string | null;
+  pinned?: boolean;
 }
 
 export interface VaultGroup {
@@ -37,6 +42,7 @@ interface Settings extends Record<string, unknown> {
   lastVaultPath?: string;
   vaultGroups?: VaultGroup[];
   savedTabLayouts?: Record<string, SavedTabLayout>;
+  sidebarRootOrder?: SidebarRootRef[];
 }
 
 const MAX_GROUP_NAME_LENGTH = 80;
@@ -163,17 +169,105 @@ export class VaultRegistry {
   async list(): Promise<{
     vaults: RegisteredVault[];
     activeVaultId: string | null;
+    sidebarRootOrder: SidebarRootRef[];
   }> {
     await this.load();
     return {
       vaults: [...(this.settings.vaults ?? [])],
       activeVaultId: this.settings.activeVaultId ?? null,
+      sidebarRootOrder: this.getRootOrder(),
     };
   }
 
   async listGroups(): Promise<VaultGroup[]> {
     await this.load();
     return (this.settings.vaultGroups ?? []).map((group) => ({ ...group }));
+  }
+
+  async moveSidebarItem(request: SidebarMoveRequest): Promise<void> {
+    return this.runMutation(async () => {
+      await this.load();
+      const order = this.getRootOrder();
+      const key = (ref: SidebarRootRef) => `${ref.kind}:${ref.id}`;
+      const moving = request.item;
+      const vaults = this.settings.vaults ?? [];
+      const groups = this.settings.vaultGroups ?? [];
+      const sourceExists =
+        moving.kind === 'vault'
+          ? vaults.some((vault) => vault.id === moving.id)
+          : groups.some((group) => group.id === moving.id);
+      if (!sourceExists) throw new Error('Unknown sidebar item');
+
+      const movingIndex = order.findIndex((ref) => key(ref) === key(moving));
+      if (movingIndex >= 0) order.splice(movingIndex, 1);
+      if (
+        request.before &&
+        (key(request.before) === key(moving) ||
+          !order.some((ref) => key(ref) === key(request.before!)))
+      )
+        throw new Error('Invalid sidebar anchor');
+
+      const anchorIndex = request.before
+        ? order.findIndex((ref) => key(ref) === key(request.before!))
+        : order.length;
+      order.splice(anchorIndex, 0, moving);
+      const next = { ...this.settings, sidebarRootOrder: order };
+      if (moving.kind === 'vault') {
+        next.vaults = vaults.map((vault) =>
+          vault.id === moving.id
+            ? { ...vault, groupId: null, pinned: false }
+            : vault,
+        );
+      }
+      await this.update(next);
+    });
+  }
+
+  private getRootOrder(): SidebarRootRef[] {
+    const vaults = this.settings.vaults ?? [];
+    const groups = this.settings.vaultGroups ?? [];
+    const valid = (ref: SidebarRootRef) =>
+      ref.kind === 'vault'
+        ? vaults.some(
+            (vault) =>
+              vault.id === ref.id && vault.pinned !== true && !vault.groupId,
+          )
+        : groups.some((group) => group.id === ref.id);
+    const order: SidebarRootRef[] = [];
+    const seen = new Set<string>();
+    const storedOrder: unknown = this.settings.sidebarRootOrder;
+    if (Array.isArray(storedOrder)) {
+      for (const candidate of storedOrder) {
+        if (
+          !candidate ||
+          typeof candidate !== 'object' ||
+          Array.isArray(candidate)
+        )
+          continue;
+        const ref = candidate as Partial<SidebarRootRef>;
+        if (
+          (ref.kind !== 'vault' && ref.kind !== 'group') ||
+          typeof ref.id !== 'string' ||
+          !ref.id
+        )
+          continue;
+        const normalized = { kind: ref.kind, id: ref.id } as SidebarRootRef;
+        const refKey = `${normalized.kind}:${normalized.id}`;
+        if (valid(normalized) && !seen.has(refKey)) {
+          order.push(normalized);
+          seen.add(refKey);
+        }
+      }
+    }
+    for (const vault of vaults) {
+      const ref = { kind: 'vault' as const, id: vault.id };
+      if (valid(ref) && !seen.has(`vault:${vault.id}`)) order.push(ref);
+    }
+    for (const group of groups) {
+      const ref = { kind: 'group' as const, id: group.id };
+      if (!seen.has(`group:${group.id}`)) order.push(ref);
+    }
+    return order;
   }
 
   async createGroup(name: string): Promise<VaultGroup> {
@@ -274,6 +368,72 @@ export class VaultRegistry {
         ...this.settings,
         vaultGroups: groups.filter((group) => group.id !== id),
         vaults,
+      });
+    });
+  }
+
+  /** Atomically place a vault in its bucket, preserving other buckets' order.
+   * beforeVaultId is a same-bucket anchor; null appends. Pinning remembers groupId.
+   */
+  async setVaultPlacement(request: {
+    vaultId: string;
+    groupId: string | null;
+    pinned: boolean;
+    beforeVaultId: string | null;
+  }): Promise<void> {
+    return this.runMutation(async () => {
+      await this.load();
+      const vaults = this.settings.vaults ?? [];
+      const moving = vaults.find((vault) => vault.id === request.vaultId);
+      if (!moving) throw new Error('Unknown vault');
+      if (
+        request.groupId !== null &&
+        !(this.settings.vaultGroups ?? []).some(
+          (group) => group.id === request.groupId,
+        )
+      )
+        throw new Error('Unknown vault group');
+      if (request.beforeVaultId === request.vaultId)
+        throw new Error('Invalid placement anchor');
+      const nextMoving = {
+        ...moving,
+        groupId: request.groupId,
+        pinned: request.pinned,
+      };
+      const rest = vaults.filter((vault) => vault.id !== moving.id);
+      const bucket = (vault: RegisteredVault) =>
+        `${vault.pinned === true}:${vault.groupId ?? ''}`;
+      const key = bucket(nextMoving);
+      const target = request.beforeVaultId
+        ? rest.find((vault) => vault.id === request.beforeVaultId)
+        : undefined;
+      if (request.beforeVaultId && (!target || bucket(target) !== key))
+        throw new Error('Invalid placement anchor');
+      const sameBucket = rest.filter((vault) => bucket(vault) === key);
+      const insertion = target
+        ? rest.indexOf(target)
+        : sameBucket.length
+          ? rest.indexOf(sameBucket[sameBucket.length - 1]) + 1
+          : rest.length;
+      rest.splice(insertion, 0, nextMoving);
+      await this.update({ ...this.settings, vaults: rest });
+    });
+  }
+
+  async reorderGroups(groupIds: string[]): Promise<void> {
+    return this.runMutation(async () => {
+      await this.load();
+      const groups = this.settings.vaultGroups ?? [];
+      if (
+        groupIds.length !== groups.length ||
+        new Set(groupIds).size !== groups.length ||
+        groupIds.some((id) => !groups.some((group) => group.id === id))
+      )
+        throw new Error('Invalid group order');
+      const byId = new Map(groups.map((group) => [group.id, group]));
+      await this.update({
+        ...this.settings,
+        vaultGroups: groupIds.map((id) => byId.get(id)!),
       });
     });
   }
@@ -494,11 +654,13 @@ export class VaultRegistry {
     }
     this.settings.vaultGroups = groups;
     const validGroupIds = new Set(groups.map((group) => group.id));
-    this.settings.vaults = this.settings.vaults.map((vault) =>
-      vault.groupId && !validGroupIds.has(vault.groupId)
-        ? { ...vault, groupId: null }
-        : vault,
-    );
+    this.settings.vaults = this.settings.vaults.map((vault) => ({
+      ...vault,
+      pinned: vault.pinned === true,
+      ...(vault.groupId && !validGroupIds.has(vault.groupId)
+        ? { groupId: null }
+        : {}),
+    }));
     if (this.settings.lastVaultPath && this.settings.vaults.length === 0) {
       try {
         const canonicalPath = await realpath(this.settings.lastVaultPath);
@@ -519,6 +681,7 @@ export class VaultRegistry {
         this.settings.activeVaultId = this.settings.vaults[0].id;
       }
     }
+    this.settings.sidebarRootOrder = this.getRootOrder();
     this.loaded = true;
   }
 

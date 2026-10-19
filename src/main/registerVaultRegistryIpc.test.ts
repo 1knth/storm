@@ -12,7 +12,11 @@ function setup() {
   const calls: unknown[][] = [];
   const vault = { id: 'vault-1', path: '/vault' };
   const registry = {
-    list: async () => ({ vaults: [vault] }),
+    list: async () => ({ vaults: [vault], sidebarRootOrder: [] }),
+    moveSidebarItem: (...args: unknown[]) => {
+      calls.push(['moveSidebarItem', ...args]);
+      return true;
+    },
     listGroups: () => [],
     getTabLayout: (...args: unknown[]) => {
       calls.push(['getTabLayout', ...args]);
@@ -44,6 +48,14 @@ function setup() {
     },
     setGroupCollapsed: (...args: unknown[]) => {
       calls.push(['setGroupCollapsed', ...args]);
+      return true;
+    },
+    setVaultPlacement: (...args: unknown[]) => {
+      calls.push(['setVaultPlacement', ...args]);
+      return true;
+    },
+    reorderGroups: (...args: unknown[]) => {
+      calls.push(['reorderGroups', ...args]);
       return true;
     },
     add: (...args: unknown[]) => {
@@ -102,13 +114,40 @@ test('returns registry and group lists', async () => {
   const { handlers } = setup();
   assert.deepEqual(await invoke(handlers, 'vault:registry-list'), {
     vaults: [{ id: 'vault-1', path: '/vault' }],
+    sidebarRootOrder: [],
   });
   assert.deepEqual(invoke(handlers, 'vault:groups-list'), []);
+});
+
+test('forwards a registered group-member vault root drop through sidebar IPC', async () => {
+  const { handlers, calls } = setup();
+  const request = {
+    item: { kind: 'vault' as const, id: 'group-member' },
+    before: { kind: 'group' as const, id: 'visible-group' },
+  };
+  assert.equal(await invoke(handlers, 'vault:sidebar-move', request), true);
+  assert.deepEqual(calls, [['moveSidebarItem', request]]);
 });
 
 test('preserves validation errors for invalid payloads', async () => {
   const { handlers, calls } = setup();
   const cases: [string, unknown[], string][] = [
+    ['vault:sidebar-move', [null], 'Invalid sidebar move'],
+    [
+      'vault:sidebar-move',
+      [
+        {
+          item: { kind: 'vault', id: 'v' },
+          before: { kind: 'other', id: 'x' },
+        },
+      ],
+      'Invalid sidebar move',
+    ],
+    [
+      'vault:sidebar-move',
+      [{ item: { kind: 'group', id: '' }, before: null }],
+      'Invalid sidebar move',
+    ],
     ['vault:tab-layout-get', [null], 'Invalid vault ID'],
     ['vault:tab-layout-save', [1, {}], 'Invalid vault ID'],
     ['vault:group-create', [false], 'Invalid group name'],
@@ -124,6 +163,36 @@ test('preserves validation errors for invalid payloads', async () => {
     ['vault:registry-add', [null], 'Invalid vault directory'],
     ['vault:registry-activate', [null], 'Invalid vault ID'],
     ['vault:registry-remove', [null], 'Invalid vault ID'],
+    ['vault:placement-set', [null], 'Invalid vault placement'],
+    [
+      'vault:placement-set',
+      [{ vaultId: null, groupId: null, pinned: true, beforeVaultId: null }],
+      'Invalid vault placement',
+    ],
+    [
+      'vault:placement-set',
+      [
+        {
+          vaultId: 'vault-1',
+          groupId: null,
+          pinned: 'yes',
+          beforeVaultId: null,
+        },
+      ],
+      'Invalid vault placement',
+    ],
+    [
+      'vault:placement-set',
+      [{ vaultId: 'vault-1', groupId: 1, pinned: true, beforeVaultId: null }],
+      'Invalid vault placement',
+    ],
+    [
+      'vault:placement-set',
+      [{ vaultId: 'vault-1', groupId: null, pinned: true, beforeVaultId: 1 }],
+      'Invalid vault placement',
+    ],
+    ['vault:groups-reorder', [null], 'Invalid group order'],
+    ['vault:groups-reorder', [['g', null]], 'Invalid group order'],
   ];
   for (const [channel, args, message] of cases) {
     await assert.rejects(

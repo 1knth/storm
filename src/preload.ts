@@ -13,6 +13,8 @@ import type {
   PasteImageResult,
   VaultNoteLinkRequest,
   VaultNoteLinkResult,
+  SidebarMoveRequest,
+  SidebarRootRef,
   CreateEntryRequest,
   VaultGroup,
   SavedTabLayout,
@@ -138,9 +140,12 @@ contextBridge.exposeInMainWorld('vault', {
   registryList: (): Promise<{
     vaults: RegisteredVault[];
     activeVaultId: string | null;
+    sidebarRootOrder: SidebarRootRef[];
   }> => ipcRenderer.invoke('vault:registry-list'),
   groupsList: (): Promise<VaultGroup[]> =>
     ipcRenderer.invoke('vault:groups-list'),
+  sidebarMove: (request: SidebarMoveRequest): Promise<void> =>
+    ipcRenderer.invoke('vault:sidebar-move', request),
   saveTabLayout: (vaultId: string, layout: SavedTabLayout): Promise<void> =>
     ipcRenderer.invoke('vault:tab-layout-save', vaultId, layout),
   getTabLayout: (vaultId: string): Promise<SavedTabLayout | null> =>
@@ -182,6 +187,14 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.invoke('vault:group-remove', id),
   groupSetVault: (vaultId: string, groupId: string | null): Promise<void> =>
     ipcRenderer.invoke('vault:group-set-vault', vaultId, groupId),
+  vaultSetPlacement: (request: {
+    vaultId: string;
+    groupId: string | null;
+    pinned: boolean;
+    beforeVaultId: string | null;
+  }): Promise<void> => ipcRenderer.invoke('vault:placement-set', request),
+  groupsReorder: (groupIds: string[]): Promise<void> =>
+    ipcRenderer.invoke('vault:groups-reorder', groupIds),
   groupSetCollapsed: (id: string, collapsed: boolean): Promise<void> =>
     ipcRenderer.invoke('vault:group-set-collapsed', id, collapsed),
   groupSetColor: (id: string, color: GroupColor): Promise<void> =>

@@ -5,6 +5,7 @@ export interface RegisteredVault {
   name: string;
   path: string;
   groupId?: string | null;
+  pinned?: boolean;
 }
 
 export interface VaultGroup {
@@ -12,6 +13,15 @@ export interface VaultGroup {
   name: string;
   collapsed: boolean;
   color?: GroupColor;
+}
+
+export type SidebarRootRef =
+  | { kind: 'vault'; id: string }
+  | { kind: 'group'; id: string };
+
+export interface SidebarMoveRequest {
+  item: SidebarRootRef;
+  before: SidebarRootRef | null;
 }
 
 export type SavedTabLayout = {
@@ -128,8 +138,10 @@ declare global {
       registryList: () => Promise<{
         vaults: RegisteredVault[];
         activeVaultId: string | null;
+        sidebarRootOrder: SidebarRootRef[];
       }>;
       groupsList: () => Promise<VaultGroup[]>;
+      sidebarMove: (request: SidebarMoveRequest) => Promise<void>;
       saveTabLayout: (vaultId: string, layout: SavedTabLayout) => Promise<void>;
       getTabLayout: (vaultId: string) => Promise<SavedTabLayout | null>;
       onRestoreTabs: (callback: () => void) => () => void;
@@ -148,6 +160,13 @@ declare global {
       groupRename: (id: string, name: string) => Promise<VaultGroup>;
       groupRemove: (id: string) => Promise<void>;
       groupSetVault: (vaultId: string, groupId: string | null) => Promise<void>;
+      vaultSetPlacement: (request: {
+        vaultId: string;
+        groupId: string | null;
+        pinned: boolean;
+        beforeVaultId: string | null;
+      }) => Promise<void>;
+      groupsReorder: (groupIds: string[]) => Promise<void>;
       groupSetCollapsed: (id: string, collapsed: boolean) => Promise<void>;
       groupSetColor: (id: string, color: GroupColor) => Promise<void>;
       registryAdd: (
