@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react';
 import { AiOutlineFullscreen } from 'react-icons/ai';
-import { FaBolt } from 'react-icons/fa';
+import { FaBrain } from 'react-icons/fa';
 import { markdown } from '@codemirror/lang-markdown';
 import { Vim, vim } from '@replit/codemirror-vim';
 import { Compartment, EditorState, Prec, Transaction } from '@codemirror/state';
@@ -1124,7 +1124,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     onClick={toggleAgentStatusVisibility}
                     className="editor-action-button app-icon-button"
                   >
-                    <FaBolt size={12} aria-hidden="true" />
+                    <FaBrain size={12} aria-hidden="true" />
                   </button>
                   <button
                     type="button"
