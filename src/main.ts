@@ -7,6 +7,12 @@ import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
 import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
+
+app.setName('Storm');
+// Keep the pre-branding lowercase data directory so existing vault settings survive.
+if (!app.commandLine.hasSwitch('user-data-dir')) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'storm'));
+}
 import { readVaultAsset, readVaultImage } from './vault/vaultAssets';
 import { savePastedImage } from './vault/pasteImage';
 import { VaultWriteBarrier } from './vault/writeBarrier';
