@@ -16,7 +16,7 @@ const config: ForgeConfig = {
     extraResource: path.resolve('build/cli'),
   },
   hooks: {
-    generateAssets: async (_config, platform, arch) => {
+    prePackage: async (_config, platform, arch) => {
       await buildCliBinary(platform, arch);
     },
   },
