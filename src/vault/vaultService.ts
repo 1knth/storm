@@ -219,10 +219,37 @@ function firstSentence(markdown: string): string {
     /^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/,
     '',
   );
+  let fence: { character: string; length: number } | null = null;
   const prose = withoutFrontmatter
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .find((line) => line && !line.startsWith('#'));
+    .find((line) => {
+      if (fence) {
+        const closingFence = line.match(/^(`+|~+)\s*$/);
+        if (
+          closingFence &&
+          closingFence[1][0] === fence.character &&
+          closingFence[1].length >= fence.length
+        ) {
+          fence = null;
+          return false;
+        }
+        return Boolean(line);
+      }
+
+      const openingFence = line.match(/^(`{3,}|~{3,})(.*)$/);
+      if (
+        openingFence &&
+        !(/`/.test(openingFence[2]) && openingFence[1][0] === '`')
+      ) {
+        fence = {
+          character: openingFence[1][0],
+          length: openingFence[1].length,
+        };
+        return false;
+      }
+      return line && !line.startsWith('#');
+    });
   if (!prose) return '';
 
   const text = prose.replace(/^(?:[-*+]\s+|\d+[.)]\s+|>\s*)+/, '').trim();

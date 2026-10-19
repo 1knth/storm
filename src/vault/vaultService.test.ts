@@ -13,6 +13,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { VaultService } from './vaultService';
 import { readVaultAsset } from './vaultAssets';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import NotePeek from '../components/NotePeek';
 
 const fixtureRoots: string[] = [];
 afterEach(async () => {
@@ -70,6 +73,40 @@ test('lists images as lightweight entries while preserving notes and excluding S
     entries.some((entry) => entry.name === '.git'),
     false,
   );
+});
+
+test('sidebar peeks omit fenced delimiters and retain visible content', async () => {
+  const { root, service } = await fixture();
+  const cases = [
+    ['```mermaid\ngraph TD; A-->B\n```', 'graph TD; A-->B'],
+    ['  ~~~~ts\nconst answer = 42;\n  ~~~~~\n', 'const answer = 42;'],
+    ['```ts\nconst value = `literal`;\n```', 'const value = `literal`;'],
+    ['Inline `code` remains visible.', 'Inline `code` remains visible.'],
+    ['~~~\n\n~~~\nA later sentence.', 'A later sentence.'],
+    [' \n\t ', ''],
+  ];
+
+  for (const [markdown, expectedPeek] of cases) {
+    await writeFile(path.join(root, 'note.md'), markdown);
+    const entry = (await service.listNotes()).find(
+      (candidate) => candidate.name === 'note.md',
+    );
+    assert.equal(entry?.peek, expectedPeek, markdown);
+    const markup = renderToStaticMarkup(
+      createElement(NotePeek, { markdown: entry?.peek ?? '' }),
+    );
+    if (expectedPeek) {
+      const renderedText = markup
+        .replace(/<[^>]*>/g, '')
+        .replace(/&gt;/g, '>')
+        .replace(/&lt;/g, '<')
+        .replace(/&amp;/g, '&');
+      assert.ok(renderedText.trim(), markdown);
+      assert.doesNotMatch(markup, /<pre|<code[^>]*>```/);
+    } else {
+      assert.match(markup, /<span class="italic text-white\/40">empty<\/span>/);
+    }
+  }
 });
 
 test('reads assets with signature, path, MIME, and size validation', async () => {

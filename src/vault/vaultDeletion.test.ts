@@ -14,6 +14,7 @@ test('accepts nested Markdown and folders, rejects roots, unsafe paths and prote
     const root = path.join(temp, 'vault');
     await mkdir(path.join(root, 'sub', 'nested'), { recursive: true });
     await writeFile(path.join(root, 'sub', 'note.MD'), 'note');
+    await writeFile(path.join(root, 'sub', 'photo.webp'), 'fixture');
     await mkdir(path.join(root, '.git'));
     assert.equal(
       (await resolveDeletionTarget(root, 'sub/note.MD')).kind,
@@ -23,6 +24,9 @@ test('accepts nested Markdown and folders, rejects roots, unsafe paths and prote
       (await resolveDeletionTarget(root, 'sub/nested')).kind,
       'folder',
     );
+    const image = await resolveDeletionTarget(root, 'sub/photo.webp');
+    assert.equal(image.kind, 'image');
+    assert.equal(path.basename(image.absolutePath), 'photo.webp');
     for (const unsafe of [
       '',
       '.',
@@ -31,6 +35,8 @@ test('accepts nested Markdown and folders, rejects roots, unsafe paths and prote
       'sub/../../outside.md',
       '/tmp/file.md',
       '.git',
+      'sub/not-image.svg',
+      'sub/note.MD/../photo.webp',
     ])
       await assert.rejects(resolveDeletionTarget(root, unsafe));
     await assert.rejects(resolveDeletionTarget(root, ''));

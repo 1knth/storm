@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import ContextMenu from './ContextMenu';
 import type { ContextMenuPosition } from './ContextMenu';
 import { contextMenuPointForElement, isContextMenuKey } from './ContextMenu';
+import { getExplorerContextMenuItems } from './fileExplorerContextMenu';
 import { FaPlus } from 'react-icons/fa';
 import { RiMenuUnfold4Fill } from 'react-icons/ri';
 import Note from './Note';
@@ -32,7 +33,7 @@ type FileExplorerProps = {
   vaultId: string | null;
   onCreate: (kind: 'note' | 'folder', parentPath: string) => void;
   onCreateNote: () => void;
-  onDeleteEntry?: (path: string, kind: 'note' | 'folder') => void;
+  onDeleteEntry?: (path: string, kind: 'note' | 'folder' | 'image') => void;
   creationPending: boolean;
   onAddVault: () => void;
   onUnloadAllVaults: () => Promise<boolean>;
@@ -128,7 +129,7 @@ export default function FileExplorer({
   const [contextMenu, setContextMenu] = useState<{
     position: ContextMenuPosition;
     parent: string;
-    target: { path: string; kind: 'note' | 'folder' } | null;
+    target: { path: string; kind: 'note' | 'folder' | 'image' } | null;
     returnFocusTo: HTMLElement | null;
   } | null>(null);
   const openContextMenu = (
@@ -138,7 +139,22 @@ export default function FileExplorer({
     const row = target.closest<HTMLElement>('[data-entry-path]');
     const path = row?.dataset.entryPath ?? '';
     const isFolder = row?.dataset.entryDirectory === 'true';
-    const isImage = row?.dataset.entryKind === 'image';
+    const entryKind = row?.dataset.entryKind;
+    const isImage = entryKind === 'image';
+    const isNote = entryKind === 'note';
+    if (
+      row &&
+      (!path ||
+        (!isFolder && !isImage && !isNote) ||
+        (isFolder && entryKind !== 'directory'))
+    ) {
+      setContextMenu(null);
+      return;
+    }
+    if (row && !isFolder && !onDeleteEntry) {
+      setContextMenu(null);
+      return;
+    }
     const returnFocusTo =
       row?.querySelector<HTMLElement>('button') ??
       target.closest<HTMLElement>('[data-pane="explorer"]');
@@ -146,8 +162,9 @@ export default function FileExplorer({
       position,
       returnFocusTo,
       parent: !path || isFolder ? path : path.split('/').slice(0, -1).join('/'),
-      target:
-        path && !isImage ? { path, kind: isFolder ? 'folder' : 'note' } : null,
+      target: path
+        ? { path, kind: isFolder ? 'folder' : isImage ? 'image' : 'note' }
+        : null,
     });
   };
 
@@ -336,29 +353,17 @@ export default function FileExplorer({
           position={contextMenu.position}
           returnFocusTo={contextMenu.returnFocusTo}
           onClose={() => setContextMenu(null)}
-          label="Add to vault"
-          items={[
-            ...(['note', 'folder'] as const).map((kind) => ({
-              id: `new-${kind}`,
-              label: `New ${kind}`,
-              onSelect: () => onCreate(kind, contextMenu.parent),
-            })),
-            ...(contextMenu.target && onDeleteEntry
-              ? [
-                  { type: 'separator' as const, id: 'entry-actions' },
-                  {
-                    id: 'delete-entry',
-                    label: `Move ${contextMenu.target.kind} to Trash…`,
-                    danger: true,
-                    onSelect: () =>
-                      onDeleteEntry(
-                        contextMenu.target!.path,
-                        contextMenu.target!.kind,
-                      ),
-                  },
-                ]
-              : []),
-          ]}
+          label={
+            contextMenu.target?.kind === 'folder'
+              ? 'Add to vault'
+              : 'File actions'
+          }
+          items={getExplorerContextMenuItems(
+            contextMenu.target,
+            contextMenu.parent,
+            onCreate,
+            onDeleteEntry,
+          )}
         />
       )}
       {settingsOpen &&
