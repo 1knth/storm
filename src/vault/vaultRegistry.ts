@@ -15,7 +15,11 @@ import {
   isGroupColor,
   type GroupColor,
 } from '../shared/groupColors';
-import type { SavedTabLayout } from '../shared/types';
+import type {
+  SavedTabLayout,
+  SidebarRootRef,
+  SidebarMoveRequest,
+} from '../shared/types';
 
 export interface RegisteredVault {
   id: string;
@@ -38,6 +42,7 @@ interface Settings extends Record<string, unknown> {
   lastVaultPath?: string;
   vaultGroups?: VaultGroup[];
   savedTabLayouts?: Record<string, SavedTabLayout>;
+  sidebarRootOrder?: SidebarRootRef[];
 }
 
 const MAX_GROUP_NAME_LENGTH = 80;
@@ -164,17 +169,100 @@ export class VaultRegistry {
   async list(): Promise<{
     vaults: RegisteredVault[];
     activeVaultId: string | null;
+    sidebarRootOrder: SidebarRootRef[];
   }> {
     await this.load();
     return {
       vaults: [...(this.settings.vaults ?? [])],
       activeVaultId: this.settings.activeVaultId ?? null,
+      sidebarRootOrder: this.getRootOrder(),
     };
   }
 
   async listGroups(): Promise<VaultGroup[]> {
     await this.load();
     return (this.settings.vaultGroups ?? []).map((group) => ({ ...group }));
+  }
+
+  async moveSidebarItem(request: SidebarMoveRequest): Promise<void> {
+    return this.runMutation(async () => {
+      await this.load();
+      const order = this.getRootOrder();
+      const key = (ref: SidebarRootRef) => `${ref.kind}:${ref.id}`;
+      const movingIndex = order.findIndex(
+        (ref) => key(ref) === key(request.item),
+      );
+      if (movingIndex < 0) throw new Error('Unknown sidebar item');
+      const moving = order[movingIndex];
+      if (request.before && key(request.before) === key(moving))
+        throw new Error('Invalid sidebar anchor');
+      if (
+        request.before &&
+        !order.some((ref) => key(ref) === key(request.before!))
+      )
+        throw new Error('Invalid sidebar anchor');
+      order.splice(movingIndex, 1);
+      const anchorIndex = request.before
+        ? order.findIndex((ref) => key(ref) === key(request.before!))
+        : order.length;
+      order.splice(anchorIndex, 0, moving);
+      const next = { ...this.settings, sidebarRootOrder: order };
+      if (moving.kind === 'vault') {
+        next.vaults = (this.settings.vaults ?? []).map((vault) =>
+          vault.id === moving.id
+            ? { ...vault, groupId: null, pinned: false }
+            : vault,
+        );
+      }
+      await this.update(next);
+    });
+  }
+
+  private getRootOrder(): SidebarRootRef[] {
+    const vaults = this.settings.vaults ?? [];
+    const groups = this.settings.vaultGroups ?? [];
+    const valid = (ref: SidebarRootRef) =>
+      ref.kind === 'vault'
+        ? vaults.some(
+            (vault) =>
+              vault.id === ref.id && vault.pinned !== true && !vault.groupId,
+          )
+        : groups.some((group) => group.id === ref.id);
+    const order: SidebarRootRef[] = [];
+    const seen = new Set<string>();
+    const storedOrder: unknown = this.settings.sidebarRootOrder;
+    if (Array.isArray(storedOrder)) {
+      for (const candidate of storedOrder) {
+        if (
+          !candidate ||
+          typeof candidate !== 'object' ||
+          Array.isArray(candidate)
+        )
+          continue;
+        const ref = candidate as Partial<SidebarRootRef>;
+        if (
+          (ref.kind !== 'vault' && ref.kind !== 'group') ||
+          typeof ref.id !== 'string' ||
+          !ref.id
+        )
+          continue;
+        const normalized = { kind: ref.kind, id: ref.id } as SidebarRootRef;
+        const refKey = `${normalized.kind}:${normalized.id}`;
+        if (valid(normalized) && !seen.has(refKey)) {
+          order.push(normalized);
+          seen.add(refKey);
+        }
+      }
+    }
+    for (const vault of vaults) {
+      const ref = { kind: 'vault' as const, id: vault.id };
+      if (valid(ref) && !seen.has(`vault:${vault.id}`)) order.push(ref);
+    }
+    for (const group of groups) {
+      const ref = { kind: 'group' as const, id: group.id };
+      if (!seen.has(`group:${group.id}`)) order.push(ref);
+    }
+    return order;
   }
 
   async createGroup(name: string): Promise<VaultGroup> {
@@ -588,6 +676,7 @@ export class VaultRegistry {
         this.settings.activeVaultId = this.settings.vaults[0].id;
       }
     }
+    this.settings.sidebarRootOrder = this.getRootOrder();
     this.loaded = true;
   }
 

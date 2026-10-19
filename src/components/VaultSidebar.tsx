@@ -4,15 +4,17 @@ import ContextMenu from './ContextMenu';
 import type { ContextMenuItem, ContextMenuPosition } from './ContextMenu';
 import { contextMenuPointForElement, isContextMenuKey } from './ContextMenu';
 import type { DragEvent, FormEvent } from 'react';
-import type { RegisteredVault, VaultGroup } from '../shared/types';
+import type {
+  RegisteredVault,
+  SidebarRootRef,
+  VaultGroup,
+} from '../shared/types';
 import { deriveVaultSidebarLayout } from '../shared/vaultSidebarLayout';
 import {
   beginVaultSidebarDrag,
-  groupDropAnchor,
-  groupHeaderVaultDrop,
   handleVaultSidebarDrop,
   readVaultSidebarDragPayload,
-  reorderBefore,
+  rootItemDropAnchor,
   vaultDropAnchor,
   vaultPlacementForDrop,
 } from '../shared/vaultSidebarDrag';
@@ -26,9 +28,11 @@ import { RiMenuUnfold4Fill } from 'react-icons/ri';
 type Props = {
   vaults: RegisteredVault[];
   groups: VaultGroup[];
+  sidebarRootOrder: SidebarRootRef[];
   visibleVaults: RegisteredVault[];
   onGroupsChange: (groups: VaultGroup[]) => void;
   onVaultsChange: (vaults: RegisteredVault[]) => void;
+  onSidebarRootOrderChange: (order: SidebarRootRef[]) => void;
   activeVaultId: string | null;
   onActivate: (id: string, focusExplorer?: boolean) => void;
   onAdd: () => void;
@@ -45,9 +49,11 @@ type Props = {
 export default function VaultSidebar({
   vaults,
   groups,
+  sidebarRootOrder,
   visibleVaults,
   onGroupsChange,
   onVaultsChange,
+  onSidebarRootOrderChange,
   activeVaultId,
   onActivate,
   onAdd,
@@ -90,6 +96,7 @@ export default function VaultSidebar({
     ]);
     onGroupsChange(nextGroups);
     onVaultsChange(result.vaults);
+    onSidebarRootOrderChange(result.sidebarRootOrder);
   };
   const run = async (operation: () => Promise<unknown>) => {
     setBusy(true);
@@ -157,6 +164,7 @@ export default function VaultSidebar({
                   {
                     id: 'ungrouped',
                     label: 'Ungrouped',
+                    color: '#9ca3af',
                     selected: !vault.groupId,
                     disabled: !vault.groupId || busy,
                     onSelect: () =>
@@ -167,6 +175,8 @@ export default function VaultSidebar({
                   ...groups.map((group) => ({
                     id: `group-${group.id}`,
                     label: group.name,
+                    color:
+                      GROUP_COLORS[group.color ?? groupColorForId(group.id)],
                     selected: vault.groupId === group.id,
                     disabled: vault.groupId === group.id || busy,
                     onSelect: () =>
@@ -224,7 +234,12 @@ export default function VaultSidebar({
             ];
           })()
         : [];
-  const layout = deriveVaultSidebarLayout(vaults, groups);
+  const layout = deriveVaultSidebarLayout(vaults, groups, sidebarRootOrder);
+  const rootRefs = layout.rootItems.map((item) =>
+    item.kind === 'group'
+      ? { kind: 'group' as const, id: item.group.id }
+      : { kind: 'vault' as const, id: item.vault.id },
+  );
   const dragPayload = readVaultSidebarDragPayload;
   const beginDrag = (
     event: DragEvent,
@@ -248,9 +263,29 @@ export default function VaultSidebar({
         return;
       const source = vaults.find((vault) => vault.id === payload.id);
       if (!source) return;
-      void run(() =>
-        window.vault.vaultSetPlacement(vaultPlacementForDrop(source, target)),
-      );
+      if (source.pinned && target.groupId) {
+        void run(() =>
+          window.vault.vaultSetPlacement({
+            vaultId: source.id,
+            groupId: target.groupId,
+            pinned: false,
+            beforeVaultId: null,
+          }),
+        );
+      } else {
+        void run(() =>
+          window.vault.vaultSetPlacement(vaultPlacementForDrop(source, target)),
+        );
+      }
+    });
+  };
+  const dropRoot = (
+    event: DragEvent,
+    before: SidebarRootRef | null | undefined,
+  ) => {
+    handleVaultSidebarDrop(event, (payload) => {
+      if (!payload || busy || before === undefined) return;
+      void run(() => window.vault.sidebarMove({ item: payload, before }));
     });
   };
   const renderVault = (vault: RegisteredVault, index: number) => (
@@ -258,8 +293,24 @@ export default function VaultSidebar({
       key={vault.id}
       draggable={!busy}
       onDragStart={(event) => beginDrag(event, { kind: 'vault', id: vault.id })}
-      onDragOver={(event) => event.preventDefault()}
+      onDragOver={(event) => {
+        const rootVault = !vault.pinned && !vault.groupId;
+        const payload = dragPayload(event);
+        if (rootVault ? payload : payload?.kind === 'vault')
+          event.preventDefault();
+      }}
       onDrop={(event) => {
+        if (!vault.pinned && !vault.groupId) {
+          const rect = event.currentTarget.getBoundingClientRect();
+          const anchor = rootItemDropAnchor(
+            rootRefs,
+            dragPayload(event) ?? { kind: 'vault', id: '' },
+            { kind: 'vault', id: vault.id },
+            event.clientY >= rect.top + rect.height / 2,
+          );
+          dropRoot(event, anchor);
+          return;
+        }
         const lane = vault.pinned
           ? layout.pinnedVaults
           : vault.groupId
@@ -362,6 +413,163 @@ export default function VaultSidebar({
     </li>
   );
 
+  const renderGroup = (group: VaultGroup, members: RegisteredVault[]) => (
+    <li
+      key={group.id}
+      className="min-w-0"
+      draggable={!busy}
+      onDragStart={(event) => beginDrag(event, { kind: 'group', id: group.id })}
+      onDragOver={(event) => {
+        const payload = dragPayload(event);
+        if (payload?.kind === 'group') event.preventDefault();
+      }}
+      onDrop={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const payload = dragPayload(event);
+        const after = event.clientY >= rect.top + rect.height / 2;
+        const anchor = payload
+          ? rootItemDropAnchor(
+              rootRefs,
+              payload,
+              { kind: 'group', id: group.id },
+              after,
+            )
+          : undefined;
+        dropRoot(event, anchor);
+      }}
+    >
+      <div className="group/header flex min-w-0 items-center rounded-md">
+        <button
+          type="button"
+          onDragOver={(event) => {
+            const payload = dragPayload(event);
+            if (!payload) return;
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onDrop={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            const payload = dragPayload(event);
+            if (!payload) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const edge = Math.min(8, rect.height * 0.25);
+            const center =
+              event.clientY >= rect.top + edge &&
+              event.clientY < rect.bottom - edge;
+            if (center && payload.kind === 'vault') {
+              const source = vaults.find((vault) => vault.id === payload.id);
+              if (
+                !source ||
+                busy ||
+                (source.groupId === group.id && !source.pinned)
+              )
+                return;
+              void run(() =>
+                window.vault.vaultSetPlacement({
+                  vaultId: source.id,
+                  groupId: group.id,
+                  pinned: false,
+                  beforeVaultId: null,
+                }),
+              );
+            } else {
+              const anchor = rootItemDropAnchor(
+                rootRefs,
+                payload,
+                { kind: 'group', id: group.id },
+                event.clientY >= rect.top + rect.height / 2,
+              );
+              dropRoot(event, anchor);
+            }
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openMenu(
+              { kind: 'group', id: group.id },
+              { x: event.clientX, y: event.clientY },
+              event.currentTarget,
+            );
+          }}
+          onKeyDown={(event) => {
+            if (isContextMenuKey(event)) {
+              event.preventDefault();
+              openMenu(
+                { kind: 'group', id: group.id },
+                contextMenuPointForElement(event.currentTarget),
+                event.currentTarget,
+              );
+            }
+          }}
+          aria-expanded={!group.collapsed}
+          onClick={() =>
+            void run(() =>
+              window.vault.groupSetCollapsed(group.id, !group.collapsed),
+            )
+          }
+          className="flex min-w-0 flex-1 items-center gap-1 truncate rounded px-2 py-1.5 text-left text-xs font-semibold leading-4 text-white/70 hover:text-white"
+        >
+          <span className="flex h-4 w-3 shrink-0 items-center justify-center text-base leading-none">
+            {group.collapsed ? '▸' : '▾'}
+          </span>
+          <span
+            aria-hidden="true"
+            className="flex h-4 w-2 shrink-0 items-center justify-center"
+          >
+            <span
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{
+                backgroundColor:
+                  GROUP_COLORS[group.color ?? groupColorForId(group.id)],
+              }}
+            />
+          </span>
+          <span className="flex h-4 min-w-0 items-center truncate">
+            {group.name}
+          </span>
+          {members.length > 0 && (
+            <span className="flex h-4 shrink-0 items-center text-xs text-white/35">
+              {members.length}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          aria-label={`Group actions for ${group.name}`}
+          title={`Group actions for ${group.name}`}
+          onClick={(event) =>
+            openMenu(
+              { kind: 'group', id: group.id },
+              contextMenuPointForElement(event.currentTarget),
+              event.currentTarget,
+            )
+          }
+          className="rounded px-1 text-white/50 hover:bg-white/10 hover:text-white"
+        >
+          ⋯
+        </button>
+      </div>
+      {!group.collapsed && (
+        <ul
+          className="ml-2 space-y-0 border-l border-white/10 pl-1"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) =>
+            dropVault(event, {
+              groupId: group.id,
+              pinned: false,
+              beforeVaultId: null,
+            })
+          }
+        >
+          {members.map((vault) =>
+            renderVault(vault, visibleVaults.indexOf(vault)),
+          )}
+        </ul>
+      )}
+    </li>
+  );
+
   return (
     <aside
       data-pane="vaults"
@@ -406,7 +614,6 @@ export default function VaultSidebar({
                 returnFocusTo: event.currentTarget,
               })
             }
-            aria-haspopup="menu"
             aria-label="Create group"
             title="Create group"
             className="app-icon-button"
@@ -422,7 +629,6 @@ export default function VaultSidebar({
               })
             }
             aria-label="Add vault"
-            aria-haspopup="menu"
             title="Add vault"
             className="app-icon-button"
           >
@@ -525,174 +731,20 @@ export default function VaultSidebar({
       <ul
         className="mx-1 min-h-0 flex-1 space-y-0 overflow-y-auto"
         onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) =>
-          dropVault(event, {
-            groupId: null,
-            pinned: false,
-            beforeVaultId: null,
-          })
-        }
+        onDrop={(event) => dropRoot(event, null)}
       >
         {layout.pinnedVaults.map((vault) =>
           renderVault(vault, visibleVaults.indexOf(vault)),
         )}
-        {layout.ungroupedVaults.map((vault) =>
-          renderVault(vault, visibleVaults.indexOf(vault)),
+        {layout.rootItems.map((rootItem) =>
+          rootItem.kind === 'vault'
+            ? renderVault(rootItem.vault, visibleVaults.indexOf(rootItem.vault))
+            : renderGroup(
+                rootItem.group,
+                layout.groups.find((item) => item.id === rootItem.group.id)
+                  ?.vaults ?? [],
+              ),
         )}
-        {groups.map((group) => {
-          const members =
-            layout.groups.find((item) => item.id === group.id)?.vaults ?? [];
-          return (
-            <li
-              key={group.id}
-              className="min-w-0"
-              draggable={!busy}
-              onDragStart={(event) =>
-                beginDrag(event, { kind: 'group', id: group.id })
-              }
-              onDragOver={(event) => {
-                const payload = dragPayload(event);
-                if (payload?.kind === 'group') event.preventDefault();
-              }}
-              onDrop={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                const payload = dragPayload(event);
-                const after = event.clientY >= rect.top + rect.height / 2;
-                const anchor = groupDropAnchor(
-                  groups,
-                  payload?.kind === 'group' ? payload.id : '',
-                  group.id,
-                  after,
-                );
-                handleVaultSidebarDrop(event, (payload) => {
-                  if (!payload || busy) return;
-                  if (payload.kind === 'group') {
-                    if (payload.id === group.id) return;
-                    const ids = reorderBefore(
-                      groups.map((item) => item.id),
-                      payload.id,
-                      anchor,
-                    );
-                    if (ids) void run(() => window.vault.groupsReorder(ids));
-                  }
-                });
-              }}
-            >
-              <div className="group/header flex min-w-0 items-center rounded-md">
-                <button
-                  type="button"
-                  onDragOver={(event) => {
-                    const payload = dragPayload(event);
-                    if (payload?.kind !== 'vault') return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onDrop={(event) => {
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    const target = groupHeaderVaultDrop(
-                      event.clientY,
-                      rect.top,
-                      rect.height,
-                      group.id,
-                      layout.ungroupedVaults[0]?.id ?? null,
-                    );
-                    dropVault(event, {
-                      ...target,
-                      pinned: false,
-                    });
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openMenu(
-                      { kind: 'group', id: group.id },
-                      { x: event.clientX, y: event.clientY },
-                      event.currentTarget,
-                    );
-                  }}
-                  onKeyDown={(event) => {
-                    if (isContextMenuKey(event)) {
-                      event.preventDefault();
-                      openMenu(
-                        { kind: 'group', id: group.id },
-                        contextMenuPointForElement(event.currentTarget),
-                        event.currentTarget,
-                      );
-                    }
-                  }}
-                  aria-expanded={!group.collapsed}
-                  onClick={() =>
-                    void run(() =>
-                      window.vault.groupSetCollapsed(
-                        group.id,
-                        !group.collapsed,
-                      ),
-                    )
-                  }
-                  className="flex min-w-0 flex-1 items-center gap-1 truncate rounded px-2 py-1.5 text-left text-xs font-semibold leading-4 text-white/70 hover:text-white"
-                >
-                  <span className="flex h-4 w-3 shrink-0 items-center justify-center text-base leading-none">
-                    {group.collapsed ? '▸' : '▾'}
-                  </span>
-                  <span
-                    aria-hidden="true"
-                    className="flex h-4 w-2 shrink-0 items-center justify-center"
-                  >
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{
-                        backgroundColor:
-                          GROUP_COLORS[
-                            group.color ?? groupColorForId(group.id)
-                          ],
-                      }}
-                    />
-                  </span>
-                  <span className="flex h-4 min-w-0 items-center truncate">
-                    {group.name}
-                  </span>
-                  {members.length > 0 && (
-                    <span className="flex h-4 shrink-0 items-center text-xs text-white/35">
-                      {members.length}
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Group actions for ${group.name}`}
-                  title={`Group actions for ${group.name}`}
-                  onClick={(event) =>
-                    openMenu(
-                      { kind: 'group', id: group.id },
-                      contextMenuPointForElement(event.currentTarget),
-                      event.currentTarget,
-                    )
-                  }
-                  className="rounded px-1 text-white/50 hover:bg-white/10 hover:text-white"
-                >
-                  ⋯
-                </button>
-              </div>
-              {!group.collapsed && (
-                <ul
-                  className="ml-2 space-y-0 border-l border-white/10 pl-1"
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) =>
-                    dropVault(event, {
-                      groupId: group.id,
-                      pinned: false,
-                      beforeVaultId: null,
-                    })
-                  }
-                >
-                  {members.map((vault) =>
-                    renderVault(vault, visibleVaults.indexOf(vault)),
-                  )}
-                </ul>
-              )}
-            </li>
-          );
-        })}
       </ul>
       {groupCreateMenu && (
         <ContextMenu

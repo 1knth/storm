@@ -39,10 +39,26 @@ export function groupHeaderVaultDrop(
 ):
   | { groupId: null; beforeVaultId: string | null }
   | { groupId: string; beforeVaultId: null } {
-  if (clientY < top + height * 0.35) {
+  const edgeSize = Math.min(8, height * 0.25);
+  if (clientY < top + edgeSize) {
     return { groupId: null, beforeVaultId: firstUngroupedVaultId };
   }
   return { groupId, beforeVaultId: null };
+}
+
+export function rootItemDropAnchor<
+  T extends { kind: 'vault' | 'group'; id: string },
+>(items: T[], dragged: T, target: T, after: boolean): T | null | undefined {
+  if (dragged.kind === target.kind && dragged.id === target.id)
+    return undefined;
+  const remaining = items.filter(
+    (item) => !(item.kind === dragged.kind && item.id === dragged.id),
+  );
+  const targetIndex = remaining.findIndex(
+    (item) => item.kind === target.kind && item.id === target.id,
+  );
+  if (targetIndex < 0) return undefined;
+  return remaining[targetIndex + (after ? 1 : 0)] ?? null;
 }
 
 export function groupDropAnchor(

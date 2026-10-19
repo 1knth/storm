@@ -32,6 +32,8 @@ export type ContextMenuItem =
               label: string;
               selected?: boolean;
               disabled?: boolean;
+              indicatorColor?: string;
+              color?: string;
               onSelect: () => void;
             }[];
           };
@@ -366,7 +368,7 @@ export default function ContextMenu({
                     (document.activeElement as HTMLButtonElement)?.click();
                   }
                 }}
-                className="app-popup-surface fixed z-[1001] grid grid-cols-4 gap-1.5 p-2"
+                className={`app-popup-surface fixed z-[1001] ${item.submenu.type === 'swatches' ? 'grid grid-cols-4 gap-1.5' : 'flex min-w-44 flex-col'} p-2`}
                 style={{
                   left: position.left + 150,
                   top: position.top,
@@ -408,7 +410,19 @@ export default function ContextMenu({
                         }}
                         className={`app-popup-row flex w-full items-center justify-between gap-4 px-2 py-1.5 text-left ${option.disabled ? 'cursor-default opacity-45' : ''}`}
                       >
-                        {option.label}
+                        <span className="flex items-center gap-2">
+                          {(option.indicatorColor ?? option.color) && (
+                            <span
+                              aria-hidden="true"
+                              className="h-2.5 w-2.5 shrink-0 rounded-full"
+                              style={{
+                                backgroundColor:
+                                  option.indicatorColor ?? option.color,
+                              }}
+                            />
+                          )}
+                          {option.label}
+                        </span>
                         {option.selected && <span aria-hidden="true">✓</span>}
                       </button>
                     ))}

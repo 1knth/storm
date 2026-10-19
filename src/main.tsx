@@ -3,7 +3,12 @@ import './index.css';
 import { createRoot } from 'react-dom/client';
 import FileExplorer from './components/fileExplorer';
 import VaultSidebar from './components/VaultSidebar';
-import type { RegisteredVault, VaultEntry, VaultGroup } from './shared/types';
+import type {
+  RegisteredVault,
+  SidebarRootRef,
+  VaultEntry,
+  VaultGroup,
+} from './shared/types';
 import { deriveVisibleVaults } from './shared/vaultGroups';
 import Editor from './components/Editor/Editor';
 import FilePicker from './components/FilePicker';
@@ -103,7 +108,14 @@ function App() {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [vaults, setVaults] = useState<RegisteredVault[]>([]);
   const [vaultGroups, setVaultGroups] = useState<VaultGroup[]>([]);
-  const visibleVaults = deriveVisibleVaults(vaults, vaultGroups);
+  const [sidebarRootOrder, setSidebarRootOrder] = useState<SidebarRootRef[]>(
+    [],
+  );
+  const visibleVaults = deriveVisibleVaults(
+    vaults,
+    vaultGroups,
+    sidebarRootOrder,
+  );
   const [activeVaultId, setActiveVaultId] = useState<string | null>(null);
   const readingModeKey =
     activeVaultId && activePath
@@ -1951,38 +1963,45 @@ function App() {
     let current = true;
     void window.vault
       .registryList()
-      .then(async ({ vaults: registered, activeVaultId: active }) => {
-        const groups = await window.vault.groupsList();
-        if (!current) return;
-        setVaultGroups(groups);
-        if (!current) return;
-        setVaults(registered);
-        if (!active) return;
-        try {
-          const result = await window.vault.registryActivate(active);
+      .then(
+        async ({
+          vaults: registered,
+          activeVaultId: active,
+          sidebarRootOrder: rootOrder,
+        }) => {
+          const groups = await window.vault.groupsList();
           if (!current) return;
-          if (!result.path)
-            throw new Error(
-              'Vault folder is unavailable. Choose or move the folder to recover.',
-            );
-          setActiveVaultId(active);
-          activeVaultIdRef.current = active;
-          setVaultPath(result.path);
-          setEntriesLoading(true);
-          const listRequestId = ++notesRefreshRequest.current;
-          const listed = await window.vault.listNotes();
-          if (current && listRequestId === notesRefreshRequest.current) {
-            setNotes(listed);
+          setVaultGroups(groups);
+          setSidebarRootOrder(rootOrder);
+          if (!current) return;
+          setVaults(registered);
+          if (!active) return;
+          try {
+            const result = await window.vault.registryActivate(active);
+            if (!current) return;
+            if (!result.path)
+              throw new Error(
+                'Vault folder is unavailable. Choose or move the folder to recover.',
+              );
+            setActiveVaultId(active);
+            activeVaultIdRef.current = active;
+            setVaultPath(result.path);
+            setEntriesLoading(true);
+            const listRequestId = ++notesRefreshRequest.current;
+            const listed = await window.vault.listNotes();
+            if (current && listRequestId === notesRefreshRequest.current) {
+              setNotes(listed);
+            }
+          } catch (error) {
+            if (current)
+              setVaultError(
+                error instanceof Error ? error.message : 'Unable to load vault',
+              );
+          } finally {
+            if (current) setEntriesLoading(false);
           }
-        } catch (error) {
-          if (current)
-            setVaultError(
-              error instanceof Error ? error.message : 'Unable to load vault',
-            );
-        } finally {
-          if (current) setEntriesLoading(false);
-        }
-      })
+        },
+      )
       .catch((error) => {
         if (current)
           setVaultError(
@@ -2126,6 +2145,8 @@ function App() {
           <VaultSidebar
             vaults={vaults}
             groups={vaultGroups}
+            sidebarRootOrder={sidebarRootOrder}
+            onSidebarRootOrderChange={setSidebarRootOrder}
             visibleVaults={visibleVaults}
             onGroupsChange={setVaultGroups}
             onVaultsChange={setVaults}

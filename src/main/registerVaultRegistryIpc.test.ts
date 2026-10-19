@@ -12,7 +12,11 @@ function setup() {
   const calls: unknown[][] = [];
   const vault = { id: 'vault-1', path: '/vault' };
   const registry = {
-    list: async () => ({ vaults: [vault] }),
+    list: async () => ({ vaults: [vault], sidebarRootOrder: [] }),
+    moveSidebarItem: (...args: unknown[]) => {
+      calls.push(['moveSidebarItem', ...args]);
+      return true;
+    },
     listGroups: () => [],
     getTabLayout: (...args: unknown[]) => {
       calls.push(['getTabLayout', ...args]);
@@ -110,6 +114,7 @@ test('returns registry and group lists', async () => {
   const { handlers } = setup();
   assert.deepEqual(await invoke(handlers, 'vault:registry-list'), {
     vaults: [{ id: 'vault-1', path: '/vault' }],
+    sidebarRootOrder: [],
   });
   assert.deepEqual(invoke(handlers, 'vault:groups-list'), []);
 });
@@ -117,6 +122,22 @@ test('returns registry and group lists', async () => {
 test('preserves validation errors for invalid payloads', async () => {
   const { handlers, calls } = setup();
   const cases: [string, unknown[], string][] = [
+    ['vault:sidebar-move', [null], 'Invalid sidebar move'],
+    [
+      'vault:sidebar-move',
+      [
+        {
+          item: { kind: 'vault', id: 'v' },
+          before: { kind: 'other', id: 'x' },
+        },
+      ],
+      'Invalid sidebar move',
+    ],
+    [
+      'vault:sidebar-move',
+      [{ item: { kind: 'group', id: '' }, before: null }],
+      'Invalid sidebar move',
+    ],
     ['vault:tab-layout-get', [null], 'Invalid vault ID'],
     ['vault:tab-layout-save', [1, {}], 'Invalid vault ID'],
     ['vault:group-create', [false], 'Invalid group name'],

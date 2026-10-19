@@ -20,6 +20,27 @@ export function registerVaultRegistryIpc(
   const { registry, service, writeBarrier } = dependencies;
   ipc.handle('vault:registry-list', () => registry.list());
   ipc.handle('vault:groups-list', () => registry.listGroups());
+  ipc.handle('vault:sidebar-move', (_event, value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error('Invalid sidebar move');
+    const request = value as Record<string, unknown>;
+    const validRef = (ref: unknown) =>
+      !!ref &&
+      typeof ref === 'object' &&
+      !Array.isArray(ref) &&
+      typeof (ref as Record<string, unknown>).id === 'string' &&
+      !!(ref as Record<string, unknown>).id &&
+      ((ref as Record<string, unknown>).kind === 'vault' ||
+        (ref as Record<string, unknown>).kind === 'group');
+    if (
+      !validRef(request.item) ||
+      (request.before !== null && !validRef(request.before))
+    )
+      throw new Error('Invalid sidebar move');
+    return registry.moveSidebarItem(
+      request as unknown as import('../shared/types').SidebarMoveRequest,
+    );
+  });
   ipc.handle('vault:placement-set', (_event, value: unknown) => {
     if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new Error('Invalid vault placement');

@@ -6,6 +6,7 @@ import {
   groupHeaderVaultDrop,
   handleVaultSidebarDrop,
   reorderBefore,
+  rootItemDropAnchor,
   vaultDropAnchor,
   vaultPlacementForDrop,
 } from './vaultSidebarDrag';
@@ -97,6 +98,24 @@ test('group header upper edge routes to root beginning and center assigns to the
     groupId: 'g',
     beforeVaultId: null,
   });
+});
+
+test('mixed root insertion anchors handle mixed item kinds and reject self drops', () => {
+  const items = [
+    { kind: 'vault' as const, id: 'v' },
+    { kind: 'group' as const, id: 'g' },
+    { kind: 'vault' as const, id: 'w' },
+  ];
+  assert.deepEqual(
+    rootItemDropAnchor(items, items[0], items[1], true),
+    items[2],
+  );
+  assert.equal(rootItemDropAnchor(items, items[0], items[0], true), undefined);
+  assert.equal(rootItemDropAnchor(items, items[2], items[1], true), null);
+  assert.deepEqual(
+    rootItemDropAnchor(items, items[0], items[1], false),
+    items[1],
+  );
 });
 
 test('group drop anchors sort before and after, including append at the last group', () => {

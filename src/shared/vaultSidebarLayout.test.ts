@@ -1,7 +1,41 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { deriveVaultSidebarLayout } from './vaultSidebarLayout';
-import type { RegisteredVault, VaultGroup } from './types';
+import type { RegisteredVault, SidebarRootRef, VaultGroup } from './types';
+
+test('mixed root order drives visible vault keyboard indices without duplicates', () => {
+  const groups: VaultGroup[] = [
+    { id: 'g1', name: 'First group', collapsed: false },
+    { id: 'g2', name: 'Collapsed group', collapsed: true },
+  ];
+  const vaults: RegisteredVault[] = [
+    { id: 'pin', name: 'Pinned', path: '/pin', pinned: true, groupId: 'g1' },
+    { id: 'member', name: 'Member', path: '/member', groupId: 'g1' },
+    { id: 'root', name: 'Root', path: '/root' },
+    { id: 'hidden', name: 'Hidden', path: '/hidden', groupId: 'g2' },
+  ];
+  const order: SidebarRootRef[] = [
+    { kind: 'group', id: 'g2' },
+    { kind: 'group', id: 'g1' },
+    { kind: 'vault', id: 'root' },
+  ];
+  const layout = deriveVaultSidebarLayout(vaults, groups, order);
+  assert.deepEqual(
+    layout.rootItems.map(
+      (item) =>
+        `${item.kind}:${item.kind === 'group' ? item.group.id : item.vault.id}`,
+    ),
+    ['group:g2', 'group:g1', 'vault:root'],
+  );
+  assert.deepEqual(
+    layout.visibleVaults.map((vault) => vault.id),
+    ['pin', 'member', 'root'],
+  );
+  assert.equal(
+    new Set(layout.visibleVaults.map((vault) => vault.id)).size,
+    layout.visibleVaults.length,
+  );
+});
 
 test('pinned members remain a top lane in layout and retain their remembered group', () => {
   const groups: VaultGroup[] = [{ id: 'g', name: 'Group', collapsed: false }];

@@ -11,7 +11,7 @@ Use the pinned pnpm version from `package.json`. Run `pnpm start` to launch the 
 
 ## Vault sidebar
 
-Pin vaults from their actions menu; pinned vaults keep any remembered group and show a pin icon beside their name. Use **Unpin vault** to restore them to that group. Drag onto the center of a group header to assign a vault; drop above/below the header to place it at the root. Drop on a vault row's upper/lower half to place before/after it; group headers can likewise be reordered. These are sidebar organization actions only: they do not move files.
+Pin vaults from their actions menu; pinned vaults keep any remembered group and show a pin icon beside their name. Use **Unpin vault** to restore them to that group. Pinned vaults remain at the top; below them, root vaults and group headers can be interleaved and reordered by dragging. Drop onto the center of a group header to assign a vault (including a pinned vault, which is unpinned and grouped in one operation); drop near its upper/lower edge to place at the root before/after the group. Drop on a root vault row's upper/lower half to place before/after it. These are sidebar organization actions only: they do not move files.
 
 ## Local Storm CLI
 

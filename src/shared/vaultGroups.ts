@@ -1,17 +1,10 @@
-import type { RegisteredVault, VaultGroup } from './types';
+import type { RegisteredVault, SidebarRootRef, VaultGroup } from './types';
+import { deriveVaultSidebarLayout } from './vaultSidebarLayout';
 
 export function deriveVisibleVaults(
   vaults: RegisteredVault[],
   groups: VaultGroup[],
+  rootOrder: SidebarRootRef[] = [],
 ): RegisteredVault[] {
-  const groupedIds = new Set(groups.map((group) => group.id));
-  const visible = vaults.filter(
-    (vault) =>
-      vault.pinned === true || !vault.groupId || !groupedIds.has(vault.groupId),
-  );
-  for (const group of groups) {
-    if (!group.collapsed)
-      visible.push(...vaults.filter((vault) => vault.groupId === group.id));
-  }
-  return visible;
+  return deriveVaultSidebarLayout(vaults, groups, rootOrder).visibleVaults;
 }

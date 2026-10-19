@@ -15,6 +15,15 @@ export interface VaultGroup {
   color?: GroupColor;
 }
 
+export type SidebarRootRef =
+  | { kind: 'vault'; id: string }
+  | { kind: 'group'; id: string };
+
+export interface SidebarMoveRequest {
+  item: SidebarRootRef;
+  before: SidebarRootRef | null;
+}
+
 export type SavedTabLayout = {
   version: 1;
   tabs: Array<
@@ -129,8 +138,10 @@ declare global {
       registryList: () => Promise<{
         vaults: RegisteredVault[];
         activeVaultId: string | null;
+        sidebarRootOrder: SidebarRootRef[];
       }>;
       groupsList: () => Promise<VaultGroup[]>;
+      sidebarMove: (request: SidebarMoveRequest) => Promise<void>;
       saveTabLayout: (vaultId: string, layout: SavedTabLayout) => Promise<void>;
       getTabLayout: (vaultId: string) => Promise<SavedTabLayout | null>;
       onRestoreTabs: (callback: () => void) => () => void;
