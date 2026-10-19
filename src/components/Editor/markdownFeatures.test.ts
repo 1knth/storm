@@ -64,6 +64,49 @@ describe('Markdown editor features', () => {
     assert.equal(state.selection.main.head, 1);
   });
 
+  it('italicizes the word under the cursor in Vim Normal mode', () => {
+    let state = EditorState.create({
+      doc: 'some text here',
+      selection: { anchor: 7 },
+      extensions: markdownEditorExtensions,
+    });
+    const vim = { insertMode: false, visualMode: false };
+    const view = {
+      get state() {
+        return state;
+      },
+      cm: { state: { vim } },
+      dispatch: (transaction: Parameters<typeof state.update>[0]) => {
+        state = state.update(transaction).state;
+      },
+    } as unknown as EditorView;
+    const bindings = state
+      .facet(keymap)
+      .flat()
+      .filter((candidate) => candidate.key === 'Mod-i');
+    let handled = false;
+    for (const binding of bindings) {
+      if (binding.run?.(view)) {
+        handled = true;
+        break;
+      }
+    }
+
+    assert.equal(handled, true);
+    assert.equal(state.doc.toString(), 'some *text* here');
+    assert.equal(state.selection.main.empty, true);
+    assert.equal(state.selection.main.head, 9);
+    assert.equal(vim.insertMode, false);
+    assert.equal(vim.visualMode, false);
+
+    state = state.update({
+      changes: { from: 0, to: state.doc.length, insert: '   ' },
+      selection: { anchor: 1 },
+    }).state;
+    assert.equal(bindings[0]?.run?.(view), true);
+    assert.equal(state.doc.toString(), '   ');
+  });
+
   it('cycles task markers through the configured Normal-mode Enter keymap', () => {
     let state = EditorState.create({
       doc: 'task',
