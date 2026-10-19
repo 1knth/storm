@@ -242,6 +242,20 @@ const createWindow = () => {
     },
   });
 
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        void shell.openExternal(parsed.href).catch((error) => {
+          console.error('Failed to open external link', error);
+        });
+      }
+    } catch {
+      // Reject malformed URLs and unsupported schemes.
+    }
+    return { action: 'deny' };
+  });
+
   agentWindow = mainWindow;
   mainWindow.on('closed', () => {
     if (agentWindow === mainWindow) agentWindow = undefined;

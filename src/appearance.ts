@@ -3,6 +3,7 @@ import { DEFAULT_HEADING_COLORS } from './components/Editor/markdownHighlighting
 export const APPEARANCE_KEY = 'storm.appearance';
 export const DEFAULT_APPEARANCE = {
   selection: '#e0bfff',
+  activeLine: '#e0bfff',
   cursor: '#027DFF',
   headings: DEFAULT_HEADING_COLORS,
   mermaidBackground: '#ffffff',
@@ -15,6 +16,7 @@ export const DEFAULT_APPEARANCE = {
   mermaidConnectors: '#333333',
   opacity: {
     selection: 40,
+    activeLine: 10,
     cursor: 100,
     ...Object.fromEntries(
       [...Array(6)].map((_, i) => [`heading-${i + 1}`, 100]),
@@ -41,6 +43,7 @@ export function validateAppearance(value: unknown): Appearance {
   const headings = Array.isArray(input.headings) ? input.headings : [];
   return {
     selection: color(input.selection, DEFAULT_APPEARANCE.selection),
+    activeLine: color(input.activeLine, DEFAULT_APPEARANCE.activeLine),
     cursor: color(input.cursor, DEFAULT_APPEARANCE.cursor),
     headings: DEFAULT_HEADING_COLORS.map((fallback, index) =>
       color(headings[index], fallback),
@@ -113,6 +116,13 @@ export function saveAppearance(
     /* Preferences are optional. */
   }
 }
+export function commitOpacityDraft(value: string, fallback: number): number {
+  const parsed = value.trim() === '' ? NaN : Number(value);
+  return Number.isFinite(parsed)
+    ? Math.min(100, Math.max(0, parsed))
+    : fallback;
+}
+
 export function rgbaColor(color: string, opacity: number): string {
   const match = /^#([\da-fA-F]{2})([\da-fA-F]{2})([\da-fA-F]{2})$/.exec(color);
   if (!match) return 'rgba(0, 0, 0, 1)';
@@ -143,9 +153,33 @@ export function mermaidThemeVariables(appearance: Appearance) {
       appearance.mermaidGroupBorder,
       appearance.opacity.mermaidGroupBorder,
     ),
-    titleColor: rgbaColor(
-      appearance.mermaidGroupText,
-      appearance.opacity.mermaidGroupText,
+    actorTextColor: rgbaColor(
+      appearance.mermaidText,
+      appearance.opacity.mermaidText,
+    ),
+    signalTextColor: rgbaColor(
+      appearance.mermaidText,
+      appearance.opacity.mermaidText,
+    ),
+    labelTextColor: rgbaColor(
+      appearance.mermaidText,
+      appearance.opacity.mermaidText,
+    ),
+    loopTextColor: rgbaColor(
+      appearance.mermaidText,
+      appearance.opacity.mermaidText,
+    ),
+    noteTextColor: rgbaColor(
+      appearance.mermaidText,
+      appearance.opacity.mermaidText,
+    ),
+    labelBoxBkgColor: rgbaColor(
+      appearance.mermaidBackground,
+      appearance.opacity.mermaidBackground,
+    ),
+    labelBoxBorderColor: rgbaColor(
+      appearance.mermaidConnectors,
+      appearance.opacity.mermaidConnectors,
     ),
     primaryTextColor: rgbaColor(
       appearance.mermaidText,

@@ -1635,10 +1635,21 @@ function App() {
     vaultTransition.current = false;
   };
 
-  const activateVault = async (id: string, focusExplorer = false) => {
+  const activateVault = async (
+    id: string,
+    focusDestination = false,
+    retainFocus = false,
+  ) => {
     if (id === activeVaultId) {
-      if (focusExplorer) {
-        if (explorerCollapsed) {
+      if (focusDestination) {
+        if (
+          activePath &&
+          tabs.some(
+            (tab) => tab.kind === 'note' && tab.note.path === activePath,
+          )
+        ) {
+          editorRef.current?.focus();
+        } else if (explorerCollapsed) {
           pendingExplorerFocus.current = true;
           setExplorerCollapsed(false);
         } else {
@@ -1750,21 +1761,28 @@ function App() {
       requestAnimationFrame(() => {
         const active = document.activeElement;
         if (
+          !focusDestination &&
           active &&
           active !== document.body &&
           active !== document.documentElement
         )
           return;
         if (
-          focusExplorer ||
+          retainFocus ||
           hasOpenModal() ||
           activeVaultIdRef.current !== id ||
           activeIdRef.current !== restoredActiveId
         )
           return;
-        editorRef.current?.focus();
+        if (focusDestination && activeTab?.kind !== 'note') {
+          if (explorerCollapsed) {
+            pendingExplorerFocus.current = true;
+            setExplorerCollapsed(false);
+          } else focusExplorerRow();
+        } else {
+          editorRef.current?.focus();
+        }
       });
-      if (focusExplorer) pendingExplorerFocus.current = true;
       return true;
     } catch (error) {
       if (activeVaultId) {
@@ -2100,6 +2118,10 @@ function App() {
 
   return (
     <main className="flex h-screen min-h-0 w-full min-w-0 flex-col">
+      <div
+        className="titlebar-drag-region h-9 w-full shrink-0"
+        aria-hidden="true"
+      />
       {shortcutHelpOpen && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"

@@ -258,14 +258,29 @@ function MarkdownLink({ children, href }: any) {
     typeof href === 'string' && href.startsWith('vault-note:')
       ? decodeURIComponent(href.slice('vault-note:'.length))
       : null;
+  const safeExternal = (() => {
+    if (typeof href !== 'string') return null;
+    try {
+      const url = new URL(href);
+      return url.protocol === 'https:' || url.protocol === 'http:'
+        ? url.href
+        : null;
+    } catch {
+      return null;
+    }
+  })();
   return (
     <a
-      href={target ? '#' : undefined}
+      href={target ? '#' : (safeExternal ?? undefined)}
+      target={safeExternal ? '_blank' : undefined}
+      rel={safeExternal ? 'noopener noreferrer' : undefined}
       onClick={(event) => {
-        event.preventDefault();
-        if (target) context.onOpenNote?.(target);
+        if (target) {
+          event.preventDefault();
+          context.onOpenNote?.(target);
+        } else if (!safeExternal) event.preventDefault();
       }}
-      aria-disabled={!target || !context.onOpenNote}
+      aria-disabled={!target && !safeExternal ? true : undefined}
     >
       {children}
     </a>
