@@ -47,6 +47,8 @@ import {
 } from './main/agentEndpoint';
 import {
   installCliShortcut,
+  isCliShortcutInstalled,
+  removeCliShortcut,
   readCliSetupState,
   recordCliChoice,
 } from './main/cliSetup';
@@ -817,6 +819,32 @@ app.whenReady().then(async () => {
     'cli:available',
     () => process.platform === 'darwin' && app.isPackaged,
   );
+  ipcMain.handle('cli:installed', () =>
+    isCliShortcutInstalled(process.resourcesPath),
+  );
+  ipcMain.handle(
+    'settings:canOpenFilesAndFolders',
+    () => process.platform === 'darwin',
+  );
+  ipcMain.handle('settings:openFilesAndFolders', async () => {
+    if (process.platform !== 'darwin') return false;
+    await shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders',
+    );
+    return true;
+  });
+  ipcMain.handle('cli:disable', async () => {
+    const result = await removeCliShortcut(process.resourcesPath);
+    if (!result.removed && result.message) {
+      await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['OK'],
+        message: 'Could not disable the Storm CLI shortcut',
+        detail: result.message,
+      });
+    }
+    return result.removed;
+  });
   const enableCli = async (interactive: boolean) => {
     let result: { installed: boolean; message?: string };
     try {

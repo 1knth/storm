@@ -96,6 +96,88 @@ async function bundledLauncher(resourcesPath: string): Promise<string> {
   return resolved;
 }
 
+export async function isCliShortcutInstalled(
+  resourcesPath: string,
+  destination = DESTINATION,
+): Promise<boolean> {
+  try {
+    const source = await bundledLauncher(resourcesPath);
+    const info = await lstat(destination);
+    return (
+      info.isSymbolicLink() &&
+      (await realpath(destination).catch(() => '')) === source
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function authorizeCliUnlink(
+  source: string,
+  destination: string,
+): Promise<boolean> {
+  const command = `if [ -L ${shellQuote(destination)} ] && [ "$(/usr/bin/readlink ${shellQuote(destination)})" = ${shellQuote(source)} ]; then /bin/rm ${shellQuote(destination)}; else exit 1; fi`;
+  const script = `do shell script ${appleScriptQuote(command)} with administrator privileges`;
+  try {
+    await execFileAsync('/usr/bin/osascript', ['-e', script]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function removeCliShortcut(
+  resourcesPath: string,
+  destination = DESTINATION,
+  authorize: (
+    source: string,
+    destination: string,
+  ) => Promise<boolean> = authorizeCliUnlink,
+): Promise<{ removed: boolean; message?: string }> {
+  const source = await bundledLauncher(resourcesPath);
+  let info;
+  try {
+    info = await lstat(destination);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+      return { removed: true };
+    throw error;
+  }
+  if (
+    !info.isSymbolicLink() ||
+    (await realpath(destination).catch(() => '')) !== source
+  )
+    return {
+      removed: false,
+      message: `${destination} is not the Storm CLI shortcut and was not changed.`,
+    };
+  try {
+    await unlink(destination);
+    return { removed: true };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw error;
+  }
+  const authorized = await authorize(source, destination);
+  if (!authorized)
+    return {
+      removed: false,
+      message:
+        'Administrator authorization was cancelled or the shortcut could not be removed. The CLI remains enabled.',
+    };
+  try {
+    await lstat(destination);
+    return {
+      removed: false,
+      message: 'The Storm CLI shortcut could not be removed.',
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+      return { removed: true };
+    throw error;
+  }
+}
+
 export async function installCliShortcut(
   options: SetupOptions,
 ): Promise<{ installed: boolean; message?: string }> {

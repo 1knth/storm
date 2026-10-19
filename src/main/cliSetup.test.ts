@@ -6,6 +6,7 @@ import {
   readFile,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,6 +15,8 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   installCliShortcut,
+  isCliShortcutInstalled,
+  removeCliShortcut,
   readCliSetupState,
   recordCliChoice,
 } from './cliSetup';
@@ -48,7 +51,58 @@ describe('packaged CLI setup', () => {
       };
       assert.deepEqual(await installCliShortcut(options), { installed: true });
       assert.equal(await realpath(f.destination), await realpath(f.launcher));
+      assert.equal(
+        await isCliShortcutInstalled(f.resources, f.destination),
+        true,
+      );
       assert.deepEqual(await installCliShortcut(options), { installed: true });
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test('disable removes only the link to the bundled Storm launcher', async () => {
+    const f = await fixture();
+    try {
+      await installCliShortcut({
+        resourcesPath: f.resources,
+        destination: f.destination,
+        platform: 'darwin',
+      });
+      assert.deepEqual(await removeCliShortcut(f.resources, f.destination), {
+        removed: true,
+      });
+      assert.equal(
+        await isCliShortcutInstalled(f.resources, f.destination),
+        false,
+      );
+      assert.deepEqual(await removeCliShortcut(f.resources, f.destination), {
+        removed: true,
+      });
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test('disable refuses to remove a foreign command or replacement symlink', async () => {
+    const f = await fixture();
+    try {
+      await writeFile(f.destination, 'keep');
+      assert.equal(
+        (await removeCliShortcut(f.resources, f.destination)).removed,
+        false,
+      );
+      assert.equal(await readFile(f.destination, 'utf8'), 'keep');
+      await rm(f.destination);
+      await symlink('/other/storm', f.destination);
+      assert.equal(
+        (await removeCliShortcut(f.resources, f.destination)).removed,
+        false,
+      );
+      assert.equal(
+        await lstat(f.destination).then((stat) => stat.isSymbolicLink()),
+        true,
+      );
     } finally {
       await f.cleanup();
     }
