@@ -2118,10 +2118,6 @@ function App() {
 
   return (
     <main className="flex h-screen min-h-0 w-full min-w-0 flex-col">
-      <div
-        className="titlebar-drag-region h-9 w-full shrink-0"
-        aria-hidden="true"
-      />
       {shortcutHelpOpen && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"

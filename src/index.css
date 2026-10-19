@@ -306,15 +306,6 @@ body,
   background: transparent;
 }
 
-.titlebar-drag-region {
-  -webkit-app-region: drag;
-  app-region: drag;
-}
-
-.titlebar-drag-region button,
-.titlebar-drag-region a,
-.titlebar-drag-region input,
-.titlebar-drag-region select,
 .sidebar-window-drag-region button,
 .sidebar-window-drag-region a,
 .sidebar-window-drag-region input,
