@@ -20,6 +20,7 @@ import { confirmQuitAndFlush } from './quitConfirmation';
 import { VaultWatcher } from './vault/vaultWatcher';
 import { registerVaultRegistryIpc } from './main/registerVaultRegistryIpc';
 import { AgentBroker } from './main/agentBroker';
+import { runVaultLifecycleExclusive } from './main/vaultLifecycle';
 import { bindAgentBrokerIpc, registerAgentIpc } from './main/registerAgentIpc';
 import { resolveAgentNoteTarget } from './vault/agentNoteTarget';
 import {
@@ -76,6 +77,17 @@ const agentBroker = new AgentBroker({
     const { vaults } = await vaultRegistry.list();
     return resolveAgentNoteTarget(notePath, vaults);
   },
+  assertTargetRegistered: async (target) => {
+    const { vaults } = await vaultRegistry.list();
+    if (
+      !vaults.some(
+        (vault) =>
+          vault.path === target.vaultRoot && vault.id === target.vaultId,
+      )
+    )
+      throw new Error('Vault is not registered');
+  },
+  withVaultLifecycle: runVaultLifecycleExclusive,
   renderer: agentTransport,
 });
 const removeAgentBrokerIpc = bindAgentBrokerIpc(
@@ -345,6 +357,9 @@ registerVaultRegistryIpc(ipcMain, {
   clearWatchedVaultId: () => {
     activeWatchedVaultId = null;
   },
+  hasWritableAgentSession: (vaultId) =>
+    agentBroker.hasWritableSessionForVault(vaultId),
+  withVaultLifecycle: runVaultLifecycleExclusive,
 });
 
 ipcMain.handle('vault:resolve-note-link', async (_event, request: unknown) => {

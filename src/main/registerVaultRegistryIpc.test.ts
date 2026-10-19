@@ -12,7 +12,11 @@ function setup() {
   const calls: unknown[][] = [];
   const vault = { id: 'vault-1', path: '/vault' };
   const registry = {
-    list: async () => ({ vaults: [vault], sidebarRootOrder: [] }),
+    list: async () => ({
+      vaults: [vault],
+      sidebarRootOrder: [],
+      activeVaultId: 'vault-1',
+    }),
     moveSidebarItem: (...args: unknown[]) => {
       calls.push(['moveSidebarItem', ...args]);
       return true;
@@ -96,6 +100,7 @@ function setup() {
     clearWatchedVaultId: () => {
       calls.push(['clearWatchedVaultId']);
     },
+    hasWritableAgentSession: () => false,
   };
   registerVaultRegistryIpc(
     { handle: (name, listener) => handlers.set(name, listener) },
@@ -110,11 +115,49 @@ const invoke = (
   ...args: unknown[]
 ) => handlers.get(channel)!(event, ...args);
 
+test('unloads one registered vault through the write barrier without deleting files', async () => {
+  const { handlers, calls } = setup();
+  await invoke(handlers, 'vault:registry-unload-one', 'vault-1');
+  assert.deepEqual(calls, [
+    ['remove', 'vault-1'],
+    ['stopWatcher'],
+    ['clearWatchedVaultId'],
+    ['clearSelectedVault'],
+  ]);
+});
+
+test('rejects unknown vault ids before registry mutation', async () => {
+  const { handlers, calls } = setup();
+  await assert.rejects(
+    invoke(
+      handlers,
+      'vault:registry-unload-one',
+      '../vault',
+    ) as Promise<unknown>,
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('refuses to unload a vault with a writable agent session', async () => {
+  const { handlers, calls, dependencies } = setup();
+  dependencies.hasWritableAgentSession = () => true;
+  await assert.rejects(
+    invoke(
+      handlers,
+      'vault:registry-unload-one',
+      'vault-1',
+    ) as Promise<unknown>,
+    /Stop the connected agent session/,
+  );
+  assert.deepEqual(calls, []);
+});
+
 test('returns registry and group lists', async () => {
   const { handlers } = setup();
   assert.deepEqual(await invoke(handlers, 'vault:registry-list'), {
     vaults: [{ id: 'vault-1', path: '/vault' }],
     sidebarRootOrder: [],
+    activeVaultId: 'vault-1',
   });
   assert.deepEqual(invoke(handlers, 'vault:groups-list'), []);
 });

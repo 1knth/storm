@@ -1830,27 +1830,87 @@ function App() {
   ]);
 
   const removeVault = async (id: string) => {
-    if (id === activeVaultId) {
-      setVaultError('Switch to another vault before removing this one.');
-      return;
-    }
     const vault = vaults.find((item) => item.id === id);
     if (!vault || navigationBusy.current || vaultTransition.current) return;
+    const liveAgent = Object.values(agentStatuses).some((status) => {
+      const path = status.absolutePath.replace(/\\/g, '/');
+      const root = vault.path.replace(/\\/g, '/').replace(/\/$/, '');
+      return (
+        (status.state === 'connected' || status.state === 'writing') &&
+        (path === root || path.startsWith(`${root}/`))
+      );
+    });
+    if (liveAgent) {
+      setVaultError(
+        'Stop the connected agent session before unloading this vault.',
+      );
+      return;
+    }
     if (
       !window.confirm(
-        `Remove “${vault.name}” from the vault list? Its files will not be deleted.`,
+        `Unload “${vault.name}” from Storm? Its folder and files will be kept.`,
       )
     )
       return;
     navigationBusy.current = true;
     try {
-      await window.vault.registryRemove(id);
+      const root = vault.path.replace(/\\/g, '/').replace(/\/$/, '');
+      for (const status of Object.values(agentStatuses)) {
+        const absolutePath = status.absolutePath.replace(/\\/g, '/');
+        if (!absolutePath.startsWith(`${root}/`)) continue;
+        const relativePath = absolutePath.slice(root.length + 1);
+        const adapter = agentAdaptersRef.current.get(
+          JSON.stringify([id, relativePath]),
+        );
+        if (adapter && !(await adapter.flush()))
+          throw new Error(
+            'Could not save agent updates; vault was not unloaded.',
+          );
+      }
+      if (id === activeVaultIdRef.current) {
+        if (!(await editorRef.current?.flush()))
+          throw new Error(
+            'Could not save the current note; vault was not unloaded.',
+          );
+        if (checkpointTimer.current) {
+          clearTimeout(checkpointTimer.current);
+          checkpointTimer.current = null;
+        }
+        await checkpointInFlight.current;
+        const fallback = vaults.find((item) => item.id !== id);
+        if (fallback) {
+          navigationBusy.current = false;
+          const switched = await activateVault(fallback.id);
+          navigationBusy.current = true;
+          if (!switched)
+            throw new Error('Could not switch vault; nothing was unloaded.');
+        }
+      }
+      await window.vault.registryUnloadVault(id);
       sessions.current.delete(id);
+      visitedVaults.current.delete(id);
       setVaults((old) => old.filter((item) => item.id !== id));
+      if (id === activeVaultIdRef.current) {
+        editorRef.current?.clear();
+        tabsRef.current = [];
+        activeIdRef.current = null;
+        setTabs([]);
+        setActiveId(null);
+        setActivePath(null);
+        setActiveVaultId(null);
+        activeVaultIdRef.current = null;
+        setVaultPath(null);
+        setNotes([]);
+        setTabGroups([]);
+        setTabGroupAssignments({});
+        groupsRef.current = [];
+        assignmentsRef.current = {};
+      }
       setVaultError(null);
+      notifySuccess('Vault unloaded. Its files were not changed.');
     } catch (error) {
       setVaultError(
-        error instanceof Error ? error.message : 'Unable to remove vault',
+        error instanceof Error ? error.message : 'Unable to unload vault',
       );
     } finally {
       navigationBusy.current = false;
