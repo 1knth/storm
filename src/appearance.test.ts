@@ -32,6 +32,15 @@ describe('appearance preferences', () => {
     strictEqual(appearance.selection, '#123456');
     strictEqual(appearance.opacity.selection, 63);
   });
+  it('defaults Mermaid group colors for existing saved preferences', () => {
+    const result = validateAppearance({ mermaidNodeFill: '#123456' });
+    strictEqual(result.mermaidNodeFill, '#123456');
+    strictEqual(result.mermaidGroupFill, DEFAULT_APPEARANCE.mermaidGroupFill);
+    strictEqual(
+      result.mermaidGroupBorder,
+      DEFAULT_APPEARANCE.mermaidGroupBorder,
+    );
+  });
   it('loads malformed storage safely and persists validated values', () => {
     const memory = new Map<string, string>([[APPEARANCE_KEY, '{bad']]);
     const storage = {
@@ -61,6 +70,8 @@ describe('appearance preferences', () => {
       background: 'rgba(255, 255, 255, 1)',
       primaryColor: 'rgba(236, 236, 255, 1)',
       primaryBorderColor: 'rgba(147, 112, 219, 1)',
+      clusterBkg: 'rgba(244, 244, 244, 1)',
+      clusterBorder: 'rgba(147, 112, 219, 1)',
       primaryTextColor: 'rgba(51, 51, 51, 1)',
       lineColor: 'rgba(51, 51, 51, 1)',
     });

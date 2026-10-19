@@ -509,33 +509,6 @@ export default function FileExplorer({
                             >
                               Change vault
                             </button>
-                            <button
-                              type="button"
-                              onClick={chooseVault}
-                              disabled={loading}
-                              title="Choose the vault folder again to request access. macOS controls any Files & Folders prompts."
-                              className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
-                            >
-                              Request folder access…
-                            </button>
-                            {canOpenFilesAndFoldersSettings && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void window.vault
-                                    .openFilesAndFoldersSettings()
-                                    .catch((error: unknown) =>
-                                      console.error(
-                                        'Could not open Files & Folders settings',
-                                        error,
-                                      ),
-                                    )
-                                }
-                                className="text-right text-xs text-white/60 underline underline-offset-2 hover:text-white"
-                              >
-                                Still blocked? Open Files &amp; Folders settings
-                              </button>
-                            )}
                           </div>
                           <button
                             type="button"
@@ -546,6 +519,35 @@ export default function FileExplorer({
                             Unload all vaults…
                           </button>
                         </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <button
+                          type="button"
+                          onClick={chooseVault}
+                          disabled={loading}
+                          title="Choose the vault folder again to request access. macOS controls any Files & Folders prompts."
+                          className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
+                        >
+                          Request folder access…
+                        </button>
+                        {canOpenFilesAndFoldersSettings && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void window.vault
+                                .openFilesAndFoldersSettings()
+                                .catch((error: unknown) =>
+                                  console.error(
+                                    'Could not open Files & Folders settings',
+                                    error,
+                                  ),
+                                )
+                            }
+                            className="text-right text-xs text-white/60 underline underline-offset-2 hover:text-white"
+                          >
+                            Still blocked? Open Files &amp; Folders settings
+                          </button>
+                        )}
                       </div>
                     </fieldset>
                     {cliAvailable && (
@@ -686,6 +688,8 @@ export default function FileExplorer({
                           ['Mermaid background', 'mermaidBackground'],
                           ['Mermaid node fill', 'mermaidNodeFill'],
                           ['Mermaid node border', 'mermaidNodeBorder'],
+                          ['Mermaid group fill', 'mermaidGroupFill'],
+                          ['Mermaid group border', 'mermaidGroupBorder'],
                           ['Mermaid text', 'mermaidText'],
                           ['Mermaid connectors', 'mermaidConnectors'],
                         ] as [string, string][]
@@ -696,15 +700,16 @@ export default function FileExplorer({
                               key as keyof typeof appearance
                             ] as string);
                         return (
-                          <label
+                          <div
                             key={key}
                             className="flex items-center justify-between gap-3 text-xs text-white/80"
                           >
-                            {label}
+                            <span>{label}</span>
                             <span className="flex items-center gap-2">
                               <input
                                 aria-label={label}
                                 type="color"
+                                style={{ colorScheme: 'dark' }}
                                 value={value}
                                 onChange={(event) => {
                                   const next = key.startsWith('heading-')
@@ -750,7 +755,7 @@ export default function FileExplorer({
                               />
                               <span>%</span>
                             </span>
-                          </label>
+                          </div>
                         );
                       })}
                     </fieldset>
