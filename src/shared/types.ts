@@ -129,7 +129,7 @@ export type VaultAssetResult = VaultImageResult;
 export interface DeleteEntryResult {
   deleted: boolean;
   path: string;
-  kind: 'note' | 'folder';
+  kind: 'note' | 'folder' | 'image';
 }
 
 declare global {

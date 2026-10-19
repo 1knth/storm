@@ -32,7 +32,7 @@ type FileExplorerProps = {
   vaultId: string | null;
   onCreate: (kind: 'note' | 'folder', parentPath: string) => void;
   onCreateNote: () => void;
-  onDeleteEntry?: (path: string, kind: 'note' | 'folder') => void;
+  onDeleteEntry?: (path: string, kind: 'note' | 'folder' | 'image') => void;
   creationPending: boolean;
   onAddVault: () => void;
   onUnloadAllVaults: () => Promise<boolean>;
@@ -128,7 +128,7 @@ export default function FileExplorer({
   const [contextMenu, setContextMenu] = useState<{
     position: ContextMenuPosition;
     parent: string;
-    target: { path: string; kind: 'note' | 'folder' } | null;
+    target: { path: string; kind: 'note' | 'folder' | 'image' } | null;
     returnFocusTo: HTMLElement | null;
   } | null>(null);
   const openContextMenu = (
@@ -146,8 +146,9 @@ export default function FileExplorer({
       position,
       returnFocusTo,
       parent: !path || isFolder ? path : path.split('/').slice(0, -1).join('/'),
-      target:
-        path && !isImage ? { path, kind: isFolder ? 'folder' : 'note' } : null,
+      target: path
+        ? { path, kind: isFolder ? 'folder' : isImage ? 'image' : 'note' }
+        : null,
     });
   };
 

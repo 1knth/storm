@@ -506,6 +506,12 @@ ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
   if (!vault) throw new Error('Unknown vault');
   const target = await resolveDeletionTarget(vault.path, relativePath);
   const window = BrowserWindow.fromWebContents(event.sender);
+  const description =
+    target.kind === 'folder'
+      ? 'Folder.'
+      : target.kind === 'image'
+        ? 'Image.'
+        : 'Markdown note.';
   const contains =
     target.kind === 'folder' ? ' Its entire contents will be moved.' : '';
   const choice = await dialog.showMessageBox(
@@ -516,7 +522,7 @@ ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
       defaultId: 0,
       cancelId: 0,
       message: `Move “${target.relativePath}” to Trash?`,
-      detail: `${target.kind === 'folder' ? 'Folder.' : 'Markdown note.'}${contains}`,
+      detail: `${description}${contains}`,
       noLink: true,
     },
   );
