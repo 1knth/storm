@@ -64,7 +64,7 @@ describe('Markdown editor features', () => {
     assert.equal(state.selection.main.head, 1);
   });
 
-  it('italicizes the word under the cursor in Vim Normal mode', () => {
+  it('formats words under the cursor in Vim Normal mode without splitting them', () => {
     let state = EditorState.create({
       doc: 'some text here',
       selection: { anchor: 7 },
@@ -80,31 +80,61 @@ describe('Markdown editor features', () => {
         state = state.update(transaction).state;
       },
     } as unknown as EditorView;
-    const bindings = state
-      .facet(keymap)
-      .flat()
-      .filter((candidate) => candidate.key === 'Mod-i');
-    let handled = false;
-    for (const binding of bindings) {
-      if (binding.run?.(view)) {
-        handled = true;
-        break;
-      }
-    }
+    const runKey = (key: string) => {
+      const binding = state
+        .facet(keymap)
+        .flat()
+        .find((candidate) => candidate.key === key);
+      assert.ok(binding?.run);
+      return binding.run(view);
+    };
 
-    assert.equal(handled, true);
+    assert.equal(runKey('Mod-i'), true);
     assert.equal(state.doc.toString(), 'some *text* here');
     assert.equal(state.selection.main.empty, true);
     assert.equal(state.selection.main.head, 9);
     assert.equal(vim.insertMode, false);
     assert.equal(vim.visualMode, false);
 
-    state = state.update({
-      changes: { from: 0, to: state.doc.length, insert: '   ' },
-      selection: { anchor: 1 },
-    }).state;
-    assert.equal(bindings[0]?.run?.(view), true);
-    assert.equal(state.doc.toString(), '   ');
+    state = EditorState.create({
+      doc: 'some text here',
+      selection: { anchor: 7 },
+      extensions: markdownEditorExtensions,
+    });
+    assert.equal(runKey('Mod-b'), true);
+    assert.equal(state.doc.toString(), 'some **text** here');
+    assert.equal(state.selection.main.empty, true);
+    assert.equal(vim.insertMode, false);
+
+    for (const [key, expected, caret] of [
+      ['Mod-i', '**', 1],
+      ['Mod-b', '****', 2],
+    ] as const) {
+      state = EditorState.create({
+        doc: '',
+        extensions: markdownEditorExtensions,
+      });
+      vim.insertMode = false;
+      vim.visualMode = false;
+      assert.equal(runKey(key), true);
+      assert.equal(state.doc.toString(), expected);
+      assert.equal(state.selection.main.head, caret);
+      assert.equal(vim.insertMode, true);
+    }
+
+    state = EditorState.create({
+      doc: 'selected',
+      selection: { anchor: 0, head: 8 },
+      extensions: markdownEditorExtensions,
+    });
+    vim.insertMode = true;
+    vim.visualMode = true;
+    assert.equal(runKey('Mod-b'), true);
+    assert.equal(state.doc.toString(), '**selected**');
+    assert.equal(state.selection.main.from, 2);
+    assert.equal(state.selection.main.to, 10);
+    assert.equal(vim.insertMode, true);
+    assert.equal(vim.visualMode, true);
   });
 
   it('cycles task markers through the configured Normal-mode Enter keymap', () => {

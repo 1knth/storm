@@ -114,34 +114,52 @@ export const markdownEditorExtensions = [
     ]),
   ),
   Prec.highest(
-    keymap.of([
-      {
-        key: 'Mod-i',
+    keymap.of(
+      (['Mod-b', 'Mod-i'] as const).map((key) => ({
+        key,
         run: (view: EditorView) => {
+          const kind = key === 'Mod-b' ? 'bold' : 'italic';
           const vimState = getCM(view)?.state.vim;
-          if (vimState && !vimState.insertMode && !vimState.visualMode) {
-            const range = view.state.wordAt(view.state.selection.main.head);
-            if (!range) return true;
-            const wordState = view.state.update({
-              selection: { anchor: range.from, head: range.to },
-            }).state;
-            const formatted = formatMarkdownSelection(wordState, 'italic');
-            const cursor = Math.max(range.from, range.to - 1);
-            view.dispatch({
-              ...formatted,
-              selection: { anchor: cursor + 1 },
-              userEvent: 'input.format',
-            });
+          const selection = view.state.selection.main;
+          const normalMode =
+            vimState && !vimState.insertMode && !vimState.visualMode;
+          const range =
+            normalMode && selection.empty
+              ? view.state.wordAt(selection.head)
+              : null;
+
+          const blankLine =
+            view.state.doc.lineAt(selection.head).text.trim().length === 0;
+          if (normalMode && !range && selection.empty && !blankLine)
             return true;
-          }
+          const formatState = range
+            ? view.state.update({
+                selection: { anchor: range.from, head: range.to },
+              }).state
+            : view.state;
+          const formatted = formatMarkdownSelection(formatState, kind);
+          const emptyPair = selection.empty && !range;
+          const cursor = range
+            ? Math.max(range.from, range.to - 1) + (kind === 'bold' ? 2 : 1)
+            : undefined;
           view.dispatch({
-            ...formatMarkdownSelection(view.state, 'italic'),
+            ...formatted,
+            ...(cursor === undefined && emptyPair
+              ? {
+                  selection: {
+                    anchor: selection.head + (kind === 'bold' ? 2 : 1),
+                  },
+                }
+              : cursor !== undefined
+                ? { selection: { anchor: cursor } }
+                : {}),
             userEvent: 'input.format',
           });
+          if (emptyPair && vimState) vimState.insertMode = true;
           return true;
         },
-      },
-    ]),
+      })),
+    ),
   ),
   keymap.of([
     {
@@ -169,8 +187,6 @@ export const markdownEditorExtensions = [
     },
     ...(
       [
-        ['Mod-b', 'bold'],
-        ['Mod-i', 'italic'],
         ['Mod-Shift-x', 'strikethrough'],
         ['Mod-`', 'code'],
         ['Mod-k', 'link'],
