@@ -137,12 +137,21 @@ function safeEqual(a: string, b: string): boolean {
 export async function readAgentEndpoint(
   path: string,
 ): Promise<AgentEndpointInfo> {
+  const metadata = await lstat(path);
+  if (
+    !metadata.isFile() ||
+    (process.getuid && metadata.uid !== process.getuid()) ||
+    (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0)
+  )
+    throw new Error('Unsafe endpoint metadata permissions');
   const value: unknown = JSON.parse(await readFile(path, 'utf8'));
   if (
     !value ||
     typeof value !== 'object' ||
     typeof (value as AgentEndpointInfo).endpoint !== 'string' ||
-    typeof (value as AgentEndpointInfo).token !== 'string'
+    !(value as AgentEndpointInfo).endpoint ||
+    typeof (value as AgentEndpointInfo).token !== 'string' ||
+    !/^[a-f0-9]{64}$/.test((value as AgentEndpointInfo).token)
   )
     throw new Error('Invalid endpoint metadata');
   return value as AgentEndpointInfo;

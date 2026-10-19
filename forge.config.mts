@@ -1,4 +1,6 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
+import path from 'node:path';
+import { buildCliBinary } from './scripts/buildCli';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDeb } from '@electron-forge/maker-deb';
@@ -11,6 +13,12 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: './assets/storm',
+    extraResource: path.resolve('build/cli'),
+  },
+  hooks: {
+    prePackage: async (_config, platform, arch) => {
+      await buildCliBinary(platform, arch);
+    },
   },
   rebuildConfig: {},
   makers: [

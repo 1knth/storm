@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
+import { lstat } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {
   readAgentEndpoint,
   sendAgentRequest,
@@ -10,6 +13,70 @@ import type { AgentRequest } from '../src/shared/agentProtocol';
 import { helpText, knownCommands } from './stormHelp';
 
 class CliUsageError extends Error {}
+
+function cliHelp(command?: string): string {
+  const executable = path.basename(process.execPath).replace(/\.exe$/i, '');
+  const text = helpText(command);
+  if (process.env.STORM_INSTALLED_CLI !== '1' && executable !== 'storm')
+    return text;
+  return text
+    .replaceAll('bun scripts/storm.ts', 'storm')
+    .replace(
+      'Without either endpoint option the CLI uses ~/.storm/storm-agent.json. Typical macOS\napp metadata is at ~/Library/Application Support/storm/storm-agent.json; pass it with\n--endpoint if Storm is using that location. This development CLI is invoked with Bun;\nthere is not yet an installed storm executable.',
+      'Without an endpoint override the CLI discovers metadata in ~/Library/Application\nSupport/storm, ~/Library/Application Support/Storm, or the legacy ~/.storm location.\nIf multiple profiles are found, select one explicitly with --endpoint PATH or\n--profile NAME. The installed launcher uses its bundled Bun runtime.',
+    );
+}
+
+export async function discoverEndpoint(
+  override?: string,
+  home = os.homedir(),
+  platform: NodeJS.Platform = process.platform,
+): Promise<string> {
+  if (override) return override;
+  const appData =
+    platform === 'darwin'
+      ? path.join(home, 'Library', 'Application Support')
+      : platform === 'win32'
+        ? path.join(home, 'AppData', 'Roaming')
+        : path.join(home, '.config');
+  const candidates = [
+    path.join(appData, 'storm', 'storm-agent.json'),
+    ...(platform === 'darwin'
+      ? [path.join(appData, 'Storm', 'storm-agent.json')]
+      : []),
+    path.join(home, '.storm', 'storm-agent.json'),
+  ];
+  const found: string[] = [];
+  const fileIdentities = new Set<string>();
+  for (const candidate of candidates) {
+    try {
+      const info = await lstat(candidate);
+      if (
+        !info.isFile() ||
+        (process.getuid && info.uid !== process.getuid()) ||
+        (process.platform !== 'win32' && (info.mode & 0o077) !== 0)
+      )
+        throw new Error(
+          'Storm endpoint metadata has unsafe ownership or permissions',
+        );
+      const identity = `${info.dev}:${info.ino}`;
+      if (!fileIdentities.has(identity)) {
+        fileIdentities.add(identity);
+        found.push(candidate);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  if (found.length > 1)
+    throw new Error(
+      'Multiple Storm endpoint profiles found; choose one with --endpoint PATH or --profile NAME',
+    );
+  if (found.length === 1) return found[0]!;
+  throw new Error(
+    'Cannot find Storm endpoint metadata; start Storm or set STORM_ENDPOINT/--endpoint',
+  );
+}
 
 function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
@@ -21,6 +88,7 @@ function hasControlCharacter(value: string): boolean {
 export async function runCli(
   args: string[],
   io: {
+    home?: string;
     stdin?: AsyncIterable<Uint8Array>;
     stdout?: (text: string) => void;
     stderr?: (text: string) => void;
@@ -35,7 +103,7 @@ export async function runCli(
       const command = [...beforeHelp]
         .reverse()
         .find((arg) => knownCommands.includes(arg));
-      out(`${helpText(command)}\n`);
+      out(`${cliHelp(command)}\n`);
       return 0;
     }
 
@@ -61,7 +129,7 @@ export async function runCli(
     }
     const command = rest[0];
     if (!command) {
-      out(`${helpText()}\n`);
+      out(`${cliHelp()}\n`);
       return 0;
     }
     if (!knownCommands.includes(command))
@@ -89,11 +157,12 @@ export async function runCli(
       throw new CliUsageError('status accepts at most SESSION [--json]');
     if ((command === 'finish' || command === 'cancel') && rest.length !== 2)
       throw new CliUsageError(`${command} requires SESSION`);
+    const home = io.home ?? os.homedir();
     const endpoint =
       endpointPath ??
       (profileName
-        ? `${process.env.HOME}/.storm/${profileName}/storm-agent.json`
-        : `${process.env.HOME}/.storm/storm-agent.json`);
+        ? path.join(home, '.storm', profileName, 'storm-agent.json')
+        : await discoverEndpoint(process.env.STORM_ENDPOINT, home));
     let info: AgentEndpointInfo;
     try {
       info = await readAgentEndpoint(endpoint);
@@ -221,7 +290,7 @@ export async function runCli(
     return 0;
   } catch (error) {
     if (error instanceof CliUsageError) {
-      err(`${error.message}\n\n${helpText()}\n`);
+      err(`${error.message}\n\n${cliHelp()}\n`);
       return 2;
     }
     err(`${error instanceof Error ? error.message : String(error)}\n`);
