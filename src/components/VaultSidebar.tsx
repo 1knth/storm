@@ -739,24 +739,33 @@ export default function VaultSidebar({
           </form>
         </div>
       )}
-      <ul
-        className="mx-1 min-h-0 flex-1 space-y-0 overflow-y-auto"
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => dropRoot(event, null)}
-      >
-        {layout.pinnedVaults.map((vault) =>
-          renderVault(vault, visibleVaults.indexOf(vault)),
-        )}
-        {layout.rootItems.map((rootItem) =>
-          rootItem.kind === 'vault'
-            ? renderVault(rootItem.vault, visibleVaults.indexOf(rootItem.vault))
-            : renderGroup(
-                rootItem.group,
-                layout.groups.find((item) => item.id === rootItem.group.id)
-                  ?.vaults ?? [],
-              ),
-        )}
-      </ul>
+      <div className="mx-1 flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <ul
+          className="shrink-0 space-y-0"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => dropRoot(event, null)}
+        >
+          {layout.pinnedVaults.map((vault) =>
+            renderVault(vault, visibleVaults.indexOf(vault)),
+          )}
+          {layout.rootItems.map((rootItem) =>
+            rootItem.kind === 'vault'
+              ? renderVault(
+                  rootItem.vault,
+                  visibleVaults.indexOf(rootItem.vault),
+                )
+              : renderGroup(
+                  rootItem.group,
+                  layout.groups.find((item) => item.id === rootItem.group.id)
+                    ?.vaults ?? [],
+                ),
+          )}
+        </ul>
+        <div
+          className="sidebar-window-drag-region min-h-0 flex-1"
+          aria-hidden="true"
+        />
+      </div>
       {groupCreateMenu && (
         <ContextMenu
           position={groupCreateMenu.position}
@@ -837,10 +846,6 @@ export default function VaultSidebar({
           Add a vault to get started.
         </p>
       ) : null}
-      <div
-        className="sidebar-window-drag-region min-h-0 flex-1"
-        aria-hidden="true"
-      />
       <div className="mt-2 shrink-0 border-t border-white/10 pt-2">
         <button
           type="button"
