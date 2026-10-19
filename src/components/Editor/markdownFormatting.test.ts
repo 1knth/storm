@@ -24,10 +24,18 @@ describe('formatMarkdownSelection', () => {
     assert.equal(result.selection.main.to, 6);
   });
 
-  it('inserts an empty pair with the cursor inside', () => {
+  it('inserts an empty italic pair with the cursor between the stars', () => {
     const result = run('hello', 2, 2, 'italic');
     assert.equal(result.doc.toString(), 'he**llo');
     assert.equal(result.selection.main.from, 3);
+    assert.equal(result.selection.main.to, 3);
+  });
+
+  it('wraps selected text in single-star italic markers', () => {
+    const result = run('hello', 1, 4, 'italic');
+    assert.equal(result.doc.toString(), 'h*ell*o');
+    assert.equal(result.selection.main.from, 2);
+    assert.equal(result.selection.main.to, 5);
   });
 
   it('unwraps markers surrounding the selection', () => {

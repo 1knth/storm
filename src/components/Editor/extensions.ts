@@ -113,6 +113,36 @@ export const markdownEditorExtensions = [
       },
     ]),
   ),
+  Prec.highest(
+    keymap.of([
+      {
+        key: 'Mod-i',
+        run: (view: EditorView) => {
+          const vimState = getCM(view)?.state.vim;
+          if (vimState && !vimState.insertMode && !vimState.visualMode) {
+            const range = view.state.wordAt(view.state.selection.main.head);
+            if (!range) return true;
+            const wordState = view.state.update({
+              selection: { anchor: range.from, head: range.to },
+            }).state;
+            const formatted = formatMarkdownSelection(wordState, 'italic');
+            const cursor = Math.max(range.from, range.to - 1);
+            view.dispatch({
+              ...formatted,
+              selection: { anchor: cursor + 1 },
+              userEvent: 'input.format',
+            });
+            return true;
+          }
+          view.dispatch({
+            ...formatMarkdownSelection(view.state, 'italic'),
+            userEvent: 'input.format',
+          });
+          return true;
+        },
+      },
+    ]),
+  ),
   keymap.of([
     {
       key: 'Tab',
