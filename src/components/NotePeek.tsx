@@ -3,7 +3,9 @@ import ReactMarkdown from 'react-markdown';
 type NotePeekProps = { markdown: string };
 
 export default function NotePeek({ markdown }: NotePeekProps) {
-  if (!markdown.trim()) return <>...</>;
+  if (!markdown.trim()) {
+    return <span className="italic text-white/40">empty</span>;
+  }
 
   return (
     <ReactMarkdown
