@@ -10,6 +10,38 @@ export interface SidebarDropEvent {
   stopPropagation: () => void;
 }
 
+export interface SidebarDragStartEvent {
+  dataTransfer: {
+    setData: (type: string, value: string) => void;
+    effectAllowed: string;
+  };
+  stopPropagation: () => void;
+}
+
+export function beginVaultSidebarDrag(
+  event: SidebarDragStartEvent,
+  payload: VaultSidebarDragPayload,
+): void {
+  event.dataTransfer.setData(
+    'application/x-vault-sidebar',
+    JSON.stringify(payload),
+  );
+  event.dataTransfer.effectAllowed = 'move';
+  event.stopPropagation();
+}
+
+export function groupDropAnchor(
+  groups: { id: string }[],
+  draggedId: string,
+  targetId: string,
+  after: boolean,
+): string | null {
+  const remaining = groups.filter((group) => group.id !== draggedId);
+  const targetIndex = remaining.findIndex((group) => group.id === targetId);
+  if (targetIndex < 0) return null;
+  return remaining[targetIndex + (after ? 1 : 0)]?.id ?? null;
+}
+
 export function readVaultSidebarDragPayload(
   event: Pick<SidebarDropEvent, 'dataTransfer'>,
 ): VaultSidebarDragPayload | null {

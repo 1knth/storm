@@ -7,6 +7,8 @@ import type { DragEvent, FormEvent } from 'react';
 import type { RegisteredVault, VaultGroup } from '../shared/types';
 import { deriveVaultSidebarLayout } from '../shared/vaultSidebarLayout';
 import {
+  beginVaultSidebarDrag,
+  groupDropAnchor,
   handleVaultSidebarDrop,
   readVaultSidebarDragPayload,
   reorderBefore,
@@ -143,25 +145,36 @@ export default function VaultSidebar({
                 ),
             },
             {
-              id: 'move-label',
-              label: 'Move to group',
+              id: 'move-to-group',
+              label: 'Group',
+              disabled: busy,
               onSelect: () => {},
-              disabled: true,
+              submenu: {
+                type: 'actions',
+                items: [
+                  {
+                    id: 'ungrouped',
+                    label: 'Ungrouped',
+                    selected: !vault.groupId,
+                    disabled: !vault.groupId || busy,
+                    onSelect: () =>
+                      void run(() =>
+                        window.vault.groupSetVault(vault.id, null),
+                      ),
+                  },
+                  ...groups.map((group) => ({
+                    id: `group-${group.id}`,
+                    label: group.name,
+                    selected: vault.groupId === group.id,
+                    disabled: vault.groupId === group.id || busy,
+                    onSelect: () =>
+                      void run(() =>
+                        window.vault.groupSetVault(vault.id, group.id),
+                      ),
+                  })),
+                ],
+              },
             },
-            {
-              id: 'ungrouped',
-              label: 'Ungrouped',
-              disabled: !vault.groupId || busy,
-              onSelect: () =>
-                void run(() => window.vault.groupSetVault(vault.id, null)),
-            },
-            ...groups.map((group) => ({
-              id: `group-${group.id}`,
-              label: group.name,
-              disabled: vault.groupId === group.id || busy,
-              onSelect: () =>
-                void run(() => window.vault.groupSetVault(vault.id, group.id)),
-            })),
           ];
         })()
       : menu?.target.kind === 'group'
@@ -214,13 +227,7 @@ export default function VaultSidebar({
   const beginDrag = (
     event: DragEvent,
     payload: { kind: 'vault'; id: string } | { kind: 'group'; id: string },
-  ) => {
-    event.dataTransfer.setData(
-      'application/x-vault-sidebar',
-      JSON.stringify(payload),
-    );
-    event.dataTransfer.effectAllowed = 'move';
-  };
+  ) => beginVaultSidebarDrag(event, payload);
   const dropVault = (
     event: DragEvent,
     target: {
@@ -551,12 +558,14 @@ export default function VaultSidebar({
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();
-                const remaining = groups.filter(
-                  (item) => item.id !== dragPayload(event)?.id,
-                );
-                const at = remaining.findIndex((item) => item.id === group.id);
+                const payload = dragPayload(event);
                 const after = event.clientY >= rect.top + rect.height / 2;
-                const anchor = remaining[at + (after ? 1 : 0)]?.id ?? null;
+                const anchor = groupDropAnchor(
+                  groups,
+                  payload?.kind === 'group' ? payload.id : '',
+                  group.id,
+                  after,
+                );
                 handleVaultSidebarDrop(event, (payload) => {
                   if (!payload || busy) return;
                   if (payload.kind === 'group') {

@@ -1,6 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
+  beginVaultSidebarDrag,
+  groupDropAnchor,
   handleVaultSidebarDrop,
   reorderBefore,
   vaultDropAnchor,
@@ -20,6 +22,77 @@ test('row midpoint chooses before/after anchors, accounting for dragged row remo
   assert.equal(vaultDropAnchor(rows, 'c', 99, 0, 100, 'a'), null);
   assert.equal(vaultDropAnchor(rows, 'b', 20, 0, 100, 'b'), 'b');
   assert.equal(vaultDropAnchor(rows, 'missing', 20, 0, 100, 'a'), undefined);
+});
+
+test('vault dragstart bubbles no group payload over the vault payload', () => {
+  const values = new Map<string, string>();
+  let stopped = false;
+  const event = {
+    dataTransfer: {
+      effectAllowed: '',
+      setData: (type: string, value: string) => values.set(type, value),
+    },
+    stopPropagation: () => {
+      stopped = true;
+    },
+  };
+  beginVaultSidebarDrag(event, { kind: 'vault', id: 'inside-group' });
+  if (!stopped) beginVaultSidebarDrag(event, { kind: 'group', id: 'parent' });
+  assert.deepEqual(JSON.parse(values.get('application/x-vault-sidebar')!), {
+    kind: 'vault',
+    id: 'inside-group',
+  });
+  assert.equal(event.dataTransfer.effectAllowed, 'move');
+  assert.equal(stopped, true);
+});
+
+test('root drop placement clears group and unpins exactly once at its boundary', () => {
+  let stopped = false;
+  const placements: ReturnType<typeof vaultPlacementForDrop>[] = [];
+  handleVaultSidebarDrop(
+    {
+      dataTransfer: {
+        getData: () => JSON.stringify({ kind: 'vault', id: 'a' }),
+      },
+      preventDefault: () => {},
+      stopPropagation: () => {
+        stopped = true;
+      },
+    },
+    (payload) => {
+      const source = {
+        id: 'a',
+        name: 'A',
+        path: '/a',
+        groupId: 'g',
+        pinned: true,
+      };
+      if (payload?.kind === 'vault')
+        placements.push(
+          vaultPlacementForDrop(source, {
+            groupId: null,
+            pinned: false,
+            beforeVaultId: null,
+          }),
+        );
+    },
+  );
+  if (!stopped) placements.push({} as ReturnType<typeof vaultPlacementForDrop>);
+  assert.deepEqual(placements, [
+    { vaultId: 'a', groupId: null, pinned: false, beforeVaultId: null },
+  ]);
+});
+
+test('group drop anchors sort before and after, including append at the last group', () => {
+  const groups = ['one', 'two', 'three'].map((id) => ({ id }));
+  assert.equal(groupDropAnchor(groups, 'three', 'one', false), 'one');
+  assert.equal(groupDropAnchor(groups, 'one', 'three', true), null);
+  const ordered = reorderBefore(
+    groups.map((item) => item.id),
+    'one',
+    groupDropAnchor(groups, 'one', 'three', true),
+  );
+  assert.deepEqual(ordered, ['two', 'three', 'one']);
 });
 
 test('pin-lane placement preserves remembered group and pin state', () => {
