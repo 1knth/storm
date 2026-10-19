@@ -1,23 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Chart, registerables } from 'chart.js';
 import { parseChartData } from './chartData';
+import type { Appearance } from '../../appearance';
+import { rgbaColor } from '../../appearance';
 
 Chart.register(...registerables);
 
-const COLORS = [
-  '#38bdf8',
-  '#f472b6',
-  '#a3e635',
-  '#fbbf24',
-  '#a78bfa',
-  '#fb7185',
-  '#2dd4bf',
-  '#c084fc',
-];
+type Props = { source: string; appearance: Appearance };
 
-type Props = { source: string };
-
-export default function NumericChart({ source }: Props) {
+export default function NumericChart({ source, appearance }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const result = useMemo(() => {
     try {
@@ -43,14 +34,31 @@ export default function NumericChart({ source }: Props) {
       data: {
         labels: parsed.labels,
         datasets: parsed.series.map((series, index) => {
-          const color = COLORS[index % COLORS.length];
+          const color = rgbaColor(
+            appearance.chartSeries[index % appearance.chartSeries.length],
+            appearance.opacity[
+              `chartSeries-${(index % appearance.chartSeries.length) + 1}`
+            ],
+          );
           return {
             label: series.title ?? `Series ${index + 1}`,
             data: series.data,
             backgroundColor: isRadial
-              ? parsed.labels.map((_, i) => COLORS[i % COLORS.length])
+              ? parsed.labels.map((_, i) =>
+                  rgbaColor(
+                    appearance.chartSeries[i % appearance.chartSeries.length],
+                    appearance.opacity[
+                      `chartSeries-${(i % appearance.chartSeries.length) + 1}`
+                    ],
+                  ),
+                )
               : color,
-            borderColor: isRadial ? '#111827' : color,
+            borderColor: isRadial
+              ? rgbaColor(
+                  appearance.mermaidBackground,
+                  appearance.opacity.mermaidBackground,
+                )
+              : color,
             borderWidth: isRadial ? 2 : 2,
             ...(parsed.type === 'line'
               ? { tension: 0.25, pointRadius: 3 }
@@ -66,29 +74,60 @@ export default function NumericChart({ source }: Props) {
           legend: {
             display: parsed.type !== 'bar' || parsed.series.length > 1,
             position: isRadial ? 'bottom' : 'top',
-            labels: { color: '#d1d5db' },
+            labels: {
+              color: rgbaColor(
+                appearance.chartText,
+                appearance.opacity.chartText,
+              ),
+            },
           },
           title: {
             display: Boolean(parsed.title),
             text: parsed.title,
-            color: '#f3f4f6',
+            color: rgbaColor(
+              appearance.chartText,
+              appearance.opacity.chartText,
+            ),
           },
         },
         scales: isRadial
           ? undefined
           : {
-              x: { ticks: { color: '#9ca3af' }, grid: { color: '#ffffff18' } },
+              x: {
+                ticks: {
+                  color: rgbaColor(
+                    appearance.chartText,
+                    appearance.opacity.chartText,
+                  ),
+                },
+                grid: {
+                  color: rgbaColor(
+                    appearance.chartGrid,
+                    appearance.opacity.chartGrid,
+                  ),
+                },
+              },
               y: {
                 beginAtZero: true,
-                ticks: { color: '#9ca3af' },
-                grid: { color: '#ffffff18' },
+                ticks: {
+                  color: rgbaColor(
+                    appearance.chartText,
+                    appearance.opacity.chartText,
+                  ),
+                },
+                grid: {
+                  color: rgbaColor(
+                    appearance.chartGrid,
+                    appearance.opacity.chartGrid,
+                  ),
+                },
               },
             },
       },
     });
 
     return () => chart.destroy();
-  }, [parsed]);
+  }, [parsed, appearance]);
 
   if (error)
     return (

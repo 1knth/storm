@@ -14,6 +14,19 @@ export const DEFAULT_APPEARANCE = {
   mermaidGroupText: '#333333',
   mermaidText: '#333333',
   mermaidConnectors: '#333333',
+  mermaidSignalColor: '#333333',
+  chartText: '#d1d5db',
+  chartGrid: '#4b5563',
+  chartSeries: [
+    '#38bdf8',
+    '#f472b6',
+    '#a3e635',
+    '#fbbf24',
+    '#a78bfa',
+    '#fb7185',
+    '#2dd4bf',
+    '#c084fc',
+  ],
   opacity: {
     selection: 40,
     activeLine: 10,
@@ -29,6 +42,12 @@ export const DEFAULT_APPEARANCE = {
     mermaidGroupText: 100,
     mermaidText: 100,
     mermaidConnectors: 100,
+    mermaidSignalColor: 100,
+    chartText: 100,
+    chartGrid: 100,
+    ...Object.fromEntries(
+      Array.from({ length: 8 }, (_, i) => [`chartSeries-${i + 1}`, 100]),
+    ),
   } as Record<string, number>,
 };
 export type Appearance = typeof DEFAULT_APPEARANCE;
@@ -77,11 +96,25 @@ export function validateAppearance(value: unknown): Appearance {
       input.mermaidConnectors,
       DEFAULT_APPEARANCE.mermaidConnectors,
     ),
+    mermaidSignalColor: color(
+      input.mermaidSignalColor,
+      color(input.mermaidConnectors, DEFAULT_APPEARANCE.mermaidSignalColor),
+    ),
+    chartText: color(input.chartText, DEFAULT_APPEARANCE.chartText),
+    chartGrid: color(input.chartGrid, DEFAULT_APPEARANCE.chartGrid),
+    chartSeries: DEFAULT_APPEARANCE.chartSeries.map((fallback, index) =>
+      color((input.chartSeries as unknown[])?.[index], fallback),
+    ),
     opacity: Object.fromEntries(
       Object.entries(DEFAULT_APPEARANCE.opacity).map(([key, fallback]) => {
-        const candidate = (
-          input.opacity as Record<string, unknown> | undefined
-        )?.[key];
+        const storedOpacity = input.opacity as
+          | Record<string, unknown>
+          | undefined;
+        const candidate =
+          storedOpacity?.[key] ??
+          (key === 'mermaidSignalColor'
+            ? storedOpacity?.mermaidConnectors
+            : undefined);
         return [
           key,
           typeof candidate === 'number' &&
@@ -160,6 +193,10 @@ export function mermaidThemeVariables(appearance: Appearance) {
     signalTextColor: rgbaColor(
       appearance.mermaidText,
       appearance.opacity.mermaidText,
+    ),
+    signalColor: rgbaColor(
+      appearance.mermaidSignalColor,
+      appearance.opacity.mermaidSignalColor,
     ),
     labelTextColor: rgbaColor(
       appearance.mermaidText,
