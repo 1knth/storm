@@ -800,33 +800,38 @@ app.whenReady().then(async () => {
       ],
     },
   ]);
+  ipcMain.handle(
+    'cli:available',
+    () => process.platform === 'darwin' && app.isPackaged,
+  );
+  const enableCli = async (interactive: boolean) => {
+    let result: { installed: boolean; message?: string };
+    try {
+      result = await installCliShortcut({
+        resourcesPath: process.resourcesPath,
+      });
+    } catch (error) {
+      result = {
+        installed: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    await recordCliChoice(
+      app.getPath('userData'),
+      result.installed ? 'enabled' : 'failed',
+    );
+    if (interactive && result.message) {
+      await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['OK'],
+        message: 'Could not enable the Storm CLI shortcut',
+        detail: result.message,
+      });
+    }
+    return result.installed;
+  };
   if (process.platform === 'darwin' && app.isPackaged) {
-    const enableCli = async (interactive: boolean) => {
-      let result: { installed: boolean; message?: string };
-      try {
-        result = await installCliShortcut({
-          resourcesPath: process.resourcesPath,
-        });
-      } catch (error) {
-        result = {
-          installed: false,
-          message: error instanceof Error ? error.message : String(error),
-        };
-      }
-      await recordCliChoice(
-        app.getPath('userData'),
-        result.installed ? 'enabled' : 'failed',
-      );
-      if (interactive && result.message) {
-        await dialog.showMessageBox({
-          type: 'warning',
-          buttons: ['OK'],
-          message: 'Could not enable the Storm CLI shortcut',
-          detail: result.message,
-        });
-      }
-      return result.installed;
-    };
+    ipcMain.handle('cli:enable', () => enableCli(true));
     const appMenu = menu.items[0]?.submenu;
     appMenu?.append(
       new MenuItem({
