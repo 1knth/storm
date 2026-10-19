@@ -379,9 +379,9 @@ export default function FileExplorer({
               role="dialog"
               aria-modal="true"
               aria-labelledby="settings-title"
-              className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#202124] p-6 text-white shadow-2xl"
+              className="flex max-h-[calc(75dvh-1.5rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#202124] p-5 text-white shadow-2xl"
             >
-              <div className="mb-6 flex items-center justify-between">
+              <div className="mb-4 flex shrink-0 items-center justify-between">
                 <h2 id="settings-title" className="text-lg font-semibold">
                   Settings
                 </h2>
@@ -395,255 +395,288 @@ export default function FileExplorer({
                   ×
                 </button>
               </div>
-              {confirmUnload && (
-                <div
-                  className="mb-5 rounded-xl border border-red-400/30 bg-red-500/5 p-4"
-                  role="alertdialog"
-                  aria-labelledby="unload-title"
-                  aria-describedby="unload-description"
-                >
-                  <h3 id="unload-title" className="font-semibold">
-                    Unload all vaults?
-                  </h3>
-                  <p
-                    id="unload-description"
-                    className="mt-2 text-sm text-white/70"
+              <div className="min-h-0 overflow-y-auto pr-1">
+                {confirmUnload && (
+                  <div
+                    className="mb-5 rounded-xl border border-red-400/30 bg-red-500/5 p-4"
+                    role="alertdialog"
+                    aria-labelledby="unload-title"
+                    aria-describedby="unload-description"
                   >
-                    This closes all vaults and tabs and clears saved vault
-                    registrations, groups, and tab layouts. It does not delete
-                    or modify any folders or notes.
-                  </p>
-                  <div className="mt-4 flex justify-end gap-2">
-                    <button
-                      type="button"
-                      disabled={unloading}
-                      onClick={() => setConfirmUnload(false)}
-                      className="rounded-lg px-3 py-2 text-sm text-white/70 hover:bg-white/10"
+                    <h3 id="unload-title" className="font-semibold">
+                      Unload all vaults?
+                    </h3>
+                    <p
+                      id="unload-description"
+                      className="mt-2 text-sm text-white/70"
                     >
-                      Cancel
-                    </button>
-                    <button
-                      autoFocus
-                      type="button"
-                      disabled={unloading}
-                      onClick={async () => {
-                        setUnloading(true);
-                        try {
-                          const unloaded = await onUnloadAllVaults();
-                          if (unloaded) {
-                            setConfirmUnload(false);
-                            onSettingsOpenChange(false);
-                          }
-                        } finally {
-                          setUnloading(false);
-                        }
-                      }}
-                      className="rounded-lg bg-red-500/20 px-3 py-2 text-sm text-red-100 hover:bg-red-500/30 disabled:opacity-50"
-                    >
-                      {unloading ? 'Unloading…' : 'Unload all vaults'}
-                    </button>
-                  </div>
-                </div>
-              )}
-              <div
-                role="tablist"
-                aria-label="Settings"
-                className="mb-5 flex gap-2 border-b border-white/10"
-              >
-                {(['general', 'appearance'] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    role="tab"
-                    aria-selected={settingsTab === tab}
-                    onClick={() => setSettingsTab(tab)}
-                    className={`px-3 py-2 text-sm capitalize ${settingsTab === tab ? 'border-b-2 border-blue-400 text-white' : 'text-white/60'}`}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
-              {settingsTab === 'general' && (
-                <>
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="font-medium">Vault</p>
-                      <p className="mt-1 max-w-[15rem] break-all text-xs text-white/50">
-                        {vaultPath ?? 'No vault selected'}
-                      </p>
-                    </div>
-                    <button
-                      ref={changeVaultRef}
-                      type="button"
-                      onClick={() => {
-                        chooseVault();
-                        onSettingsOpenChange(false);
-                      }}
-                      disabled={loading}
-                      className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
-                    >
-                      Change vault
-                    </button>
-                  </div>
-                  <div className="mt-5 border-t border-white/10 pt-4">
-                    <p className="font-medium">Unload vaults</p>
-                    <p className="mt-1 text-xs text-white/50">
-                      Close all {vaultCount} loaded vaults and clear their saved
-                      registrations.
+                      This closes all vaults and tabs and clears saved vault
+                      registrations, groups, and tab layouts. It does not delete
+                      or modify any folders or notes.
                     </p>
-                    <button
-                      type="button"
-                      disabled={vaultCount === 0 || unloading}
-                      onClick={() => setConfirmUnload(true)}
-                      className="mt-3 rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-100 hover:bg-red-500/25 disabled:opacity-50"
-                    >
-                      Unload all vaults…
-                    </button>
-                  </div>
-                  <label className="mt-6 flex cursor-pointer items-center justify-between gap-4">
-                    <span>
-                      <span className="block font-medium">Vim keybindings</span>
-                      <span className="mt-1 block text-xs text-white/50">
-                        Use Esc for normal mode and i to insert.
-                      </span>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={vimMode}
-                      onChange={(event) =>
-                        onVimModeChange(event.target.checked)
-                      }
-                      className="h-4 w-4 accent-blue-500"
-                    />
-                  </label>
-                  <div className="mt-6 space-y-4 border-t border-white/10 pt-4">
-                    <label className="flex cursor-pointer items-center justify-between gap-4">
-                      <span>
-                        <span className="block text-sm font-medium">
-                          Open file shortcut
-                        </span>
-                        <span className="mt-1 block text-xs text-white/50">
-                          ⌘/Ctrl + P
-                        </span>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={openFileShortcut}
-                        onChange={(event) =>
-                          onOpenFileShortcutChange(event.target.checked)
-                        }
-                        className="h-4 w-4 accent-blue-500"
-                      />
-                    </label>
-                    <label className="flex cursor-pointer items-center justify-between gap-4">
-                      <span>
-                        <span className="block text-sm font-medium">
-                          Toggle file explorer shortcut
-                        </span>
-                        <span className="mt-1 block text-xs text-white/50">
-                          ⌘/Ctrl + S
-                        </span>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={toggleExplorerShortcut}
-                        onChange={(event) =>
-                          onToggleExplorerShortcutChange(event.target.checked)
-                        }
-                        className="h-4 w-4 accent-blue-500"
-                      />
-                    </label>
-                    <p className="text-xs text-white/50">
-                      Open settings: ⌘ + ,
-                    </p>
-                  </div>
-                </>
-              )}
-              {settingsTab === 'appearance' && (
-                <div className="max-h-[65vh] space-y-2 overflow-y-auto">
-                  <p className="mb-3 text-sm text-white/60">
-                    Editor, preview, and diagram colors
-                  </p>
-                  <p className="text-sm font-semibold">Appearance</p>
-                  {(
-                    [
-                      ['Selection highlight', 'selection'],
-                      ['Cursor', 'cursor'],
-                      ...appearance.headings.map((_, i) => [
-                        `Heading ${i + 1}`,
-                        `heading-${i + 1}`,
-                      ]),
-                      ['Mermaid background', 'mermaidBackground'],
-                      ['Mermaid node fill', 'mermaidNodeFill'],
-                      ['Mermaid node border', 'mermaidNodeBorder'],
-                      ['Mermaid text', 'mermaidText'],
-                      ['Mermaid connectors', 'mermaidConnectors'],
-                    ] as [string, string][]
-                  ).map(([label, key]) => {
-                    const value = key.startsWith('heading-')
-                      ? appearance.headings[Number(key.slice(8)) - 1]
-                      : (appearance[key as keyof typeof appearance] as string);
-                    return (
-                      <label
-                        key={key}
-                        className="flex items-center justify-between gap-3 text-xs text-white/80"
+                    <div className="mt-4 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        disabled={unloading}
+                        onClick={() => setConfirmUnload(false)}
+                        className="rounded-lg px-3 py-2 text-sm text-white/70 hover:bg-white/10"
                       >
-                        {label}
-                        <span className="flex items-center gap-2">
-                          <input
-                            aria-label={label}
-                            type="color"
-                            value={value}
-                            onChange={(event) => {
-                              const next = key.startsWith('heading-')
-                                ? {
-                                    ...appearance,
-                                    headings: appearance.headings.map(
-                                      (color, i) =>
-                                        i === Number(key.slice(8)) - 1
-                                          ? event.target.value
-                                          : color,
-                                    ),
-                                  }
-                                : { ...appearance, [key]: event.target.value };
-                              onAppearanceChange(next);
-                            }}
-                          />
-                          <input
-                            aria-label={`${label} opacity`}
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={1}
-                            className="app-input w-16 px-1 py-1"
-                            value={appearance.opacity[key]}
-                            onChange={(event) =>
-                              onAppearanceChange({
-                                ...appearance,
-                                opacity: {
-                                  ...appearance.opacity,
-                                  [key]: Math.max(
-                                    0,
-                                    Math.min(100, Number(event.target.value)),
-                                  ),
-                                },
-                              })
+                        Cancel
+                      </button>
+                      <button
+                        autoFocus
+                        type="button"
+                        disabled={unloading}
+                        onClick={async () => {
+                          setUnloading(true);
+                          try {
+                            const unloaded = await onUnloadAllVaults();
+                            if (unloaded) {
+                              setConfirmUnload(false);
+                              onSettingsOpenChange(false);
                             }
-                          />
-                          <span>%</span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    className="app-button text-xs"
-                    onClick={() => onAppearanceChange(DEFAULT_APPEARANCE)}
-                  >
-                    Reset appearance
-                  </button>
+                          } finally {
+                            setUnloading(false);
+                          }
+                        }}
+                        className="rounded-lg bg-red-500/20 px-3 py-2 text-sm text-red-100 hover:bg-red-500/30 disabled:opacity-50"
+                      >
+                        {unloading ? 'Unloading…' : 'Unload all vaults'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div
+                  role="tablist"
+                  aria-label="Settings"
+                  className="mb-5 flex gap-2 border-b border-white/10"
+                >
+                  {(['general', 'appearance'] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      role="tab"
+                      aria-selected={settingsTab === tab}
+                      onClick={() => setSettingsTab(tab)}
+                      className={`px-3 py-2 text-sm capitalize ${settingsTab === tab ? 'border-b-2 border-blue-400 text-white' : 'text-white/60'}`}
+                    >
+                      {tab}
+                    </button>
+                  ))}
                 </div>
-              )}
+                {settingsTab === 'general' && (
+                  <div className="space-y-5">
+                    <fieldset className="space-y-3">
+                      <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/50">
+                        Vaults
+                      </legend>
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <p className="font-medium">Vault</p>
+                          <p className="mt-1 max-w-[15rem] break-all text-xs text-white/50">
+                            {vaultPath ?? 'No vault selected'}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            ref={changeVaultRef}
+                            type="button"
+                            onClick={() => {
+                              chooseVault();
+                              onSettingsOpenChange(false);
+                            }}
+                            disabled={loading}
+                            className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
+                          >
+                            Change vault
+                          </button>
+                          <button
+                            type="button"
+                            disabled={vaultCount === 0 || unloading}
+                            onClick={() => setConfirmUnload(true)}
+                            className="rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-100 hover:bg-red-500/25 disabled:opacity-50"
+                          >
+                            Unload all vaults…
+                          </button>
+                        </div>
+                      </div>
+                      <div className="border-t border-white/10 pt-3">
+                        <div>
+                          <p className="font-medium">Unload vaults</p>
+                          <p className="mt-1 text-xs text-white/50">
+                            Close all {vaultCount} loaded vaults and clear their
+                            saved registrations.
+                          </p>
+                        </div>
+                      </div>
+                    </fieldset>
+                    <fieldset className="space-y-3 border-t border-white/10 pt-3">
+                      <legend className="text-xs font-semibold uppercase tracking-wide text-white/50">
+                        Editor
+                      </legend>
+                      <label className="flex cursor-pointer items-center justify-between gap-4">
+                        <span>
+                          <span className="block font-medium">
+                            Vim keybindings
+                          </span>
+                          <span className="mt-1 block text-xs text-white/50">
+                            Use Esc for normal mode and i to insert.
+                          </span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={vimMode}
+                          onChange={(event) =>
+                            onVimModeChange(event.target.checked)
+                          }
+                          className="h-4 w-4 accent-blue-500"
+                        />
+                      </label>
+                    </fieldset>
+                    <fieldset className="space-y-4 border-t border-white/10 pt-3">
+                      <legend className="text-xs font-semibold uppercase tracking-wide text-white/50">
+                        Keyboard shortcuts
+                      </legend>
+                      <label className="flex cursor-pointer items-center justify-between gap-4">
+                        <span>
+                          <span className="block text-sm font-medium">
+                            Open file shortcut
+                          </span>
+                          <span className="mt-1 block text-xs text-white/50">
+                            ⌘/Ctrl + P
+                          </span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={openFileShortcut}
+                          onChange={(event) =>
+                            onOpenFileShortcutChange(event.target.checked)
+                          }
+                          className="h-4 w-4 accent-blue-500"
+                        />
+                      </label>
+                      <label className="flex cursor-pointer items-center justify-between gap-4">
+                        <span>
+                          <span className="block text-sm font-medium">
+                            Toggle file explorer shortcut
+                          </span>
+                          <span className="mt-1 block text-xs text-white/50">
+                            ⌘/Ctrl + S
+                          </span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={toggleExplorerShortcut}
+                          onChange={(event) =>
+                            onToggleExplorerShortcutChange(event.target.checked)
+                          }
+                          className="h-4 w-4 accent-blue-500"
+                        />
+                      </label>
+                      <p className="text-xs text-white/50">
+                        Open settings: ⌘ + ,
+                      </p>
+                    </fieldset>
+                  </div>
+                )}
+                {settingsTab === 'appearance' && (
+                  <div className="space-y-4">
+                    <p className="mb-3 text-sm text-white/60">
+                      Editor, preview, and diagram colors
+                    </p>
+                    <fieldset className="space-y-2">
+                      <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/50">
+                        Editor &amp; diagram colors
+                      </legend>
+                      {(
+                        [
+                          ['Selection highlight', 'selection'],
+                          ['Cursor', 'cursor'],
+                          ...appearance.headings.map((_, i) => [
+                            `Heading ${i + 1}`,
+                            `heading-${i + 1}`,
+                          ]),
+                          ['Mermaid background', 'mermaidBackground'],
+                          ['Mermaid node fill', 'mermaidNodeFill'],
+                          ['Mermaid node border', 'mermaidNodeBorder'],
+                          ['Mermaid text', 'mermaidText'],
+                          ['Mermaid connectors', 'mermaidConnectors'],
+                        ] as [string, string][]
+                      ).map(([label, key]) => {
+                        const value = key.startsWith('heading-')
+                          ? appearance.headings[Number(key.slice(8)) - 1]
+                          : (appearance[
+                              key as keyof typeof appearance
+                            ] as string);
+                        return (
+                          <label
+                            key={key}
+                            className="flex items-center justify-between gap-3 text-xs text-white/80"
+                          >
+                            {label}
+                            <span className="flex items-center gap-2">
+                              <input
+                                aria-label={label}
+                                type="color"
+                                value={value}
+                                onChange={(event) => {
+                                  const next = key.startsWith('heading-')
+                                    ? {
+                                        ...appearance,
+                                        headings: appearance.headings.map(
+                                          (color, i) =>
+                                            i === Number(key.slice(8)) - 1
+                                              ? event.target.value
+                                              : color,
+                                        ),
+                                      }
+                                    : {
+                                        ...appearance,
+                                        [key]: event.target.value,
+                                      };
+                                  onAppearanceChange(next);
+                                }}
+                              />
+                              <input
+                                aria-label={`${label} opacity`}
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={1}
+                                className="app-input w-16 px-1 py-1"
+                                value={appearance.opacity[key]}
+                                onChange={(event) =>
+                                  onAppearanceChange({
+                                    ...appearance,
+                                    opacity: {
+                                      ...appearance.opacity,
+                                      [key]: Math.max(
+                                        0,
+                                        Math.min(
+                                          100,
+                                          Number(event.target.value),
+                                        ),
+                                      ),
+                                    },
+                                  })
+                                }
+                              />
+                              <span>%</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </fieldset>
+                    <button
+                      type="button"
+                      className="app-button text-xs"
+                      onClick={() => onAppearanceChange(DEFAULT_APPEARANCE)}
+                    >
+                      Reset appearance
+                    </button>
+                  </div>
+                )}
+              </div>
             </section>
           </div>,
           document.body,
