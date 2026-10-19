@@ -15,6 +15,10 @@ import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
 import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
+import {
+  classifyVaultListError,
+  formatVaultListError,
+} from './main/vaultListLogging';
 
 app.setName('Storm');
 // Keep the pre-branding lowercase data directory so existing vault settings survive.
@@ -568,7 +572,16 @@ ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
   return { deleted: true, path: target.relativePath, kind: target.kind };
 });
 
-ipcMain.handle('vault:list-notes', async () => vaultService.listNotes());
+ipcMain.handle('vault:list-notes', async () => {
+  try {
+    return await vaultService.listNotes();
+  } catch (error) {
+    const trace = randomUUID().slice(0, 8);
+    const severity = classifyVaultListError(error);
+    console.error(formatVaultListError(severity, trace, error));
+    throw error;
+  }
+});
 
 ipcMain.handle('vault:read-note', async (_event, relativePath: unknown) =>
   vaultService.readNote(relativePath),
