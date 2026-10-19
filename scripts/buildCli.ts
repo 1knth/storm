@@ -27,6 +27,7 @@ export async function buildCliBinary(
     run?: typeof spawnSync;
     hostPlatform?: NodeJS.Platform;
     hostArch?: NodeJS.Architecture;
+    bunPath?: string;
   } = {},
 ): Promise<string> {
   assertNativeTarget(platform, arch, options.hostPlatform, options.hostArch);
@@ -37,15 +38,32 @@ export async function buildCliBinary(
   await rm(outputDirectory, { recursive: true, force: true });
   await mkdir(path.join(outputDirectory, 'runtime'), { recursive: true });
   const run = options.run ?? spawnSync;
-  const bunPath = await realpath(process.execPath);
+  let candidatePath = options.bunPath;
+  if (!candidatePath && process.versions.bun) candidatePath = process.execPath;
+  if (!candidatePath) {
+    const discovered = run('bun', ['--print', 'process.execPath'], {
+      cwd: sourceRoot,
+      encoding: 'utf8',
+      shell: false,
+    });
+    if (discovered.error || discovered.status !== 0)
+      throw new Error(
+        'Building the standalone Storm CLI requires Bun 1.3.12. Install the reviewed Bun runtime or provide its executable path.',
+      );
+    candidatePath = String(discovered.stdout).trim();
+    if (!candidatePath || candidatePath.includes('\\0'))
+      throw new Error('Bun did not report a valid executable path.');
+  }
+  const bunPath = await realpath(candidatePath);
   const version = run(bunPath, ['--version'], {
     cwd: sourceRoot,
     encoding: 'utf8',
+    shell: false,
   });
   if (version.error) throw version.error;
   if (version.status !== 0 || !/^1\.3\.12\b/.test(String(version.stdout)))
     throw new Error(
-      `Refusing unverified Bun runtime: ${String(version.stdout).trim()}`,
+      `Refusing unverified Bun runtime at ${bunPath}: ${String(version.stdout).trim()}`,
     );
   const licenseDirectory = path.join(outputDirectory, 'licenses');
   await mkdir(licenseDirectory, { recursive: true });
