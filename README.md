@@ -15,7 +15,7 @@ Pin vaults from their actions menu; pinned vaults keep any remembered group and 
 
 ## Local Storm CLI
 
-The offline command guide is built into `--help` (including per-command help). The installed app package includes a self-contained CLI folder at `Storm.app/Contents/Resources/cli/` on macOS: `storm` is a POSIX launcher, `storm.mjs` is the bundled client, and `runtime/bun` is the verified bundled Bun runtime. It requires neither a global Bun installation nor a source checkout; this is a folder bundle, not a single-file executable. Add the folder to `PATH` yourself, or invoke its launcher by full path. `bun run build:cli` creates this bundle in ignored `build/cli/`. Packaging supports only the current build host platform/architecture and does not download a cross-target runtime.
+The offline command guide is built into `--help` (including per-command help). The installed app package includes a self-contained CLI folder at `Storm.app/Contents/Resources/cli/` on macOS: `storm` is a POSIX launcher, `storm.mjs` is the bundled client, and `runtime/bun` is the verified bundled Bun runtime. It requires neither a global Bun installation nor a source checkout; this is a folder bundle, not a single-file executable. On the first launch of a packaged macOS app, Storm offers to create `/usr/local/bin/storm`; this does not change shell configuration. Storm never replaces an existing command, and macOS may request administrator authorization. You can retry from **Storm → Enable CLI…**. The prompt does not run in development; on other platforms use the bundled launcher by full path. If Storm is running from App Translocation, move it to `/Applications` before enabling the shortcut. `bun run build:cli` creates this bundle in ignored `build/cli/`. Packaging supports only the current build host platform/architecture and does not download a cross-target runtime.
 
 ```sh
 storm --help                 # if you added the packaged CLI to PATH
@@ -31,4 +31,4 @@ storm status --json
 storm stream SESSION --stdin < draft.md
 ```
 
-`finish` and `cancel` accept the same endpoint option. The endpoint only exists while Storm is running. Storm does not install a global symlink or modify shell configuration; invoke the packaged binary by full path or add its containing directory to `PATH` yourself.
+`finish` and `cancel` accept the same endpoint option. The endpoint only exists while Storm is running. Storm does not modify shell configuration; if you decline setup, invoke the packaged binary by full path or add its containing directory to `PATH` yourself.
