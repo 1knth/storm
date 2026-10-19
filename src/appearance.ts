@@ -10,6 +10,7 @@ export const DEFAULT_APPEARANCE = {
   mermaidNodeBorder: '#9370DB',
   mermaidGroupFill: '#f4f4f4',
   mermaidGroupBorder: '#9370DB',
+  mermaidGroupText: '#333333',
   mermaidText: '#333333',
   mermaidConnectors: '#333333',
   opacity: {
@@ -23,6 +24,7 @@ export const DEFAULT_APPEARANCE = {
     mermaidNodeBorder: 100,
     mermaidGroupFill: 100,
     mermaidGroupBorder: 100,
+    mermaidGroupText: 100,
     mermaidText: 100,
     mermaidConnectors: 100,
   } as Record<string, number>,
@@ -62,6 +64,10 @@ export function validateAppearance(value: unknown): Appearance {
     mermaidGroupBorder: color(
       input.mermaidGroupBorder,
       DEFAULT_APPEARANCE.mermaidGroupBorder,
+    ),
+    mermaidGroupText: color(
+      input.mermaidGroupText,
+      DEFAULT_APPEARANCE.mermaidGroupText,
     ),
     mermaidText: color(input.mermaidText, DEFAULT_APPEARANCE.mermaidText),
     mermaidConnectors: color(
@@ -136,6 +142,10 @@ export function mermaidThemeVariables(appearance: Appearance) {
     clusterBorder: rgbaColor(
       appearance.mermaidGroupBorder,
       appearance.opacity.mermaidGroupBorder,
+    ),
+    titleColor: rgbaColor(
+      appearance.mermaidGroupText,
+      appearance.opacity.mermaidGroupText,
     ),
     primaryTextColor: rgbaColor(
       appearance.mermaidText,
