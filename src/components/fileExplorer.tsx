@@ -99,6 +99,10 @@ export default function FileExplorer({
   const [confirmUnload, setConfirmUnload] = useState(false);
   const [unloading, setUnloading] = useState(false);
   const [cliAvailable, setCliAvailable] = useState(false);
+  const [cliInstalled, setCliInstalled] = useState(false);
+  const [cliBusy, setCliBusy] = useState(false);
+  const [canOpenFilesAndFoldersSettings, setCanOpenFilesAndFoldersSettings] =
+    useState(false);
   const vaultName = vaultPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? null;
 
   useEffect(() => {
@@ -124,6 +128,10 @@ export default function FileExplorer({
 
   useEffect(() => {
     void window.vault.cliAvailable().then(setCliAvailable);
+    void window.vault.cliInstalled().then(setCliInstalled);
+    void window.vault
+      .canOpenFilesAndFoldersSettings()
+      .then(setCanOpenFilesAndFoldersSettings);
   }, []);
 
   useEffect(() => {
@@ -481,20 +489,54 @@ export default function FileExplorer({
                           <p className="mt-1 max-w-[15rem] break-all text-xs text-white/50">
                             {vaultPath ?? 'No vault selected'}
                           </p>
+                          <p className="mt-1 max-w-[20rem] text-xs text-white/50">
+                            If access failed, choose that folder again. macOS
+                            controls Files &amp; Folders prompts; Storm cannot
+                            force one to appear.
+                          </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
-                          <button
-                            ref={changeVaultRef}
-                            type="button"
-                            onClick={() => {
-                              chooseVault();
-                              onSettingsOpenChange(false);
-                            }}
-                            disabled={loading}
-                            className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
-                          >
-                            Change vault
-                          </button>
+                          <div className="flex flex-col items-end gap-2">
+                            <button
+                              ref={changeVaultRef}
+                              type="button"
+                              onClick={() => {
+                                chooseVault();
+                                onSettingsOpenChange(false);
+                              }}
+                              disabled={loading}
+                              className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
+                            >
+                              Change vault
+                            </button>
+                            <button
+                              type="button"
+                              onClick={chooseVault}
+                              disabled={loading}
+                              title="Choose the vault folder again to request access. macOS controls any Files & Folders prompts."
+                              className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
+                            >
+                              Request folder access…
+                            </button>
+                            {canOpenFilesAndFoldersSettings && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void window.vault
+                                    .openFilesAndFoldersSettings()
+                                    .catch((error: unknown) =>
+                                      console.error(
+                                        'Could not open Files & Folders settings',
+                                        error,
+                                      ),
+                                    )
+                                }
+                                className="text-right text-xs text-white/60 underline underline-offset-2 hover:text-white"
+                              >
+                                Still blocked? Open Files &amp; Folders settings
+                              </button>
+                            )}
+                          </div>
                           <button
                             type="button"
                             disabled={vaultCount === 0 || unloading}
@@ -521,19 +563,36 @@ export default function FileExplorer({
                           </div>
                           <button
                             type="button"
+                            disabled={cliBusy}
                             onClick={() => {
-                              void window.vault
-                                .enableCli()
+                              setCliBusy(true);
+                              const operation = cliInstalled
+                                ? window.vault.disableCli()
+                                : window.vault.enableCli();
+                              void operation
+                                .then(setCliInstalled)
                                 .catch((error: unknown) =>
                                   console.error(
-                                    'Could not enable the Storm CLI',
+                                    'Could not change Storm CLI state',
                                     error,
                                   ),
-                                );
+                                )
+                                .finally(() => {
+                                  void window.vault
+                                    .cliInstalled()
+                                    .then(setCliInstalled)
+                                    .catch((error: unknown) =>
+                                      console.error(
+                                        'Could not refresh Storm CLI state',
+                                        error,
+                                      ),
+                                    )
+                                    .finally(() => setCliBusy(false));
+                                });
                             }}
-                            className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20"
+                            className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
                           >
-                            Enable CLI…
+                            {cliInstalled ? 'Disable' : 'Enable'}
                           </button>
                         </div>
                       </fieldset>

@@ -138,7 +138,13 @@ function isAgentStatus(value: unknown): value is AgentBridgeStatusEvent {
 
 contextBridge.exposeInMainWorld('vault', {
   cliAvailable: (): Promise<boolean> => ipcRenderer.invoke('cli:available'),
+  canOpenFilesAndFoldersSettings: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:canOpenFilesAndFolders'),
+  openFilesAndFoldersSettings: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:openFilesAndFolders'),
+  cliInstalled: (): Promise<boolean> => ipcRenderer.invoke('cli:installed'),
   enableCli: (): Promise<boolean> => ipcRenderer.invoke('cli:enable'),
+  disableCli: (): Promise<boolean> => ipcRenderer.invoke('cli:disable'),
   registryList: (): Promise<{
     vaults: RegisteredVault[];
     activeVaultId: string | null;

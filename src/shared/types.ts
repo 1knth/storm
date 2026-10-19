@@ -136,7 +136,11 @@ declare global {
   interface Window {
     vault: {
       cliAvailable: () => Promise<boolean>;
+      canOpenFilesAndFoldersSettings: () => Promise<boolean>;
+      openFilesAndFoldersSettings: () => Promise<boolean>;
+      cliInstalled: () => Promise<boolean>;
       enableCli: () => Promise<boolean>;
+      disableCli: () => Promise<boolean>;
       registryList: () => Promise<{
         vaults: RegisteredVault[];
         activeVaultId: string | null;
