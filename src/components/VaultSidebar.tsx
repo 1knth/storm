@@ -34,7 +34,11 @@ type Props = {
   onVaultsChange: (vaults: RegisteredVault[]) => void;
   onSidebarRootOrderChange: (order: SidebarRootRef[]) => void;
   activeVaultId: string | null;
-  onActivate: (id: string, focusExplorer?: boolean) => void;
+  onActivate: (
+    id: string,
+    focusDestination?: boolean,
+    retainFocus?: boolean,
+  ) => void;
   onAdd: () => void;
   collapsed: boolean;
   onToggleExplorer: () => void;
@@ -602,7 +606,11 @@ export default function VaultSidebar({
           ]?.focus();
         } else if ((event.key === 'Enter' || event.key === 'l') && button) {
           event.preventDefault();
-          onActivate(button.dataset.vaultId ?? '', event.key === 'Enter');
+          onActivate(
+            button.dataset.vaultId ?? '',
+            event.key === 'Enter',
+            event.key === 'l',
+          );
         }
       }}
     >
@@ -829,6 +837,10 @@ export default function VaultSidebar({
           Add a vault to get started.
         </p>
       ) : null}
+      <div
+        className="sidebar-window-drag-region min-h-0 flex-1"
+        aria-hidden="true"
+      />
       <div className="mt-2 shrink-0 border-t border-white/10 pt-2">
         <button
           type="button"

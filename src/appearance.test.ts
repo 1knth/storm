@@ -2,6 +2,7 @@ import { deepStrictEqual, strictEqual } from 'node:assert';
 import { describe, it } from 'node:test';
 import {
   APPEARANCE_KEY,
+  commitOpacityDraft,
   DEFAULT_APPEARANCE,
   loadAppearance,
   mermaidThemeVariables,
@@ -65,8 +66,59 @@ describe('appearance preferences', () => {
     strictEqual(appearance.mermaidText, '#abcdef');
     strictEqual(appearance.opacity.mermaidGroupText, 60);
     const variables = mermaidThemeVariables(appearance);
-    strictEqual(variables.titleColor, 'rgba(18, 52, 86, 0.6)');
+    strictEqual('titleColor' in variables, false);
     strictEqual(variables.primaryTextColor, 'rgba(171, 205, 239, 1)');
+  });
+  it('maps sequence labels to readable text and contrasting palette backgrounds', () => {
+    const appearance = validateAppearance({
+      mermaidText: '#102030',
+      mermaidBackground: '#fefefe',
+      mermaidConnectors: '#405060',
+      opacity: { mermaidText: 75, mermaidBackground: 100 },
+    });
+    const variables = mermaidThemeVariables(appearance);
+    for (const key of [
+      'actorTextColor',
+      'signalTextColor',
+      'labelTextColor',
+      'loopTextColor',
+      'noteTextColor',
+    ] as const) {
+      strictEqual(variables[key], 'rgba(16, 32, 48, 0.75)');
+    }
+    strictEqual(variables.labelBoxBkgColor, 'rgba(254, 254, 254, 1)');
+    strictEqual(variables.labelBoxBorderColor, 'rgba(64, 80, 96, 1)');
+    strictEqual(variables.clusterBkg, 'rgba(244, 244, 244, 1)');
+    strictEqual(variables.clusterBorder, 'rgba(147, 112, 219, 1)');
+  });
+  it('defaults active-line settings for existing preferences and preserves custom values', () => {
+    const legacy = validateAppearance({ selection: '#123456' });
+    strictEqual(legacy.activeLine, DEFAULT_APPEARANCE.activeLine);
+    strictEqual(
+      legacy.opacity.activeLine,
+      DEFAULT_APPEARANCE.opacity.activeLine,
+    );
+    const custom = validateAppearance({
+      activeLine: '#abcdef',
+      opacity: { activeLine: 52 },
+    });
+    strictEqual(custom.activeLine, '#abcdef');
+    strictEqual(custom.opacity.activeLine, 52);
+  });
+  it('clamps opacity drafts on commit and recovers invalid drafts', () => {
+    for (const [draft, expected] of [
+      ['-10', 0],
+      ['150', 100],
+      ['0', 0],
+      ['100', 100],
+      ['50', 50],
+      ['12.5', 12.5],
+    ] as const) {
+      strictEqual(commitOpacityDraft(draft, 40), expected);
+    }
+    for (const draft of ['', '-', 'invalid', 'NaN', 'Infinity']) {
+      strictEqual(commitOpacityDraft(draft, 40), 40);
+    }
   });
   it('defaults opacity for legacy settings and rejects invalid values', () => {
     const result = validateAppearance({
@@ -86,7 +138,13 @@ describe('appearance preferences', () => {
       primaryBorderColor: 'rgba(147, 112, 219, 1)',
       clusterBkg: 'rgba(244, 244, 244, 1)',
       clusterBorder: 'rgba(147, 112, 219, 1)',
-      titleColor: 'rgba(51, 51, 51, 1)',
+      actorTextColor: 'rgba(51, 51, 51, 1)',
+      signalTextColor: 'rgba(51, 51, 51, 1)',
+      labelTextColor: 'rgba(51, 51, 51, 1)',
+      loopTextColor: 'rgba(51, 51, 51, 1)',
+      noteTextColor: 'rgba(51, 51, 51, 1)',
+      labelBoxBkgColor: 'rgba(255, 255, 255, 1)',
+      labelBoxBorderColor: 'rgba(51, 51, 51, 1)',
       primaryTextColor: 'rgba(51, 51, 51, 1)',
       lineColor: 'rgba(51, 51, 51, 1)',
     });

@@ -306,6 +306,28 @@ body,
   background: transparent;
 }
 
+.titlebar-drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.titlebar-drag-region button,
+.titlebar-drag-region a,
+.titlebar-drag-region input,
+.titlebar-drag-region select,
+.sidebar-window-drag-region button,
+.sidebar-window-drag-region a,
+.sidebar-window-drag-region input,
+.sidebar-window-drag-region select {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.sidebar-window-drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
 /* Keep scrollbars subtle without hiding their track or changing layout. */
 * {
   scrollbar-width: thin;

@@ -7,8 +7,44 @@ import { getExplorerContextMenuItems } from './fileExplorerContextMenu';
 import { FaPlus } from 'react-icons/fa';
 import { RiMenuUnfold4Fill } from 'react-icons/ri';
 import Note from './Note';
-import { DEFAULT_APPEARANCE } from '../appearance';
+import { commitOpacityDraft, DEFAULT_APPEARANCE } from '../appearance';
 import type { Appearance } from '../appearance';
+
+function OpacityInput({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const next = commitOpacityDraft(draft, value);
+    setDraft(String(next));
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <input
+      aria-label={`${label} opacity`}
+      type="text"
+      inputMode="decimal"
+      className="app-input w-16 px-1 py-1"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          commit();
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
 
 function ShortcutHint({
   children,
@@ -682,6 +718,7 @@ export default function FileExplorer({
                       {(
                         [
                           ['Selection highlight', 'selection'],
+                          ['Active line', 'activeLine'],
                           ['Cursor', 'cursor'],
                           ...appearance.headings.map((_, i) => [
                             `Heading ${i + 1}`,
@@ -732,26 +769,15 @@ export default function FileExplorer({
                                   onAppearanceChange(next);
                                 }}
                               />
-                              <input
-                                aria-label={`${label} opacity`}
-                                type="number"
-                                min={0}
-                                max={100}
-                                step={1}
-                                className="app-input w-16 px-1 py-1"
+                              <OpacityInput
+                                label={label}
                                 value={appearance.opacity[key]}
-                                onChange={(event) =>
+                                onCommit={(value) =>
                                   onAppearanceChange({
                                     ...appearance,
                                     opacity: {
                                       ...appearance.opacity,
-                                      [key]: Math.max(
-                                        0,
-                                        Math.min(
-                                          100,
-                                          Number(event.target.value),
-                                        ),
-                                      ),
+                                      [key]: value,
                                     },
                                   })
                                 }

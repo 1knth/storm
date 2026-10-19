@@ -3,7 +3,7 @@ import DOMPurify, { type Config } from 'dompurify';
 import mermaid from 'mermaid';
 import { sanitizeSvgReferences } from './svgReferences';
 import type { Appearance } from '../../appearance';
-import { mermaidThemeVariables } from '../../appearance';
+import { mermaidThemeVariables, rgbaColor } from '../../appearance';
 
 const MAX_SOURCE_LENGTH = 10_000;
 
@@ -89,7 +89,10 @@ export default function MermaidBlock({ source, appearance }: Props) {
                 `fill: ${groupFill} !important; stroke: ${groupBorder} !important`,
               );
             });
-          const groupText = mermaidThemeVariables(appearance).titleColor;
+          const groupText = rgbaColor(
+            appearance.mermaidGroupText,
+            appearance.opacity.mermaidGroupText,
+          );
           parsedSvg.querySelectorAll('.cluster-label text').forEach((text) => {
             text.setAttribute('style', `fill: ${groupText} !important`);
           });

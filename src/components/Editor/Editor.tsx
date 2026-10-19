@@ -737,7 +737,22 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       markdown(),
       Prec.highest(
         EditorView.domEventHandlers({
-          mousedown: (event) => {
+          mousedown: (event, view) => {
+            if (
+              event.button === 0 &&
+              event.target === view.contentDOM &&
+              view.state.selection.ranges.some((range) => !range.empty)
+            ) {
+              const position = view.posAtCoords({
+                x: event.clientX,
+                y: event.clientY,
+              });
+              if (position !== null) {
+                view.focus();
+                view.dispatch({ selection: { anchor: position } });
+                return false;
+              }
+            }
             if (
               !shouldBlockAgentEditorMouseDown(
                 Boolean(agentDocumentRef.current?.writing),
@@ -973,7 +988,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         '.cm-cursor, .cm-dropCursor': {
           borderLeft: '1.5px solid var(--storm-cursor)',
         },
-        '.cm-activeLine': { backgroundColor: 'rgba(224, 191, 255, 0.1)' },
+        '.cm-activeLine': { backgroundColor: 'var(--storm-active-line)' },
       }),
     ];
     const view = new EditorView({
@@ -1052,6 +1067,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     document.documentElement.style.setProperty(
       '--storm-selection',
       rgbaColor(appearance.selection, appearance.opacity.selection),
+    );
+    document.documentElement.style.setProperty(
+      '--storm-active-line',
+      rgbaColor(appearance.activeLine, appearance.opacity.activeLine),
     );
     document.documentElement.style.setProperty(
       '--storm-cursor',
