@@ -1,10 +1,18 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { VaultRegistry } from './vaultRegistry';
 import { groupColorForId } from '../shared/groupColors';
+import { deriveVaultSidebarLayout } from '../shared/vaultSidebarLayout';
 import { serializeTabLayout } from '../components/Editor/savedTabLayout';
 import { getTabId } from '../components/Editor/tabGroups';
 import type {
@@ -17,6 +25,134 @@ import { EditorState } from '@codemirror/state';
 async function temporaryDirectory(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'storm-vault-registry-'));
 }
+
+test('persists pin placement, remembered groups, bucket order, and group reordering without moving files', async () => {
+  const temp = await temporaryDirectory();
+  try {
+    const paths = ['a', 'b', 'c'].map((name) => path.join(temp, name));
+    for (const directory of paths) {
+      await mkdir(directory);
+      await writeFile(path.join(directory, 'note.md'), directory);
+    }
+    const registry = new VaultRegistry(temp);
+    const vaults = await Promise.all(
+      paths.map((directory) => registry.add(directory)),
+    );
+    const [a, b, c] = vaults.map(({ vault }) => vault);
+    const group = await registry.createGroup('Remember me');
+    await registry.setVaultPlacement({
+      vaultId: a.id,
+      groupId: group.id,
+      pinned: false,
+      beforeVaultId: null,
+    });
+    await registry.setVaultPlacement({
+      vaultId: b.id,
+      groupId: group.id,
+      pinned: false,
+      beforeVaultId: null,
+    });
+    await registry.setVaultPlacement({
+      vaultId: a.id,
+      groupId: group.id,
+      pinned: true,
+      beforeVaultId: null,
+    });
+    assert.deepEqual(
+      (await new VaultRegistry(temp).list()).vaults.map((v) => [
+        v.id,
+        v.pinned,
+        v.groupId,
+      ]),
+      [
+        [c.id, false, undefined],
+        [b.id, false, group.id],
+        [a.id, true, group.id],
+      ],
+    );
+    await registry.setVaultPlacement({
+      vaultId: a.id,
+      groupId: group.id,
+      pinned: false,
+      beforeVaultId: null,
+    });
+    await assert.rejects(
+      registry.setVaultPlacement({
+        vaultId: c.id,
+        groupId: null,
+        pinned: false,
+        beforeVaultId: b.id,
+      }),
+      /Invalid placement anchor/,
+    );
+    await registry.setVaultPlacement({
+      vaultId: c.id,
+      groupId: group.id,
+      pinned: false,
+      beforeVaultId: b.id,
+    });
+    const reorderedVaults = (await registry.list()).vaults;
+    const visible = deriveVaultSidebarLayout(
+      reorderedVaults,
+      await registry.listGroups(),
+    );
+    assert.deepEqual(
+      visible.pinnedVaults.map((vault) => vault.id),
+      [],
+    );
+    assert.deepEqual(
+      visible.ungroupedVaults.map((vault) => vault.id),
+      [],
+    );
+    assert.deepEqual(
+      visible.groups.map((item) => [
+        item.id,
+        item.vaults.map((vault) => vault.id),
+      ]),
+      [[group.id, [c.id, b.id, a.id]]],
+    );
+    const second = await registry.createGroup('Second');
+    await registry.reorderGroups([second.id, group.id]);
+    assert.deepEqual(
+      (await new VaultRegistry(temp).listGroups()).map((g) => g.id),
+      [second.id, group.id],
+    );
+    await assert.rejects(
+      registry.reorderGroups([group.id]),
+      /Invalid group order/,
+    );
+    await assert.rejects(
+      registry.reorderGroups([group.id, group.id]),
+      /Invalid group order/,
+    );
+    await assert.rejects(
+      registry.setVaultPlacement({
+        vaultId: a.id,
+        groupId: group.id,
+        pinned: true,
+        beforeVaultId: c.id,
+      }),
+      /Invalid placement anchor/,
+    );
+    assert.deepEqual(
+      (await registry.list()).vaults.map((v) => v.id),
+      reorderedVaults.map((vault) => vault.id),
+    );
+    for (const directory of paths)
+      assert.equal(
+        await readFile(path.join(directory, 'note.md'), 'utf8'),
+        directory,
+      );
+    assert.deepEqual((await readdir(temp)).sort(), [
+      'a',
+      'b',
+      'c',
+      'settings.json',
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
 
 test('serializes concurrent mutations and recovers after a failed save', async () => {
   const temp = await temporaryDirectory();
@@ -383,7 +519,9 @@ test('preserves legacy registries and normalizes unknown or malformed group refe
     );
     const registry = new VaultRegistry(temp);
     assert.deepEqual(await registry.listGroups(), []);
-    assert.deepEqual((await registry.list()).vaults, [legacyVault]);
+    assert.deepEqual((await registry.list()).vaults, [
+      { ...legacyVault, pinned: false },
+    ]);
     const group = await registry.createGroup('Team');
     await assert.rejects(registry.setVaultGroup(legacyVault.id, 'missing'));
     await assert.rejects(registry.setVaultGroup('missing-vault', group.id));
@@ -507,6 +645,7 @@ test('clears unknown saved group references safely while retaining valid vault r
     assert.deepEqual((await registry.list()).vaults[0], {
       ...vault,
       groupId: null,
+      pinned: false,
     });
   } finally {
     await rm(temp, { recursive: true, force: true });

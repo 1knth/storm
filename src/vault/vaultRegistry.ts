@@ -22,6 +22,7 @@ export interface RegisteredVault {
   name: string;
   path: string;
   groupId?: string | null;
+  pinned?: boolean;
 }
 
 export interface VaultGroup {
@@ -278,6 +279,72 @@ export class VaultRegistry {
     });
   }
 
+  /** Atomically place a vault in its bucket, preserving other buckets' order.
+   * beforeVaultId is a same-bucket anchor; null appends. Pinning remembers groupId.
+   */
+  async setVaultPlacement(request: {
+    vaultId: string;
+    groupId: string | null;
+    pinned: boolean;
+    beforeVaultId: string | null;
+  }): Promise<void> {
+    return this.runMutation(async () => {
+      await this.load();
+      const vaults = this.settings.vaults ?? [];
+      const moving = vaults.find((vault) => vault.id === request.vaultId);
+      if (!moving) throw new Error('Unknown vault');
+      if (
+        request.groupId !== null &&
+        !(this.settings.vaultGroups ?? []).some(
+          (group) => group.id === request.groupId,
+        )
+      )
+        throw new Error('Unknown vault group');
+      if (request.beforeVaultId === request.vaultId)
+        throw new Error('Invalid placement anchor');
+      const nextMoving = {
+        ...moving,
+        groupId: request.groupId,
+        pinned: request.pinned,
+      };
+      const rest = vaults.filter((vault) => vault.id !== moving.id);
+      const bucket = (vault: RegisteredVault) =>
+        `${vault.pinned === true}:${vault.groupId ?? ''}`;
+      const key = bucket(nextMoving);
+      const target = request.beforeVaultId
+        ? rest.find((vault) => vault.id === request.beforeVaultId)
+        : undefined;
+      if (request.beforeVaultId && (!target || bucket(target) !== key))
+        throw new Error('Invalid placement anchor');
+      const sameBucket = rest.filter((vault) => bucket(vault) === key);
+      const insertion = target
+        ? rest.indexOf(target)
+        : sameBucket.length
+          ? rest.indexOf(sameBucket[sameBucket.length - 1]) + 1
+          : rest.length;
+      rest.splice(insertion, 0, nextMoving);
+      await this.update({ ...this.settings, vaults: rest });
+    });
+  }
+
+  async reorderGroups(groupIds: string[]): Promise<void> {
+    return this.runMutation(async () => {
+      await this.load();
+      const groups = this.settings.vaultGroups ?? [];
+      if (
+        groupIds.length !== groups.length ||
+        new Set(groupIds).size !== groups.length ||
+        groupIds.some((id) => !groups.some((group) => group.id === id))
+      )
+        throw new Error('Invalid group order');
+      const byId = new Map(groups.map((group) => [group.id, group]));
+      await this.update({
+        ...this.settings,
+        vaultGroups: groupIds.map((id) => byId.get(id)!),
+      });
+    });
+  }
+
   async setVaultGroup(vaultId: string, groupId: string | null): Promise<void> {
     return this.runMutation(async () => {
       await this.load();
@@ -494,11 +561,13 @@ export class VaultRegistry {
     }
     this.settings.vaultGroups = groups;
     const validGroupIds = new Set(groups.map((group) => group.id));
-    this.settings.vaults = this.settings.vaults.map((vault) =>
-      vault.groupId && !validGroupIds.has(vault.groupId)
-        ? { ...vault, groupId: null }
-        : vault,
-    );
+    this.settings.vaults = this.settings.vaults.map((vault) => ({
+      ...vault,
+      pinned: vault.pinned === true,
+      ...(vault.groupId && !validGroupIds.has(vault.groupId)
+        ? { groupId: null }
+        : {}),
+    }));
     if (this.settings.lastVaultPath && this.settings.vaults.length === 0) {
       try {
         const canonicalPath = await realpath(this.settings.lastVaultPath);

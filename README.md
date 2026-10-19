@@ -9,6 +9,10 @@ Storm is an Electron application for working with a vault of notes.
 
 Use the pinned pnpm version from `package.json`. Run `pnpm start` to launch the app, `pnpm test` for the Bun test suite, `pnpm typecheck` for TypeScript, and `pnpm lint` for Oxlint and formatting checks. Bun is required for tests.
 
+## Vault sidebar
+
+Pin vaults from their actions menu; pinned vaults keep any remembered group and can be restored with **Unpin vault**. Drag vaults onto a group to assign them, or onto the ungrouped lane to return them to the root. Drop on a vault row's upper/lower half to place before/after it; group headers can likewise be reordered. These are sidebar organization actions only: they do not move files.
+
 ## Local Storm CLI
 
 The full offline command guide is built into `--help` (including per-command help):

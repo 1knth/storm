@@ -5,6 +5,7 @@ export interface RegisteredVault {
   name: string;
   path: string;
   groupId?: string | null;
+  pinned?: boolean;
 }
 
 export interface VaultGroup {
@@ -148,6 +149,13 @@ declare global {
       groupRename: (id: string, name: string) => Promise<VaultGroup>;
       groupRemove: (id: string) => Promise<void>;
       groupSetVault: (vaultId: string, groupId: string | null) => Promise<void>;
+      vaultSetPlacement: (request: {
+        vaultId: string;
+        groupId: string | null;
+        pinned: boolean;
+        beforeVaultId: string | null;
+      }) => Promise<void>;
+      groupsReorder: (groupIds: string[]) => Promise<void>;
       groupSetCollapsed: (id: string, collapsed: boolean) => Promise<void>;
       groupSetColor: (id: string, color: GroupColor) => Promise<void>;
       registryAdd: (

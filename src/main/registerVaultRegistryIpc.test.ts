@@ -46,6 +46,14 @@ function setup() {
       calls.push(['setGroupCollapsed', ...args]);
       return true;
     },
+    setVaultPlacement: (...args: unknown[]) => {
+      calls.push(['setVaultPlacement', ...args]);
+      return true;
+    },
+    reorderGroups: (...args: unknown[]) => {
+      calls.push(['reorderGroups', ...args]);
+      return true;
+    },
     add: (...args: unknown[]) => {
       calls.push(['add', ...args]);
       return vault;
@@ -124,6 +132,36 @@ test('preserves validation errors for invalid payloads', async () => {
     ['vault:registry-add', [null], 'Invalid vault directory'],
     ['vault:registry-activate', [null], 'Invalid vault ID'],
     ['vault:registry-remove', [null], 'Invalid vault ID'],
+    ['vault:placement-set', [null], 'Invalid vault placement'],
+    [
+      'vault:placement-set',
+      [{ vaultId: null, groupId: null, pinned: true, beforeVaultId: null }],
+      'Invalid vault placement',
+    ],
+    [
+      'vault:placement-set',
+      [
+        {
+          vaultId: 'vault-1',
+          groupId: null,
+          pinned: 'yes',
+          beforeVaultId: null,
+        },
+      ],
+      'Invalid vault placement',
+    ],
+    [
+      'vault:placement-set',
+      [{ vaultId: 'vault-1', groupId: 1, pinned: true, beforeVaultId: null }],
+      'Invalid vault placement',
+    ],
+    [
+      'vault:placement-set',
+      [{ vaultId: 'vault-1', groupId: null, pinned: true, beforeVaultId: 1 }],
+      'Invalid vault placement',
+    ],
+    ['vault:groups-reorder', [null], 'Invalid group order'],
+    ['vault:groups-reorder', [['g', null]], 'Invalid group order'],
   ];
   for (const [channel, args, message] of cases) {
     await assert.rejects(

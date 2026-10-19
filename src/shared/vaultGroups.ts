@@ -6,7 +6,8 @@ export function deriveVisibleVaults(
 ): RegisteredVault[] {
   const groupedIds = new Set(groups.map((group) => group.id));
   const visible = vaults.filter(
-    (vault) => !vault.groupId || !groupedIds.has(vault.groupId),
+    (vault) =>
+      vault.pinned === true || !vault.groupId || !groupedIds.has(vault.groupId),
   );
   for (const group of groups) {
     if (!group.collapsed)

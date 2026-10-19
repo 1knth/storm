@@ -182,6 +182,14 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.invoke('vault:group-remove', id),
   groupSetVault: (vaultId: string, groupId: string | null): Promise<void> =>
     ipcRenderer.invoke('vault:group-set-vault', vaultId, groupId),
+  vaultSetPlacement: (request: {
+    vaultId: string;
+    groupId: string | null;
+    pinned: boolean;
+    beforeVaultId: string | null;
+  }): Promise<void> => ipcRenderer.invoke('vault:placement-set', request),
+  groupsReorder: (groupIds: string[]): Promise<void> =>
+    ipcRenderer.invoke('vault:groups-reorder', groupIds),
   groupSetCollapsed: (id: string, collapsed: boolean): Promise<void> =>
     ipcRenderer.invoke('vault:group-set-collapsed', id, collapsed),
   groupSetColor: (id: string, color: GroupColor): Promise<void> =>
