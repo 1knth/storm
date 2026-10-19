@@ -119,6 +119,16 @@ test('returns registry and group lists', async () => {
   assert.deepEqual(invoke(handlers, 'vault:groups-list'), []);
 });
 
+test('forwards a registered group-member vault root drop through sidebar IPC', async () => {
+  const { handlers, calls } = setup();
+  const request = {
+    item: { kind: 'vault' as const, id: 'group-member' },
+    before: { kind: 'group' as const, id: 'visible-group' },
+  };
+  assert.equal(await invoke(handlers, 'vault:sidebar-move', request), true);
+  assert.deepEqual(calls, [['moveSidebarItem', request]]);
+});
+
 test('preserves validation errors for invalid payloads', async () => {
   const { handlers, calls } = setup();
   const cases: [string, unknown[], string][] = [

@@ -615,6 +615,100 @@ test('does not update in-memory registry when unloading cannot persist', async (
   }
 });
 
+test('moves grouped and pinned vaults to root atomically without an existing root reference', async () => {
+  const temp = await temporaryDirectory();
+  try {
+    const paths = ['grouped', 'pinned', 'anchor'].map((name) =>
+      path.join(temp, name),
+    );
+    for (const directory of paths) await mkdir(directory);
+    const registry = new VaultRegistry(temp);
+    const [grouped, pinned, anchor] = await Promise.all(
+      paths.map(async (directory) => (await registry.add(directory)).vault),
+    );
+    const group = await registry.createGroup('Crew');
+    await registry.setVaultPlacement({
+      vaultId: grouped.id,
+      groupId: group.id,
+      pinned: false,
+      beforeVaultId: null,
+    });
+    await registry.setVaultPlacement({
+      vaultId: pinned.id,
+      groupId: group.id,
+      pinned: true,
+      beforeVaultId: null,
+    });
+
+    const before = await registry.list();
+    assert.ok(!before.sidebarRootOrder.some((ref) => ref.id === grouped.id));
+    await registry.moveSidebarItem({
+      item: { kind: 'vault', id: grouped.id },
+      before: { kind: 'vault', id: anchor.id },
+    });
+    let state = await new VaultRegistry(temp).list();
+    assert.deepEqual(
+      state.sidebarRootOrder.map(({ kind, id }) => `${kind}:${id}`),
+      [`vault:${grouped.id}`, `vault:${anchor.id}`, `group:${group.id}`],
+    );
+    assert.equal(
+      state.vaults.find((vault) => vault.id === grouped.id)?.groupId,
+      null,
+    );
+    assert.equal(
+      state.vaults.find((vault) => vault.id === grouped.id)?.pinned,
+      false,
+    );
+
+    await registry.moveSidebarItem({
+      item: { kind: 'vault', id: pinned.id },
+      before: { kind: 'group', id: group.id },
+    });
+    state = await new VaultRegistry(temp).list();
+    assert.deepEqual(
+      state.sidebarRootOrder.map(({ kind, id }) => `${kind}:${id}`),
+      [
+        `vault:${grouped.id}`,
+        `vault:${anchor.id}`,
+        `vault:${pinned.id}`,
+        `group:${group.id}`,
+      ],
+    );
+    assert.equal(
+      state.vaults.find((vault) => vault.id === pinned.id)?.groupId,
+      null,
+    );
+    assert.equal(
+      state.vaults.find((vault) => vault.id === pinned.id)?.pinned,
+      false,
+    );
+
+    const beforeInvalid = JSON.parse(
+      await readFile(path.join(temp, 'settings.json'), 'utf8'),
+    );
+    await assert.rejects(
+      registry.moveSidebarItem({
+        item: { kind: 'vault', id: 'unknown-vault' },
+        before: null,
+      }),
+      /Unknown sidebar item/,
+    );
+    await assert.rejects(
+      registry.moveSidebarItem({
+        item: { kind: 'vault', id: grouped.id },
+        before: { kind: 'vault', id: 'missing-anchor' },
+      }),
+      /Invalid sidebar anchor/,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(path.join(temp, 'settings.json'), 'utf8')),
+      beforeInvalid,
+    );
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('round-trips mixed sidebar root ordering and normalizes stale or invalid references', async () => {
   const temp = await temporaryDirectory();
   try {

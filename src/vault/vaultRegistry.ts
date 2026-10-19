@@ -189,26 +189,31 @@ export class VaultRegistry {
       await this.load();
       const order = this.getRootOrder();
       const key = (ref: SidebarRootRef) => `${ref.kind}:${ref.id}`;
-      const movingIndex = order.findIndex(
-        (ref) => key(ref) === key(request.item),
-      );
-      if (movingIndex < 0) throw new Error('Unknown sidebar item');
-      const moving = order[movingIndex];
-      if (request.before && key(request.before) === key(moving))
-        throw new Error('Invalid sidebar anchor');
+      const moving = request.item;
+      const vaults = this.settings.vaults ?? [];
+      const groups = this.settings.vaultGroups ?? [];
+      const sourceExists =
+        moving.kind === 'vault'
+          ? vaults.some((vault) => vault.id === moving.id)
+          : groups.some((group) => group.id === moving.id);
+      if (!sourceExists) throw new Error('Unknown sidebar item');
+
+      const movingIndex = order.findIndex((ref) => key(ref) === key(moving));
+      if (movingIndex >= 0) order.splice(movingIndex, 1);
       if (
         request.before &&
-        !order.some((ref) => key(ref) === key(request.before!))
+        (key(request.before) === key(moving) ||
+          !order.some((ref) => key(ref) === key(request.before!)))
       )
         throw new Error('Invalid sidebar anchor');
-      order.splice(movingIndex, 1);
+
       const anchorIndex = request.before
         ? order.findIndex((ref) => key(ref) === key(request.before!))
         : order.length;
       order.splice(anchorIndex, 0, moving);
       const next = { ...this.settings, sidebarRootOrder: order };
       if (moving.kind === 'vault') {
-        next.vaults = (this.settings.vaults ?? []).map((vault) =>
+        next.vaults = vaults.map((vault) =>
           vault.id === moving.id
             ? { ...vault, groupId: null, pinned: false }
             : vault,
