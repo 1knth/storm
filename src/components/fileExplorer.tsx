@@ -98,6 +98,7 @@ export default function FileExplorer({
   );
   const [confirmUnload, setConfirmUnload] = useState(false);
   const [unloading, setUnloading] = useState(false);
+  const [cliAvailable, setCliAvailable] = useState(false);
   const vaultName = vaultPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? null;
 
   useEffect(() => {
@@ -120,6 +121,10 @@ export default function FileExplorer({
       window.removeEventListener('keydown', onKeyDown, true);
     };
   }, [confirmUnload, onSettingsOpenChange, unloading]);
+
+  useEffect(() => {
+    void window.vault.cliAvailable().then(setCliAvailable);
+  }, []);
 
   useEffect(() => {
     if (settingsOpen) changeVaultRef.current?.focus();
@@ -500,16 +505,39 @@ export default function FileExplorer({
                           </button>
                         </div>
                       </div>
-                      <div className="border-t border-white/10 pt-3">
-                        <div>
-                          <p className="font-medium">Unload vaults</p>
-                          <p className="mt-1 text-xs text-white/50">
-                            Close all {vaultCount} loaded vaults and clear their
-                            saved registrations.
-                          </p>
-                        </div>
-                      </div>
                     </fieldset>
+                    {cliAvailable && (
+                      <fieldset className="space-y-3 border-t border-white/10 pt-3">
+                        <legend className="text-xs font-semibold uppercase tracking-wide text-white/50">
+                          CLI
+                        </legend>
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <p className="font-medium">Storm CLI</p>
+                            <p className="mt-1 text-xs text-white/50">
+                              Create a terminal command shortcut for the bundled
+                              CLI.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void window.vault
+                                .enableCli()
+                                .catch((error: unknown) =>
+                                  console.error(
+                                    'Could not enable the Storm CLI',
+                                    error,
+                                  ),
+                                );
+                            }}
+                            className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20"
+                          >
+                            Enable CLI…
+                          </button>
+                        </div>
+                      </fieldset>
+                    )}
                     <fieldset className="space-y-3 border-t border-white/10 pt-3">
                       <legend className="text-xs font-semibold uppercase tracking-wide text-white/50">
                         Editor

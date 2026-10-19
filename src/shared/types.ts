@@ -135,6 +135,8 @@ export interface DeleteEntryResult {
 declare global {
   interface Window {
     vault: {
+      cliAvailable: () => Promise<boolean>;
+      enableCli: () => Promise<boolean>;
       registryList: () => Promise<{
         vaults: RegisteredVault[];
         activeVaultId: string | null;

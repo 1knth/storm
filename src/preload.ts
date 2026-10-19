@@ -137,6 +137,8 @@ function isAgentStatus(value: unknown): value is AgentBridgeStatusEvent {
 }
 
 contextBridge.exposeInMainWorld('vault', {
+  cliAvailable: (): Promise<boolean> => ipcRenderer.invoke('cli:available'),
+  enableCli: (): Promise<boolean> => ipcRenderer.invoke('cli:enable'),
   registryList: (): Promise<{
     vaults: RegisteredVault[];
     activeVaultId: string | null;
