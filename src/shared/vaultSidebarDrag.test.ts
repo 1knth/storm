@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   beginVaultSidebarDrag,
   groupDropAnchor,
+  groupHeaderVaultDrop,
   handleVaultSidebarDrop,
   reorderBefore,
   vaultDropAnchor,
@@ -81,6 +82,21 @@ test('root drop placement clears group and unpins exactly once at its boundary',
   assert.deepEqual(placements, [
     { vaultId: 'a', groupId: null, pinned: false, beforeVaultId: null },
   ]);
+});
+
+test('group header upper edge routes to root beginning and center assigns to the group', () => {
+  assert.deepEqual(groupHeaderVaultDrop(102, 100, 40, 'g', 'root-first'), {
+    groupId: null,
+    beforeVaultId: 'root-first',
+  });
+  assert.deepEqual(groupHeaderVaultDrop(102, 100, 40, 'g', null), {
+    groupId: null,
+    beforeVaultId: null,
+  });
+  assert.deepEqual(groupHeaderVaultDrop(120, 100, 40, 'g', 'root-first'), {
+    groupId: 'g',
+    beforeVaultId: null,
+  });
 });
 
 test('group drop anchors sort before and after, including append at the last group', () => {

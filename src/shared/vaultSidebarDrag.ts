@@ -30,6 +30,21 @@ export function beginVaultSidebarDrag(
   event.stopPropagation();
 }
 
+export function groupHeaderVaultDrop(
+  clientY: number,
+  top: number,
+  height: number,
+  groupId: string,
+  firstUngroupedVaultId: string | null,
+):
+  | { groupId: null; beforeVaultId: string | null }
+  | { groupId: string; beforeVaultId: null } {
+  if (clientY < top + height * 0.35) {
+    return { groupId: null, beforeVaultId: firstUngroupedVaultId };
+  }
+  return { groupId, beforeVaultId: null };
+}
+
 export function groupDropAnchor(
   groups: { id: string }[],
   draggedId: string,

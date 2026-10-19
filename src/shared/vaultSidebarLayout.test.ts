@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { deriveVaultSidebarLayout } from './vaultSidebarLayout';
 import type { RegisteredVault, VaultGroup } from './types';
 
-test('pinned members render once in the pinned lane despite collapsed remembered group', () => {
+test('pinned members remain a top lane in layout and retain their remembered group', () => {
   const groups: VaultGroup[] = [{ id: 'g', name: 'Group', collapsed: false }];
   const vaults: RegisteredVault[] = [
     { id: 'p', name: 'Pinned', path: '/p', pinned: true, groupId: 'g' },
