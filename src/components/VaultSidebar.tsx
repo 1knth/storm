@@ -154,6 +154,13 @@ export default function VaultSidebar({
                 ),
             },
             {
+              id: 'unload',
+              label: 'Unload vault',
+              disabled: busy,
+              danger: true,
+              onSelect: () => onRemove(vault.id),
+            },
+            {
               id: 'move-to-group',
               label: 'Group',
               disabled: busy,
@@ -400,12 +407,8 @@ export default function VaultSidebar({
       <button
         type="button"
         onClick={() => onRemove(vault.id)}
-        aria-label={`Remove ${vault.name} from vault list`}
-        title={
-          vault.id === activeVaultId
-            ? 'Switch to another vault before removing'
-            : 'Remove from list (files are kept)'
-        }
+        aria-label={`Unload ${vault.name}`}
+        title="Unload from Storm (files are kept)"
         className="absolute right-1 rounded px-1.5 py-1 text-xs text-white/45 opacity-0 hover:bg-white/10 hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 group-hover:opacity-100 group-focus-within:opacity-100"
       >
         ×

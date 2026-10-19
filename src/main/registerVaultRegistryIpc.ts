@@ -15,6 +15,11 @@ export function registerVaultRegistryIpc(
     watchSelectedVault: () => Promise<string | null>;
     stopWatcher: () => void;
     clearWatchedVaultId: () => void;
+    hasWritableAgentSession?: (vaultId: string) => boolean;
+    withVaultLifecycle?<T>(
+      root: string,
+      operation: () => Promise<T>,
+    ): Promise<T>;
   },
 ): void {
   const { registry, service, writeBarrier } = dependencies;
@@ -135,6 +140,31 @@ export function registerVaultRegistryIpc(
   ipc.handle('vault:registry-remove', (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('Invalid vault ID');
     return registry.remove(id);
+  });
+  ipc.handle('vault:registry-unload-one', async (_event, id: unknown) => {
+    if (typeof id !== 'string' || !id) throw new Error('Invalid vault ID');
+    const withLifecycle =
+      dependencies.withVaultLifecycle ?? ((_root, operation) => operation());
+    const { vaults } = await registry.list();
+    const vault = vaults.find((entry) => entry.id === id);
+    if (!vault) throw new Error('Unknown vault');
+    return withLifecycle(vault.path, () =>
+      writeBarrier.close(async () => {
+        const { vaults: currentVaults, activeVaultId } = await registry.list();
+        if (!currentVaults.some((entry) => entry.id === id))
+          throw new Error('Unknown vault');
+        if (dependencies.hasWritableAgentSession?.(id))
+          throw new Error(
+            'Stop the connected agent session before unloading this vault.',
+          );
+        await registry.remove(id);
+        if (activeVaultId === id) {
+          dependencies.stopWatcher();
+          dependencies.clearWatchedVaultId();
+          service.clearSelectedVault();
+        }
+      }),
+    );
   });
   ipc.handle('vault:registry-unload-all', () =>
     writeBarrier.close(async () => {

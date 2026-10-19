@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentNoteTarget } from '../vault/agentNoteTarget';
+import { runVaultLifecycleExclusive } from './vaultLifecycle';
 import {
   AGENT_TRANSPORT,
   AGENT_PROTOCOL_VERSION,
@@ -44,6 +45,8 @@ export type AgentRendererResult =
   | { ok: false; code: string; message: string };
 export interface AgentBrokerOptions {
   resolveTarget(path: string): Promise<AgentNoteTarget>;
+  assertTargetRegistered?(target: AgentNoteTarget): Promise<void>;
+  withVaultLifecycle?<T>(root: string, operation: () => Promise<T>): Promise<T>;
   renderer: AgentRendererTransport;
 }
 type CachedOperation = {
@@ -73,6 +76,14 @@ export class AgentBroker {
       if (session && session.state !== 'finished') session.state = 'cancelled';
     });
   }
+  hasWritableSessionForVault(vaultId: string): boolean {
+    return [...this.sessions.values()].some(
+      (session) =>
+        session.target.vaultId === vaultId &&
+        (session.state === 'connected' || session.state === 'writing'),
+    );
+  }
+
   async handle(value: unknown): Promise<AgentResponse> {
     if (!isRequest(value))
       return failure('', 'INVALID_REQUEST', 'Invalid request');
@@ -90,38 +101,43 @@ export class AgentBroker {
     try {
       if (request.type === 'connect') {
         const target = await this.options.resolveTarget(request.absolutePath);
-        const session: Session = {
-          id: randomUUID(),
-          target,
-          ...(request.name ? { name: request.name.trim().slice(0, 64) } : {}),
-          state: 'connected',
-          version: 0,
-          sequence: 0,
-          pending: 0,
-          queue: Promise.resolve(),
-          operations: new Map(),
-          cancelWaiters: new Set(),
-        };
-        const snapshot = await this.options.renderer.dispatch({
-          type: 'snapshot',
-          requestId: request.requestId,
-          sessionId: session.id,
-          absolutePath: target.absolutePath,
-          vaultId: target.vaultId,
-          vaultRoot: target.vaultRoot,
+        const withLifecycle =
+          this.options.withVaultLifecycle ?? runVaultLifecycleExclusive;
+        return await withLifecycle(target.vaultRoot, async () => {
+          await this.options.assertTargetRegistered?.(target);
+          const session: Session = {
+            id: randomUUID(),
+            target,
+            ...(request.name ? { name: request.name.trim().slice(0, 64) } : {}),
+            state: 'connected',
+            version: 0,
+            sequence: 0,
+            pending: 0,
+            queue: Promise.resolve(),
+            operations: new Map(),
+            cancelWaiters: new Set(),
+          };
+          const snapshot = await this.options.renderer.dispatch({
+            type: 'snapshot',
+            requestId: request.requestId,
+            sessionId: session.id,
+            absolutePath: target.absolutePath,
+            vaultId: target.vaultId,
+            vaultRoot: target.vaultRoot,
+          });
+          if (!snapshot.ok) return fail(snapshot.code, snapshot.message);
+          session.version = snapshot.documentVersion;
+          session.target.diskRevision = snapshot.diskRevision;
+          this.sessions.set(session.id, session);
+          return {
+            protocol: AGENT_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            ok: true,
+            type: 'connected',
+            session: this.status(session),
+            content: snapshot.content ?? target.content,
+          };
         });
-        if (!snapshot.ok) return fail(snapshot.code, snapshot.message);
-        session.version = snapshot.documentVersion;
-        session.target.diskRevision = snapshot.diskRevision;
-        this.sessions.set(session.id, session);
-        return {
-          protocol: AGENT_PROTOCOL_VERSION,
-          requestId: request.requestId,
-          ok: true,
-          type: 'connected',
-          session: this.status(session),
-          content: snapshot.content ?? target.content,
-        };
       }
       if (request.type === 'status') {
         const sessions = request.sessionId

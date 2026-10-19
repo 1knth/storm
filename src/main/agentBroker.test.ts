@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { AgentBroker, type AgentRendererRequest } from './agentBroker';
+import { runVaultLifecycleExclusive } from './vaultLifecycle';
 
 function setup() {
   const calls: AgentRendererRequest[] = [];
@@ -35,7 +36,98 @@ const req = (type: string, values: object = {}) => ({
   ...values,
 });
 
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe('AgentBroker', () => {
+  it('serializes connect snapshot against unload and rejects unload once session exists', async () => {
+    const snapshot = deferred<void>();
+    const started = deferred<void>();
+    let registered = true;
+    let removed = false;
+    const calls: AgentRendererRequest[] = [];
+    const broker = new AgentBroker({
+      resolveTarget: async (absolutePath) => ({
+        absolutePath,
+        vaultId: 'v',
+        vaultRoot: '/v',
+        relativePath: 'n.md',
+        content: '',
+        diskRevision: 'r',
+      }),
+      assertTargetRegistered: async () => {
+        if (!registered) throw new Error('Vault is not registered');
+      },
+      withVaultLifecycle: runVaultLifecycleExclusive,
+      renderer: {
+        dispatch: async (request) => {
+          calls.push(request);
+          if (request.type === 'snapshot') {
+            started.resolve();
+            await snapshot.promise;
+          }
+          return { ok: true, documentVersion: 1, diskRevision: 'r' };
+        },
+      },
+    });
+    const connect = broker.handle(req('connect', { absolutePath: '/v/n.md' }));
+    await started.promise;
+    const unload = runVaultLifecycleExclusive('/v', async () => {
+      if (broker.hasWritableSessionForVault('v'))
+        throw new Error('active agent session');
+      removed = true;
+    });
+    snapshot.resolve();
+    assert.equal(((await connect) as any).ok, true);
+    await assert.rejects(unload, /active agent session/);
+    assert.equal(removed, false);
+    assert.equal(calls.filter((call) => call.type === 'snapshot').length, 1);
+  });
+
+  it('rechecks registration under lifecycle lock when unload wins the race', async () => {
+    const entered = deferred<void>();
+    const finishUnload = deferred<void>();
+    let registered = true;
+    let snapshots = 0;
+    const broker = new AgentBroker({
+      resolveTarget: async (absolutePath) => ({
+        absolutePath,
+        vaultId: 'v',
+        vaultRoot: '/v',
+        relativePath: 'n.md',
+        content: '',
+        diskRevision: 'r',
+      }),
+      assertTargetRegistered: async () => {
+        if (!registered) throw new Error('Vault is not registered');
+      },
+      withVaultLifecycle: runVaultLifecycleExclusive,
+      renderer: {
+        dispatch: async () => {
+          snapshots++;
+          return { ok: true, documentVersion: 1, diskRevision: 'r' };
+        },
+      },
+    });
+    const unload = runVaultLifecycleExclusive('/v', async () => {
+      entered.resolve();
+      await finishUnload.promise;
+      registered = false;
+    });
+    await entered.promise;
+    const connect = broker.handle(req('connect', { absolutePath: '/v/n.md' }));
+    finishUnload.resolve();
+    await unload;
+    const result = (await connect) as any;
+    assert.equal(result.ok, false);
+    assert.match(result.error.message, /not registered/);
+    assert.equal(snapshots, 0);
+  });
   it('accepts ordinary names containing r or n and rejects control characters', async () => {
     const { broker } = setup();
     for (const name of ['OpenAI', 'Danny', 'ordinary r and n']) {
