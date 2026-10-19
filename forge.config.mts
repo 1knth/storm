@@ -12,6 +12,7 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    icon: './assets/storm',
     extraResource: path.resolve('build/cli'),
   },
   hooks: {
