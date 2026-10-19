@@ -40,6 +40,7 @@ describe('appearance preferences', () => {
       result.mermaidGroupBorder,
       DEFAULT_APPEARANCE.mermaidGroupBorder,
     );
+    strictEqual(result.mermaidGroupText, DEFAULT_APPEARANCE.mermaidGroupText);
   });
   it('loads malformed storage safely and persists validated values', () => {
     const memory = new Map<string, string>([[APPEARANCE_KEY, '{bad']]);
@@ -53,6 +54,19 @@ describe('appearance preferences', () => {
       cursor: 'invalid',
     } as never);
     deepStrictEqual(loadAppearance(storage), DEFAULT_APPEARANCE);
+  });
+  it('persists and applies group-label color independently from node text', () => {
+    const appearance = validateAppearance({
+      mermaidGroupText: '#123456',
+      mermaidText: '#abcdef',
+      opacity: { mermaidGroupText: 60 },
+    });
+    strictEqual(appearance.mermaidGroupText, '#123456');
+    strictEqual(appearance.mermaidText, '#abcdef');
+    strictEqual(appearance.opacity.mermaidGroupText, 60);
+    const variables = mermaidThemeVariables(appearance);
+    strictEqual(variables.titleColor, 'rgba(18, 52, 86, 0.6)');
+    strictEqual(variables.primaryTextColor, 'rgba(171, 205, 239, 1)');
   });
   it('defaults opacity for legacy settings and rejects invalid values', () => {
     const result = validateAppearance({
@@ -72,6 +86,7 @@ describe('appearance preferences', () => {
       primaryBorderColor: 'rgba(147, 112, 219, 1)',
       clusterBkg: 'rgba(244, 244, 244, 1)',
       clusterBorder: 'rgba(147, 112, 219, 1)',
+      titleColor: 'rgba(51, 51, 51, 1)',
       primaryTextColor: 'rgba(51, 51, 51, 1)',
       lineColor: 'rgba(51, 51, 51, 1)',
     });

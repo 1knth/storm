@@ -489,11 +489,6 @@ export default function FileExplorer({
                           <p className="mt-1 max-w-[15rem] break-all text-xs text-white/50">
                             {vaultPath ?? 'No vault selected'}
                           </p>
-                          <p className="mt-1 max-w-[20rem] text-xs text-white/50">
-                            If access failed, choose that folder again. macOS
-                            controls Files &amp; Folders prompts; Storm cannot
-                            force one to appear.
-                          </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <div className="flex flex-col items-end gap-2">
@@ -520,34 +515,41 @@ export default function FileExplorer({
                           </button>
                         </div>
                       </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <button
-                          type="button"
-                          onClick={chooseVault}
-                          disabled={loading}
-                          title="Choose the vault folder again to request access. macOS controls any Files & Folders prompts."
-                          className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
-                        >
-                          Request folder access…
-                        </button>
-                        {canOpenFilesAndFoldersSettings && (
+                      <div className="-mt-1 flex items-center justify-between gap-4">
+                        <p className="max-w-[20rem] text-xs text-white/50">
+                          If access failed, choose that folder again. macOS
+                          controls Files &amp; Folders prompts; Storm cannot
+                          force one to appear.
+                        </p>
+                        <div className="flex shrink-0 flex-col items-end gap-2">
                           <button
                             type="button"
-                            onClick={() =>
-                              void window.vault
-                                .openFilesAndFoldersSettings()
-                                .catch((error: unknown) =>
-                                  console.error(
-                                    'Could not open Files & Folders settings',
-                                    error,
-                                  ),
-                                )
-                            }
-                            className="text-right text-xs text-white/60 underline underline-offset-2 hover:text-white"
+                            onClick={chooseVault}
+                            disabled={loading}
+                            title="Choose the vault folder again to request access. macOS controls any Files & Folders prompts."
+                            className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20 disabled:opacity-50"
                           >
-                            Still blocked? Open Files &amp; Folders settings
+                            Request folder access…
                           </button>
-                        )}
+                          {canOpenFilesAndFoldersSettings && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void window.vault
+                                  .openFilesAndFoldersSettings()
+                                  .catch((error: unknown) =>
+                                    console.error(
+                                      'Could not open Files & Folders settings',
+                                      error,
+                                    ),
+                                  )
+                              }
+                              className="text-right text-xs text-white/60 underline underline-offset-2 hover:text-white"
+                            >
+                              Still blocked? Open Files &amp; Folders settings
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </fieldset>
                     {cliAvailable && (
@@ -690,6 +692,7 @@ export default function FileExplorer({
                           ['Mermaid node border', 'mermaidNodeBorder'],
                           ['Mermaid group fill', 'mermaidGroupFill'],
                           ['Mermaid group border', 'mermaidGroupBorder'],
+                          ['Mermaid group text', 'mermaidGroupText'],
                           ['Mermaid text', 'mermaidText'],
                           ['Mermaid connectors', 'mermaidConnectors'],
                         ] as [string, string][]

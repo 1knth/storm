@@ -72,8 +72,32 @@ export default function MermaidBlock({ source, appearance }: Props) {
         .render(id, safeSource)
         .then(({ svg: renderedSvg }) => {
           if (cancelled) return;
+          // Mermaid's generated stylesheet can override palette values for cluster
+          // geometry in some diagram variants. Apply validated preferences directly
+          // to cluster SVG elements before sanitizing the rendered markup.
+          const parsedSvg = new DOMParser().parseFromString(
+            renderedSvg,
+            'image/svg+xml',
+          );
+          const groupFill = mermaidThemeVariables(appearance).clusterBkg;
+          const groupBorder = mermaidThemeVariables(appearance).clusterBorder;
+          parsedSvg
+            .querySelectorAll('.cluster rect, .flow-cluster rect')
+            .forEach((rect) => {
+              rect.setAttribute(
+                'style',
+                `fill: ${groupFill} !important; stroke: ${groupBorder} !important`,
+              );
+            });
+          const groupText = mermaidThemeVariables(appearance).titleColor;
+          parsedSvg.querySelectorAll('.cluster-label text').forEach((text) => {
+            text.setAttribute('style', `fill: ${groupText} !important`);
+          });
           const purifiedSvg = String(
-            DOMPurify.sanitize(renderedSvg, svgSanitizerOptions),
+            DOMPurify.sanitize(
+              parsedSvg.documentElement.outerHTML,
+              svgSanitizerOptions,
+            ),
           );
           const cleanSvg = sanitizeSvgReferences(purifiedSvg);
           setSvg(cleanSvg);
