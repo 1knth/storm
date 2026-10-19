@@ -26,6 +26,8 @@ import { checkpointErrorMessage } from './components/Editor/checkpointError';
 import { ToastProvider, useToast } from './components/Toast';
 import { loadAppearance, saveAppearance } from './appearance';
 import type { Appearance } from './appearance';
+import { createAgentDocumentHost } from './documents/agentDocumentHost';
+import { isAgentTabProtected } from './documents/agentTabProtection';
 
 function ShortcutGroup({ title, items }: { title: string; items: string[] }) {
   return (
@@ -71,6 +73,9 @@ function App() {
   useEffect(() => {
     saveAppearance(window.localStorage, appearance);
   }, [appearance]);
+  const agentHost = useRef<ReturnType<typeof createAgentDocumentHost> | null>(
+    null,
+  );
   const navigationBusy = useRef(false);
   const vaultTransition = useRef(false);
   const noteRequestId = useRef(0);
@@ -117,6 +122,195 @@ function App() {
   activeIdRef.current = activeId;
   groupsRef.current = tabGroups;
   assignmentsRef.current = tabGroupAssignments;
+
+  useEffect(() => {
+    const host = createAgentDocumentHost({
+      openDocument: async ({ absolutePath, vaultId, vaultRoot }) => {
+        const relativePath = absolutePath
+          .slice(vaultRoot.length)
+          .replace(/^[\\/]+/, '')
+          .replace(/\\/g, '/');
+        if (!relativePath || relativePath.startsWith('..'))
+          throw new Error('Agent target is outside its vault');
+        if (vaultId !== activeVaultIdRef.current) {
+          const activated = await activateVault(vaultId);
+          if (!activated)
+            throw new Error('Could not safely activate the target vault');
+        }
+        const opened = await window.vault.readNote(relativePath);
+        const note = { ...opened, path: relativePath };
+        let target = tabsRef.current.find(
+          (tab) =>
+            tab.kind === 'note' &&
+            tab.vaultId === vaultId &&
+            tab.note.path === relativePath,
+        );
+        if (!target || target.kind !== 'note') {
+          if (!(await editorRef.current?.flush()))
+            throw new Error(
+              'Could not save the active note before opening the agent target',
+            );
+          const outgoing = editorRef.current?.snapshot();
+          let currentTabs = tabsRef.current;
+          if (outgoing)
+            currentTabs = currentTabs.map((tab) =>
+              tab.kind === 'note' && tab.note.path === outgoing.note.path
+                ? outgoing
+                : tab,
+            );
+          const state = editorRef.current!.createState(note.content);
+          target = {
+            kind: 'note',
+            note,
+            vaultId,
+            vaultPath: vaultRoot,
+            state,
+            scrollTop: 0,
+          };
+          currentTabs = [...currentTabs, target];
+          tabsRef.current = currentTabs;
+          setTabs(currentTabs);
+          activeIdRef.current = getTabId(target);
+          setActiveId(activeIdRef.current);
+          setActivePath(relativePath);
+        }
+        if (target.kind !== 'note')
+          throw new Error('Agent target is not a note');
+        const live = editorRef.current?.snapshot();
+        let snapshot: Extract<TabSnapshot, { kind: 'note' }>;
+        if (live?.note.path === relativePath && live.vaultId === vaultId) {
+          snapshot = live;
+        } else {
+          if (!(await editorRef.current?.flush()))
+            throw new Error(
+              'Could not save the active note before opening the agent target',
+            );
+          let currentTabs = tabsRef.current;
+          if (live)
+            currentTabs = currentTabs.map((tab) =>
+              tab.kind === 'note' &&
+              tab.vaultId === live.vaultId &&
+              tab.note.path === live.note.path
+                ? live
+                : tab,
+            );
+          tabsRef.current = currentTabs;
+          if (live) setTabs(currentTabs);
+          const currentTarget = currentTabs.find(
+            (tab) =>
+              tab.kind === 'note' &&
+              tab.vaultId === vaultId &&
+              tab.note.path === relativePath,
+          );
+          if (!currentTarget || currentTarget.kind !== 'note')
+            throw new Error('Agent target is no longer open');
+          editorRef.current?.activate(currentTarget);
+          snapshot = editorRef.current?.snapshot() ?? currentTarget;
+        }
+        activeIdRef.current = getTabId(target);
+        setActiveId(activeIdRef.current);
+        setActivePath(relativePath);
+        return {
+          key: `${vaultId}:${relativePath}`,
+          vaultId,
+          absolutePath,
+          vaultPath: vaultRoot,
+          path: relativePath,
+          state: snapshot.state,
+          revision: snapshot.note.revision,
+        };
+      },
+      publishDocument: (document) => {
+        if (!document.vaultId) return;
+        setAgentDocumentVersion((version) => version + 1);
+        const adapter = {
+          vaultId: document.vaultId,
+          path: document.path,
+          writing: document.status === 'writing',
+          revision: document.revision,
+          onStateChange: (state: import('@codemirror/state').EditorState) =>
+            host.controller.updateFromEditor(document.key, state),
+          flush: () => host.controller.flush(document),
+        };
+        agentAdaptersRef.current.set(
+          JSON.stringify([adapter.vaultId, adapter.path]),
+          adapter,
+        );
+        if (
+          adapter?.vaultId === document.vaultId &&
+          adapter.path === document.path
+        ) {
+          editorRef.current?.syncManagedState(
+            document.vaultId,
+            document.path,
+            document.state,
+          );
+        }
+        setTabs((current) =>
+          current.map((tab) =>
+            tab.kind === 'note' &&
+            tab.vaultId === document.vaultId &&
+            tab.note.path === document.path
+              ? { ...tab, state: document.state }
+              : tab,
+          ),
+        );
+      },
+      publishStatus: (event) =>
+        setAgentStatuses((current) => ({
+          ...current,
+          [event.session.sessionId]: event.session,
+        })),
+      saveNote: (request) => window.stormAgent.saveNote(request),
+      getAdapterFor: (vaultId, path) =>
+        agentAdaptersRef.current.get(JSON.stringify([vaultId, path])),
+    });
+    agentHost.current = host;
+    const unsubscribe = window.stormAgent.onRequest((request) => {
+      void host
+        .handleRequest(request)
+        .then((result) => window.stormAgent.respond(request.requestId, result));
+    });
+    const unsubscribeStatus = window.stormAgent.onStatus((event) =>
+      setAgentStatuses((current) => ({
+        ...current,
+        [event.session.sessionId]: event.session,
+      })),
+    );
+    return () => {
+      unsubscribe();
+      unsubscribeStatus();
+      host.dispose();
+      agentHost.current = null;
+    };
+  }, []);
+  const agentAdaptersRef = useRef(
+    new Map<
+      string,
+      import('./components/Editor/agentEditorAdapter').AgentEditorAdapter
+    >(),
+  );
+  const [agentStatuses, setAgentStatuses] = useState<
+    Record<string, import('./shared/agentProtocol').AgentSessionStatus>
+  >({});
+  const [, setAgentDocumentVersion] = useState(0);
+  const activeAgentAdapter =
+    activeVaultId && activePath
+      ? (agentAdaptersRef.current.get(
+          JSON.stringify([activeVaultId, activePath]),
+        ) ?? null)
+      : null;
+  const matchingAgentStatuses = activeAgentAdapter
+    ? Object.values(agentStatuses).filter(
+        (status) =>
+          status.absolutePath.replace(/\\/g, '/') ===
+          `${vaultPath}/${activePath}`.replace(/\\/g, '/'),
+      )
+    : [];
+  const activeAgentStatus =
+    matchingAgentStatuses.find(
+      (status) => status.state === 'writing' || status.state === 'connected',
+    ) ?? matchingAgentStatuses.at(-1);
 
   const scheduleCheckpoint = () => {
     if (checkpointTimer.current) clearTimeout(checkpointTimer.current);
@@ -479,7 +673,7 @@ function App() {
       unsubscribeCloseTab();
       window.removeEventListener('keydown', onCloseShortcut, true);
     };
-  }, [pickerOpen, tabs, activeId]);
+  }, [pickerOpen, tabs, activeId, agentStatuses]);
 
   useEffect(() => {
     if (!pickerOpen) {
@@ -1341,6 +1535,21 @@ function App() {
   const closeTab = async (target: TabSnapshot) => {
     if (navigationBusy.current) return;
     const targetId = getTabId(target);
+    const targetPath = target.kind === 'note' ? target.note.path : null;
+    if (target.kind === 'note' && isAgentTabProtected(target, agentStatuses))
+      return;
+    if (targetPath) {
+      const adapter =
+        activeVaultId && target.vaultId === activeVaultId
+          ? agentHost.current?.getAdapterFor(target.vaultId, targetPath)
+          : undefined;
+      if (adapter && !(await adapter.flush())) {
+        setVaultError(
+          'Could not save accepted agent updates before closing the note.',
+        );
+        return;
+      }
+    }
     const transition = closeTabTransition(tabs, targetId, activeId, getTabId);
     if (activeVaultId) visitedVaults.current.add(activeVaultId);
     if (!transition.wasActive) {
@@ -1418,15 +1627,15 @@ function App() {
           focusExplorerRow();
         }
       }
-      return;
+      return true;
     }
-    if (navigationBusy.current || !beginVaultChange()) return;
+    if (navigationBusy.current || !beginVaultChange()) return false;
     navigationBusy.current = true;
     setVaultError(null);
     try {
       if (!(await editorRef.current?.flush())) {
         cancelVaultChange();
-        return;
+        return false;
       }
       const outgoing = editorRef.current?.snapshot();
       if (activeVaultId) {
@@ -1538,6 +1747,7 @@ function App() {
         editorRef.current?.focus();
       });
       if (focusExplorer) pendingExplorerFocus.current = true;
+      return true;
     } catch (error) {
       if (activeVaultId) {
         try {
@@ -1550,6 +1760,7 @@ function App() {
       setVaultError(
         error instanceof Error ? error.message : 'Unable to activate vault',
       );
+      return false;
     } finally {
       navigationBusy.current = false;
       vaultTransition.current = false;
@@ -1987,6 +2198,15 @@ function App() {
           appearance={appearance}
           tabsVisible={hasOpenTabs(tabs)}
           vaultId={activeVaultId}
+          agentDocument={activeAgentAdapter}
+          agentStatus={activeAgentStatus}
+          onStopAgent={(sessionId) => {
+            window.stormAgent.cancel(sessionId, 'Stopped from editor');
+            setAgentStatuses((current) => ({
+              ...current,
+              [sessionId]: { ...current[sessionId], state: 'cancelled' },
+            }));
+          }}
           onLayoutChange={() => {
             const vaultId = activeVaultIdRef.current;
             const latest = editorRef.current?.snapshot();
@@ -2027,6 +2247,9 @@ function App() {
                         );
                       activateTab(tab);
                     })()
+              }
+              canCloseTab={(tab) =>
+                tab.kind !== 'note' || !isAgentTabProtected(tab, agentStatuses)
               }
               onClose={(tab) => {
                 void closeTab(tab);

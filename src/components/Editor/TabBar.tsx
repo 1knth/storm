@@ -24,6 +24,7 @@ type Props = {
   commandHeld: boolean;
   onSelect: (tab: TabSnapshot) => void;
   onClose: (tab: TabSnapshot) => void;
+  canCloseTab?: (tab: TabSnapshot) => boolean;
   onNew: () => void;
   groups: TabGroup[];
   assignments: TabAssignments;
@@ -51,6 +52,7 @@ export default function TabBar({
   commandHeld,
   onSelect,
   onClose,
+  canCloseTab = () => true,
   onNew,
   groups,
   assignments,
@@ -520,7 +522,17 @@ export default function TabBar({
         <button
           type="button"
           onClick={() => onClose(tab)}
-          aria-label={`Close ${label}`}
+          disabled={!canCloseTab(tab)}
+          aria-label={
+            canCloseTab(tab)
+              ? `Close ${label}`
+              : `${label} cannot close while its agent is connected or writing`
+          }
+          title={
+            canCloseTab(tab)
+              ? `Close ${label}`
+              : 'Agent connected — stop or finish writing before closing this tab'
+          }
           className="ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[12px] text-white/55 opacity-0 transition-[background-color,color,opacity] duration-150 hover:bg-white/10 hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100"
         >
           ×
