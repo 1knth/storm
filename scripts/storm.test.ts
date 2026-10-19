@@ -38,6 +38,69 @@ test('CLI compiler rejects cross-platform targets instead of downloading a runti
   assert.equal(invoked, false);
 });
 
+test('CLI compiler starts under Node 24 without misidentifying Node as Bun', async () => {
+  const scratch = await mkdtemp(
+    path.join(os.tmpdir(), 'storm-node-cli-build-'),
+  );
+  const modulePath = path.join(scratch, 'buildCli.mjs');
+  const root = path.join(scratch, 'output');
+  const sourceRoot = process.cwd();
+  const nodeDirectory = process.env.PATH?.split(path.delimiter).find(
+    (directory) => existsSync(path.join(directory, 'node')),
+  );
+  assert.ok(nodeDirectory, 'Node must be available through PATH');
+  try {
+    const compile = spawnSync(
+      'bun',
+      [
+        '-e',
+        `import ts from 'typescript'; import { readFileSync, writeFileSync } from 'node:fs'; const source = readFileSync(${JSON.stringify(path.join(sourceRoot, 'scripts', 'buildCli.ts'))}, 'utf8'); const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }); writeFileSync(${JSON.stringify(modulePath)}, output.outputText);`,
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(compile.status, 0, compile.stderr);
+
+    const invoke = spawnSync(
+      'node',
+      [
+        '--input-type=module',
+        '-e',
+        `import { buildCliBinary } from ${JSON.stringify(new URL(`file://${modulePath}`).href)};\nawait buildCliBinary(process.platform, process.arch, { root: ${JSON.stringify(root)}, sourceRoot: ${JSON.stringify(sourceRoot)} });`,
+      ],
+      {
+        cwd: scratch,
+        encoding: 'utf8',
+        env: {
+          PATH: `${nodeDirectory}${path.delimiter}${path.dirname(process.execPath)}`,
+        },
+      },
+    );
+    assert.equal(invoke.status, 0, invoke.stderr);
+    const runtimePath = path.join(root, 'build', 'cli', 'runtime', 'bun');
+    assert.ok(existsSync(runtimePath));
+    assert.notEqual(path.basename(runtimePath), 'node');
+    const runtimeVersion = spawnSync(runtimePath, ['--version'], {
+      encoding: 'utf8',
+    });
+    assert.equal(runtimeVersion.status, 0, runtimeVersion.stderr);
+    assert.match(runtimeVersion.stdout, /1\.3\.12/);
+
+    const help = spawnSync(
+      path.join(root, 'build', 'cli', 'storm'),
+      ['--help'],
+      {
+        cwd: scratch,
+        encoding: 'utf8',
+        env: { PATH: '/usr/bin:/bin' },
+      },
+    );
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /Usage:/);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
 test('CLI compiler packages the matching host target into the resource directory', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'storm-cli-compile-'));
   try {
