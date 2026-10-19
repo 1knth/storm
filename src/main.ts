@@ -1,5 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { realpath } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
@@ -19,6 +21,14 @@ import {
 import { confirmQuitAndFlush } from './quitConfirmation';
 import { VaultWatcher } from './vault/vaultWatcher';
 import { registerVaultRegistryIpc } from './main/registerVaultRegistryIpc';
+import { AgentBroker } from './main/agentBroker';
+import { runVaultLifecycleExclusive } from './main/vaultLifecycle';
+import { bindAgentBrokerIpc, registerAgentIpc } from './main/registerAgentIpc';
+import { resolveAgentNoteTarget } from './vault/agentNoteTarget';
+import {
+  startAgentEndpoint,
+  type StartedAgentEndpoint,
+} from './main/agentEndpoint';
 
 const vaultService = new VaultService();
 const vaultRegistry = new VaultRegistry(app.getPath('userData'));
@@ -27,6 +37,10 @@ let quitConfirmationInFlight = false;
 let shutdownInFlight: Promise<boolean> | null = null;
 const vaultWriteBarrier = new VaultWriteBarrier();
 let activeWatchedVaultId: string | null = null;
+const agentVaults = new Map<
+  string,
+  { service: VaultService; barrier: VaultWriteBarrier; vaultId: string }
+>();
 const vaultWatcher = new VaultWatcher((vaultId, revision) => {
   const window = BrowserWindow.getAllWindows().find(
     (candidate) => !candidate.isDestroyed(),
@@ -52,6 +66,68 @@ async function watchSelectedVault(): Promise<string | null> {
 function invalidateSelectedVault(vaultId: string): void {
   if (vaultId === activeWatchedVaultId) vaultWatcher.invalidate(vaultId);
 }
+let agentWindow: BrowserWindow | undefined;
+let agentAcceptedUrl: string | undefined;
+const agentTransport = registerAgentIpc(
+  ipcMain,
+  () => agentWindow,
+  () => undefined,
+  () => agentAcceptedUrl,
+);
+const agentBroker = new AgentBroker({
+  resolveTarget: async (notePath) => {
+    const { vaults } = await vaultRegistry.list();
+    return resolveAgentNoteTarget(notePath, vaults);
+  },
+  assertTargetRegistered: async (target) => {
+    const { vaults } = await vaultRegistry.list();
+    if (
+      !vaults.some(
+        (vault) =>
+          vault.path === target.vaultRoot && vault.id === target.vaultId,
+      )
+    )
+      throw new Error('Vault is not registered');
+  },
+  withVaultLifecycle: runVaultLifecycleExclusive,
+  renderer: agentTransport,
+});
+const removeAgentBrokerIpc = bindAgentBrokerIpc(
+  ipcMain,
+  agentBroker,
+  () => agentWindow,
+  () => agentAcceptedUrl,
+);
+app.on('before-quit', () => removeAgentBrokerIpc());
+ipcMain.handle('agent:save-note', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    throw new Error('Invalid save request');
+  const value = request as Record<string, unknown>;
+  if (
+    typeof value.vaultPath !== 'string' ||
+    typeof value.path !== 'string' ||
+    typeof value.content !== 'string' ||
+    typeof value.revision !== 'string'
+  )
+    throw new Error('Invalid save request');
+  const root = await realpath(value.vaultPath);
+  const { vaults } = await vaultRegistry.list();
+  const vault = vaults.find((entry) => entry.path === root);
+  if (!vault) throw new Error('Vault is not registered');
+  let owned = agentVaults.get(root);
+  if (!owned) {
+    const service = new VaultService();
+    await service.selectVault(root);
+    owned = { service, barrier: new VaultWriteBarrier(), vaultId: vault.id };
+    agentVaults.set(root, owned);
+  }
+  const result = await owned.barrier.run(() =>
+    owned!.service.saveNote({ ...value, vaultPath: root }),
+  );
+  invalidateSelectedVault(owned.vaultId);
+  return result;
+});
+
 const closeAllowed = new WeakSet<BrowserWindow>();
 const shutdownAcks = new Map<string, (succeeded: boolean) => void>();
 let openFileMenuItem: Electron.MenuItem | null = null;
@@ -143,7 +219,9 @@ const createWindow = () => {
     },
   });
 
+  agentWindow = mainWindow;
   mainWindow.on('closed', () => {
+    if (agentWindow === mainWindow) agentWindow = undefined;
     vaultWatcher.stop();
     activeWatchedVaultId = null;
   });
@@ -161,11 +239,15 @@ const createWindow = () => {
 
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    agentAcceptedUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+    const htmlPath = path.join(
+      __dirname,
+      `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`,
     );
+    agentAcceptedUrl = pathToFileURL(htmlPath).href;
+    mainWindow.loadFile(htmlPath);
   }
 
   // Open the DevTools.
@@ -277,6 +359,9 @@ registerVaultRegistryIpc(ipcMain, {
   clearWatchedVaultId: () => {
     activeWatchedVaultId = null;
   },
+  hasWritableAgentSession: (vaultId) =>
+    agentBroker.hasWritableSessionForVault(vaultId),
+  withVaultLifecycle: runVaultLifecycleExclusive,
 });
 
 ipcMain.handle('vault:resolve-note-link', async (_event, request: unknown) => {
@@ -438,6 +523,12 @@ ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
   if (!vault) throw new Error('Unknown vault');
   const target = await resolveDeletionTarget(vault.path, relativePath);
   const window = BrowserWindow.fromWebContents(event.sender);
+  const description =
+    target.kind === 'folder'
+      ? 'Folder.'
+      : target.kind === 'image'
+        ? 'Image.'
+        : 'Markdown note.';
   const contains =
     target.kind === 'folder' ? ' Its entire contents will be moved.' : '';
   const choice = await dialog.showMessageBox(
@@ -448,7 +539,7 @@ ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
       defaultId: 0,
       cancelId: 0,
       message: `Move “${target.relativePath}” to Trash?`,
-      detail: `${target.kind === 'folder' ? 'Folder.' : 'Markdown note.'}${contains}`,
+      detail: `${description}${contains}`,
       noLink: true,
     },
   );
@@ -485,7 +576,12 @@ ipcMain.handle('vault:save-note', async (_event, request: unknown) =>
   }),
 );
 
-app.whenReady().then(() => {
+let agentEndpoint: StartedAgentEndpoint | undefined;
+app.whenReady().then(async () => {
+  agentEndpoint = await startAgentEndpoint({
+    broker: agentBroker,
+    userDataPath: app.getPath('userData'),
+  });
   const menu = Menu.buildFromTemplate([
     {
       label: app.name,
@@ -702,11 +798,23 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', (event) => {
-  if (shutdownAllowed) return;
+  if (shutdownAllowed) {
+    if (agentEndpoint) {
+      const endpoint = agentEndpoint;
+      agentEndpoint = undefined;
+      void endpoint.close();
+    }
+    return;
+  }
   // Closing the final window is already guarded by its close handler. Don't
   // show a second quit confirmation after that window has been destroyed.
   if (BrowserWindow.getAllWindows().length === 0) {
     shutdownAllowed = true;
+    if (agentEndpoint) {
+      const endpoint = agentEndpoint;
+      agentEndpoint = undefined;
+      void endpoint.close();
+    }
     return;
   }
   event.preventDefault();
@@ -730,6 +838,11 @@ app.on('before-quit', (event) => {
       }, flushBeforeQuit);
       if (!proceed) return;
       shutdownAllowed = true;
+      if (agentEndpoint) {
+        const endpoint = agentEndpoint;
+        agentEndpoint = undefined;
+        await endpoint.close();
+      }
       app.quit();
     } catch (error) {
       console.error('Unable to confirm or prepare application quit', error);

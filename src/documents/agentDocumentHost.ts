@@ -1,0 +1,203 @@
+import type { EditorState } from '@codemirror/state';
+import type {
+  AgentBridgeRequest,
+  AgentBridgeResult,
+  AgentBridgeStatusEvent,
+} from '../shared/agentBridge';
+import type {
+  AgentDocument,
+  AgentDocumentStatus,
+} from './agentDocumentController';
+import { AgentDocumentController } from './agentDocumentController';
+import type { AgentEditorAdapter } from '../components/Editor/agentEditorAdapter';
+import type { SaveNote } from './agentDocumentController';
+
+export type OpenAgentDocument = {
+  key: string;
+  vaultId: string;
+  absolutePath: string;
+  vaultPath: string;
+  path: string;
+  state: EditorState;
+  revision: string;
+};
+
+export interface AgentDocumentHostOptions {
+  openDocument: (target: {
+    absolutePath: string;
+    vaultId: string;
+    vaultRoot: string;
+  }) => Promise<OpenAgentDocument>;
+  publishDocument: (document: AgentDocument) => void;
+  publishStatus: (event: AgentBridgeStatusEvent) => void;
+  saveNote: SaveNote;
+  getAdapterFor: (
+    vaultId: string,
+    path: string,
+  ) => AgentEditorAdapter | undefined;
+}
+
+/** Bridges transport requests to per-document ownership; it deliberately owns no UI or transport. */
+export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
+  const controller = new AgentDocumentController(options.saveNote);
+  const sessions = new Map<string, AgentDocument>();
+  const identities = new Map<string, { vaultId: string; path: string }>();
+  const unsubscribe = controller.subscribe((document) => {
+    options.publishDocument(document);
+    for (const [sessionId, owned] of sessions) {
+      if (owned !== document) continue;
+      options.publishStatus({ session: toSessionStatus(sessionId, document) });
+    }
+  });
+
+  async function handleRequest(
+    request: AgentBridgeRequest & { vaultId?: string; vaultRoot?: string },
+  ): Promise<AgentBridgeResult> {
+    try {
+      if (request.type === 'snapshot') {
+        const opened = await options.openDocument({
+          absolutePath: request.absolutePath,
+          vaultId: request.vaultId,
+          vaultRoot: request.vaultRoot,
+        });
+        const document = controller.attach(
+          opened.key,
+          opened.vaultPath,
+          opened.path,
+          opened.state,
+          opened.revision,
+        );
+        const sessionId = request.sessionId;
+        sessions.set(sessionId, document);
+        document.vaultId = opened.vaultId;
+        document.absolutePath = opened.absolutePath;
+        options.publishDocument(document);
+        identities.set(sessionId, {
+          vaultId: opened.vaultId,
+          path: opened.path,
+        });
+        options.publishStatus({
+          session: toSessionStatus(sessionId, document),
+        });
+        return {
+          ok: true,
+          content: document.state.doc.toString(),
+          documentVersion: document.acceptedVersion,
+          diskRevision: document.revision,
+        };
+      }
+      if (request.type === 'append') {
+        const document = sessions.get(request.sessionId);
+        const identity = identities.get(request.sessionId);
+        if (!document || !identity || document.closed)
+          return {
+            ok: false,
+            code: 'SESSION_CLOSED',
+            message: 'Session is not open',
+          };
+        const result = await controller.append(document, request.text);
+        return {
+          ok: true,
+          documentVersion: result.version,
+          diskRevision: document.revision,
+          saveState: document.dirty ? 'pending' : 'saved',
+        };
+      }
+      const document = sessions.get(request.sessionId);
+      const identity = identities.get(request.sessionId);
+      if (!document || !identity || document.closed)
+        return {
+          ok: false,
+          code: 'SESSION_CLOSED',
+          message: 'Session is not open',
+        };
+      if (request.type === 'finish') {
+        controller.finish(document);
+        const adapter = options.getAdapterFor(identity.vaultId, identity.path);
+        const flushed = await controller.flush(document);
+        const viewFlushed = await adapter?.flush();
+        return flushed && viewFlushed !== false
+          ? {
+              ok: true,
+              documentVersion: document.acceptedVersion,
+              diskRevision: document.revision,
+            }
+          : {
+              ok: false,
+              code: 'SAVE_FAILED',
+              message: 'Could not flush document changes',
+            };
+      }
+      if (request.type === 'cancel') {
+        controller.stop(document);
+        const flushed = await controller.flush(document);
+        return flushed
+          ? {
+              ok: true,
+              documentVersion: document.acceptedVersion,
+              diskRevision: document.revision,
+            }
+          : {
+              ok: false,
+              code: 'SAVE_FAILED',
+              message: 'Could not flush document changes',
+            };
+      }
+      return {
+        ok: false,
+        code: 'INVALID_REQUEST',
+        message: 'Unsupported renderer request',
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        code:
+          error instanceof Error && /closed/i.test(error.message)
+            ? 'SESSION_CLOSED'
+            : 'SAVE_FAILED',
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  function onCancelled(sessionId: string, reason: string): void {
+    const document = sessions.get(sessionId);
+    if (document && !document.closed) {
+      controller.stop(document);
+      options.publishStatus({
+        session: toSessionStatus(sessionId, document),
+        reason,
+      });
+    }
+  }
+
+  return {
+    controller,
+    getAdapterFor: options.getAdapterFor,
+    handleRequest,
+    onCancelled,
+    subscribe: controller.subscribe.bind(controller),
+    dispose: unsubscribe,
+  };
+}
+
+function toSessionStatus(sessionId: string, document: AgentDocument) {
+  const state: AgentDocumentStatus = document.status;
+  return {
+    sessionId,
+    absolutePath: document.absolutePath,
+    state:
+      state === 'stopped'
+        ? ('cancelled' as const)
+        : state === 'disconnected'
+          ? ('disconnected' as const)
+          : state === 'finished'
+            ? ('finished' as const)
+            : state === 'writing'
+              ? ('writing' as const)
+              : ('connected' as const),
+    documentVersion: document.acceptedVersion,
+    diskRevision: document.revision,
+    pendingOperations: document.inFlight ? 1 : 0,
+  };
+}

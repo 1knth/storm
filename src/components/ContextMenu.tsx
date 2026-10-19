@@ -14,16 +14,29 @@ export type ContextMenuItem =
       shortcut?: string;
       danger?: boolean;
       swatch?: string;
-      submenu?: {
-        type: 'swatches';
-        items: {
-          id: string;
-          label: string;
-          color: string;
-          selected?: boolean;
-          onSelect: () => void;
-        }[];
-      };
+      submenu?:
+        | {
+            type: 'swatches';
+            items: {
+              id: string;
+              label: string;
+              color: string;
+              selected?: boolean;
+              onSelect: () => void;
+            }[];
+          }
+        | {
+            type: 'actions';
+            items: {
+              id: string;
+              label: string;
+              selected?: boolean;
+              disabled?: boolean;
+              indicatorColor?: string;
+              color?: string;
+              onSelect: () => void;
+            }[];
+          };
     };
 export type ContextMenuCloseReason = 'escape' | 'outside' | 'select';
 export type ContextMenuProps = {
@@ -122,6 +135,9 @@ export default function ContextMenu({
 
   useLayoutEffect(() => {
     if (!openSubmenu) return;
+    submenuElement.current
+      ?.querySelector<HTMLButtonElement>('button:not([aria-disabled="true"])')
+      ?.focus();
     const update = () => {
       const anchorElement = menu.current?.querySelector<HTMLElement>(
         `[data-menu-id="${CSS.escape(openSubmenu)}"]`,
@@ -302,9 +318,11 @@ export default function ContextMenu({
               <div
                 ref={submenuElement}
                 role="menu"
-                aria-label={`${item.label} colors`}
+                aria-label={`${item.label} options`}
                 key={`submenu-${item.id}`}
                 onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (!item.submenu) return;
                   const buttons = Array.from(
                     event.currentTarget.querySelectorAll<HTMLButtonElement>(
                       'button',
@@ -330,8 +348,12 @@ export default function ContextMenu({
                     ].includes(event.key)
                   ) {
                     event.preventDefault();
-                    const delta =
-                      event.key === 'ArrowLeft'
+                    const isActions = item.submenu.type === 'actions';
+                    const delta = isActions
+                      ? event.key === 'ArrowUp' || event.key === 'ArrowLeft'
+                        ? -1
+                        : 1
+                      : event.key === 'ArrowLeft'
                         ? -1
                         : event.key === 'ArrowRight'
                           ? 1
@@ -341,9 +363,12 @@ export default function ContextMenu({
                     buttons[
                       (index + delta + buttons.length) % buttons.length
                     ]?.focus();
+                  } else if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    (document.activeElement as HTMLButtonElement)?.click();
                   }
                 }}
-                className="app-popup-surface fixed z-[1001] grid grid-cols-4 gap-1.5 p-2"
+                className={`app-popup-surface fixed z-[1001] ${item.submenu.type === 'swatches' ? 'grid grid-cols-4 gap-1.5' : 'flex min-w-44 flex-col'} p-2`}
                 style={{
                   left: position.left + 150,
                   top: position.top,
@@ -352,22 +377,55 @@ export default function ContextMenu({
                   overflow: 'auto',
                 }}
               >
-                {item.submenu.items.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="menuitem"
-                    aria-label={option.label}
-                    title={option.label}
-                    aria-checked={option.selected || undefined}
-                    onClick={() => {
-                      onClose('select');
-                      option.onSelect();
-                    }}
-                    className={`h-7 w-7 rounded-full border-2 ${option.selected ? 'border-white ring-1 ring-white/60' : 'border-white/25 hover:border-white/80'}`}
-                    style={{ backgroundColor: option.color }}
-                  />
-                ))}
+                {item.submenu.type === 'swatches'
+                  ? item.submenu.items.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="menuitem"
+                        aria-label={option.label}
+                        title={option.label}
+                        aria-checked={option.selected || undefined}
+                        onClick={() => {
+                          onClose('select');
+                          option.onSelect();
+                        }}
+                        className={`h-7 w-7 rounded-full border-2 ${option.selected ? 'border-white ring-1 ring-white/60' : 'border-white/25 hover:border-white/80'}`}
+                        style={{ backgroundColor: option.color }}
+                      />
+                    ))
+                  : item.submenu.items.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="menuitemradio"
+                        data-submenu-option
+                        aria-checked={option.selected || false}
+                        aria-disabled={option.disabled || undefined}
+                        tabIndex={-1}
+                        onClick={() => {
+                          if (option.disabled) return;
+                          onClose('select');
+                          option.onSelect();
+                        }}
+                        className={`app-popup-row flex w-full items-center justify-between gap-4 px-2 py-1.5 text-left ${option.disabled ? 'cursor-default opacity-45' : ''}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          {(option.indicatorColor ?? option.color) && (
+                            <span
+                              aria-hidden="true"
+                              className="h-2.5 w-2.5 shrink-0 rounded-full"
+                              style={{
+                                backgroundColor:
+                                  option.indicatorColor ?? option.color,
+                              }}
+                            />
+                          )}
+                          {option.label}
+                        </span>
+                        {option.selected && <span aria-hidden="true">✓</span>}
+                      </button>
+                    ))}
               </div>,
               document.body,
               `submenu-${item.id}`,

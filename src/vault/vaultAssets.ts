@@ -24,6 +24,10 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.avif': 'image/avif',
 };
 
+export function isSupportedVaultImagePath(filePath: string): boolean {
+  return Object.hasOwn(MIME_BY_EXTENSION, path.extname(filePath).toLowerCase());
+}
+
 function inside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return (

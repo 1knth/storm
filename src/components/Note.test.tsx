@@ -20,6 +20,19 @@ function render(entry: VaultEntry) {
   );
 }
 
+test('empty note peeks show a subdued italic placeholder', () => {
+  const markup = render({
+    path: 'empty.md',
+    name: 'empty.md',
+    kind: 'note',
+    isDirectory: false,
+    peek: ' \n\t ',
+  });
+
+  assert.match(markup, /<span class="italic text-white\/40">empty<\/span>/);
+  assert.match(markup, /file-tree-peek/);
+});
+
 test('image entries use the existing compact file-row layout without a note peek', () => {
   const markup = render({
     path: 'images/photo.png',

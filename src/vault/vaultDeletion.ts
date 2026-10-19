@@ -1,7 +1,8 @@
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { isSupportedVaultImagePath } from './vaultAssets';
 
-export type DeletionKind = 'note' | 'folder';
+export type DeletionKind = 'note' | 'folder' | 'image';
 export interface DeletionTarget {
   absolutePath: string;
   relativePath: string;
@@ -49,8 +50,12 @@ export async function resolveDeletionTarget(
     // Root is deliberately excluded; only descendants may be removed.
   } else if (target.isFile() && /\.md$/i.test(path.basename(current))) {
     // Markdown note.
+  } else if (target.isFile() && isSupportedVaultImagePath(current)) {
+    // Supported raster image.
   } else {
-    throw new Error('Only Markdown notes and folders can be moved to Trash');
+    throw new Error(
+      'Only Markdown notes, supported images and folders can be moved to Trash',
+    );
   }
   const canonical = await realpath(current);
   if (!canonical.startsWith(`${root}${path.sep}`))
@@ -58,7 +63,11 @@ export async function resolveDeletionTarget(
   return {
     absolutePath: current,
     relativePath: segments.join('/'),
-    kind: target.isDirectory() ? 'folder' : 'note',
+    kind: target.isDirectory()
+      ? 'folder'
+      : isSupportedVaultImagePath(current)
+        ? 'image'
+        : 'note',
     dev: target.dev,
     ino: target.ino,
     mtimeMs: target.mtimeMs,
