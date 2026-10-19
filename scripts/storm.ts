@@ -16,31 +16,34 @@ class CliUsageError extends Error {}
 
 function cliHelp(command?: string): string {
   const executable = path.basename(process.execPath).replace(/\.exe$/i, '');
-  return process.env.STORM_INSTALLED_CLI === '1' || executable === 'storm'
-    ? helpText(command).replaceAll('bun scripts/storm.ts', 'storm')
-    : helpText(command);
+  const text = helpText(command);
+  if (process.env.STORM_INSTALLED_CLI !== '1' && executable !== 'storm')
+    return text;
+  return text
+    .replaceAll('bun scripts/storm.ts', 'storm')
+    .replace(
+      'Without either endpoint option the CLI uses ~/.storm/storm-agent.json. Typical macOS\napp metadata is at ~/Library/Application Support/storm/storm-agent.json; pass it with\n--endpoint if Storm is using that location. This development CLI is invoked with Bun;\nthere is not yet an installed storm executable.',
+      'Without an endpoint override the CLI discovers metadata in ~/Library/Application\nSupport/storm, ~/Library/Application Support/Storm, or the legacy ~/.storm location.\nIf multiple profiles are found, select one explicitly with --endpoint PATH or\n--profile NAME. The installed launcher uses its bundled Bun runtime.',
+    );
 }
 
-async function discoverEndpoint(
+export async function discoverEndpoint(
   override?: string,
   home = os.homedir(),
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
   if (override) return override;
+  const appData =
+    platform === 'darwin'
+      ? path.join(home, 'Library', 'Application Support')
+      : platform === 'win32'
+        ? path.join(home, 'AppData', 'Roaming')
+        : path.join(home, '.config');
   const candidates = [
-    path.join(
-      home,
-      'Library',
-      'Application Support',
-      'storm',
-      'storm-agent.json',
-    ),
-    path.join(
-      home,
-      'Library',
-      'Application Support',
-      'Storm',
-      'storm-agent.json',
-    ),
+    path.join(appData, 'storm', 'storm-agent.json'),
+    ...(platform === 'darwin'
+      ? [path.join(appData, 'Storm', 'storm-agent.json')]
+      : []),
     path.join(home, '.storm', 'storm-agent.json'),
   ];
   const found: string[] = [];

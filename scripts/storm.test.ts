@@ -13,7 +13,7 @@ import {
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runCli } from './storm';
+import { discoverEndpoint, runCli } from './storm';
 import { assertNativeTarget, buildCliBinary } from './buildCli';
 import { startAgentEndpoint } from '../src/main/agentEndpoint';
 
@@ -95,6 +95,12 @@ test('standalone CLI works from a spaced path without development tools or an in
       assert.match(result.stdout, /Usage:/);
       assert.match(result.stdout, /storm/);
       assert.doesNotMatch(result.stdout, /bun scripts\/storm\.ts/);
+      assert.doesNotMatch(
+        result.stdout,
+        /there is not yet an installed storm executable/i,
+      );
+      if (args.length === 0 || args[0] === '--help')
+        assert.match(result.stdout, /Application Support\/Storm/);
     }
     for (const args of [['--unknown'], ['not-a-command']]) {
       const result = run(args);
@@ -215,6 +221,29 @@ test('CLI help is available offline and invalid commands fail with usage', () =>
     assert.equal(result.status, 2, `${args.join(' ')}: ${result.stderr}`);
     assert.match(result.stderr, /Usage:/);
     assert.doesNotMatch(result.stderr, /ENOENT|storm-cli-no-endpoint/);
+  }
+});
+
+test('CLI endpoint discovery follows each platform app-data path', async () => {
+  const home = await mkdtemp(
+    path.join(os.tmpdir(), 'storm-cli-platform-home-'),
+  );
+  try {
+    const cases = [
+      ['darwin', path.join(home, 'Library', 'Application Support', 'storm')],
+      ['win32', path.join(home, 'AppData', 'Roaming', 'storm')],
+      ['linux', path.join(home, '.config', 'storm')],
+    ] as const;
+    for (const [platform, directory] of cases) {
+      const metadata = path.join(directory, 'storm-agent.json');
+      await mkdir(directory, { recursive: true });
+      await writeFile(metadata, '{}', { mode: 0o600 });
+      await chmod(metadata, 0o600);
+      assert.equal(await discoverEndpoint(undefined, home, platform), metadata);
+      await rm(metadata);
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });
 
