@@ -36,6 +36,87 @@ async function fixture() {
   return { root, service, note, vaultPath: service.getSelectedVaultPath()! };
 }
 
+test('renames supported entries and folders atomically within the selected vault', async () => {
+  const { root, service } = await fixture();
+  await mkdir(path.join(root, 'folder'));
+  await writeFile(path.join(root, 'folder', 'child.md'), 'child contents');
+  await writeFile(path.join(root, 'picture.png'), Buffer.from([1, 2, 3]));
+
+  assert.deepEqual(await service.renameEntry('note.md', 'renamed.md'), {
+    oldPath: 'note.md',
+    newPath: 'renamed.md',
+    kind: 'note',
+  });
+  assert.equal(
+    await readFile(path.join(root, 'renamed.md'), 'utf8'),
+    'original note',
+  );
+  assert.deepEqual(await service.renameEntry('picture.png', 'renamed.png'), {
+    oldPath: 'picture.png',
+    newPath: 'renamed.png',
+    kind: 'image',
+  });
+  assert.deepEqual(await service.renameEntry('folder', 'renamed-folder'), {
+    oldPath: 'folder',
+    newPath: 'renamed-folder',
+    kind: 'directory',
+  });
+  assert.equal(
+    await readFile(path.join(root, 'renamed-folder', 'child.md'), 'utf8'),
+    'child contents',
+  );
+});
+
+test('rejects unsafe or colliding renames without modifying source entries', async () => {
+  const { root, service } = await fixture();
+  await writeFile(path.join(root, 'taken.md'), 'destination');
+  await assert.rejects(
+    service.renameEntry('note.md', 'taken.md'),
+    /already exists/,
+  );
+  for (const name of [
+    '',
+    '.',
+    '..',
+    '../escape',
+    'a/b',
+    'a\\\\b',
+    'bad\\0name',
+  ])
+    await assert.rejects(service.renameEntry('note.md', name));
+  await assert.rejects(service.renameEntry('.', 'new-root'));
+  assert.equal(
+    await readFile(path.join(root, 'note.md'), 'utf8'),
+    'original note',
+  );
+  assert.equal(
+    await readFile(path.join(root, 'taken.md'), 'utf8'),
+    'destination',
+  );
+  assert.deepEqual(await service.renameEntry('note.md', 'note.md'), {
+    oldPath: 'note.md',
+    newPath: 'note.md',
+    kind: 'note',
+  });
+});
+
+test('rejects symlink sources and symlink ancestors', async () => {
+  const { root, service } = await fixture();
+  const outside = await mkdtemp(
+    path.join(os.tmpdir(), 'storm-rename-outside-'),
+  );
+  fixtureRoots.push(outside);
+  await writeFile(path.join(outside, 'secret.md'), 'outside');
+  await symlink(path.join(outside, 'secret.md'), path.join(root, 'linked.md'));
+  await symlink(outside, path.join(root, 'linked-dir'));
+  await assert.rejects(service.renameEntry('linked.md', 'moved.md'));
+  await assert.rejects(service.renameEntry('linked-dir/secret.md', 'moved.md'));
+  assert.equal(
+    await readFile(path.join(outside, 'secret.md'), 'utf8'),
+    'outside',
+  );
+});
+
 test('lists images as lightweight entries while preserving notes and excluding SVG/symlinks', async () => {
   const { root, service } = await fixture();
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
@@ -130,6 +211,117 @@ test('reads assets with signature, path, MIME, and size validation', async () =>
     Buffer.alloc(10 * 1024 * 1024 + 1),
   );
   await assert.rejects(readVaultAsset(root, 'large.png'), /10 MB/);
+});
+
+test('rename-link planning failures leave the source untouched', async () => {
+  const { root, service } = await fixture();
+  await writeFile(path.join(root, 'ref.md'), '[target](target.md)');
+  await writeFile(path.join(root, 'target.md'), 'target');
+  // An invalid source is rejected before the rename mutation begins.
+  await assert.rejects(
+    service.renameEntryAndUpdateLinks('missing.md', 'moved.md'),
+  );
+  assert.equal(await readFile(path.join(root, 'target.md'), 'utf8'), 'target');
+  assert.equal(
+    await readFile(path.join(root, 'ref.md'), 'utf8'),
+    '[target](target.md)',
+  );
+});
+
+test('rename aborts on a revision conflict before moving or rewriting anything', async () => {
+  const { root } = await fixture();
+  await writeFile(path.join(root, 'target.md'), 'target');
+  await writeFile(path.join(root, 'ref.md'), '[target](target.md)');
+  class ConflictingVaultService extends VaultService {
+    reads = 0;
+    override async readNote(relativePath: unknown) {
+      this.reads++;
+      if (this.reads === 4)
+        await writeFile(path.join(root, 'ref.md'), 'new external content');
+      return super.readNote(relativePath);
+    }
+  }
+  const service = new ConflictingVaultService();
+  await service.selectVault(root);
+  await assert.rejects(
+    service.renameEntryAndUpdateLinks('target.md', 'renamed.md'),
+    /changed during link planning/,
+  );
+  assert.equal(await readFile(path.join(root, 'target.md'), 'utf8'), 'target');
+  assert.equal(
+    await readFile(path.join(root, 'ref.md'), 'utf8'),
+    'new external content',
+  );
+  await assert.rejects(readFile(path.join(root, 'renamed.md'), 'utf8'), {
+    code: 'ENOENT',
+  });
+});
+
+test('rename link rewrites roll back the move and prior writes on first or second save failure', async () => {
+  for (const failAt of [1, 2]) {
+    const { root } = await fixture();
+    await writeFile(path.join(root, 'target.md'), 'target');
+    await writeFile(path.join(root, 'one.md'), '[target](target.md)');
+    await writeFile(path.join(root, 'two.md'), '[target](target.md)');
+    class FailingVaultService extends VaultService {
+      saves = 0;
+      override async saveNote(request: unknown) {
+        this.saves++;
+        if (this.saves === failAt)
+          throw new Error(`injected save failure ${failAt}`);
+        return super.saveNote(request);
+      }
+    }
+    const service = new FailingVaultService();
+    await service.selectVault(root);
+    await assert.rejects(
+      service.renameEntryAndUpdateLinks('target.md', 'renamed.md'),
+      /injected save failure/,
+    );
+    assert.equal(
+      await readFile(path.join(root, 'target.md'), 'utf8'),
+      'target',
+    );
+    await assert.rejects(readFile(path.join(root, 'renamed.md'), 'utf8'), {
+      code: 'ENOENT',
+    });
+    assert.equal(
+      await readFile(path.join(root, 'one.md'), 'utf8'),
+      '[target](target.md)',
+    );
+    assert.equal(
+      await readFile(path.join(root, 'two.md'), 'utf8'),
+      '[target](target.md)',
+    );
+  }
+});
+
+test('rename rollback never overwrites newer external content and reports recovery paths', async () => {
+  const { root } = await fixture();
+  await writeFile(path.join(root, 'target.md'), 'target');
+  await writeFile(path.join(root, 'one.md'), '[target](target.md)');
+  await writeFile(path.join(root, 'two.md'), '[target](target.md)');
+  class ConflictingVaultService extends VaultService {
+    saves = 0;
+    override async saveNote(request: unknown) {
+      this.saves++;
+      if (this.saves === 2) throw new Error('injected second save failure');
+      if (this.saves === 3)
+        await writeFile(path.join(root, 'one.md'), 'newer external content');
+      return super.saveNote(request);
+    }
+  }
+  const service = new ConflictingVaultService();
+  await service.selectVault(root);
+  await assert.rejects(
+    service.renameEntryAndUpdateLinks('target.md', 'renamed.md'),
+    /rollback incomplete.*one\.md/i,
+  );
+  assert.equal(
+    await readFile(path.join(root, 'one.md'), 'utf8'),
+    'newer external content',
+  );
+  assert.equal(await readFile(path.join(root, 'renamed.md'), 'utf8'), 'target');
 });
 
 test('reads and saves valid updates and intentional empty content', async () => {

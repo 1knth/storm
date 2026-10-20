@@ -12,6 +12,7 @@ function renderExplorer() {
       vaultId="vault-1"
       onCreate={() => {}}
       onCreateNote={() => {}}
+      onRenameEntry={async () => {}}
       creationPending={false}
       onAddVault={() => {}}
       onUnloadAllVaults={async () => true}

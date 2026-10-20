@@ -37,6 +37,11 @@ import {
   STARTUP_VAULT_ERROR,
   shouldNotifyVaultError,
 } from './startupVaultError';
+import {
+  coordinateRename,
+  remapRenamedTabAssignments,
+  remapRenamedTabs,
+} from './vault/renameCoordinator';
 
 function ShortcutGroup({ title, items }: { title: string; items: string[] }) {
   return (
@@ -107,6 +112,8 @@ function App() {
   const [tabGroupAssignments, setTabGroupAssignments] =
     useState<TabAssignments>({});
   const [tabs, setTabs] = useState<TabSnapshot[]>([]);
+  const [renameInProgress, setRenameInProgress] = useState(false);
+  const renameInProgressRef = useRef(false);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [vaultPath, setVaultPath] = useState<string | null>(null);
@@ -860,6 +867,85 @@ function App() {
       }),
     [],
   );
+
+  const renameEntry = async (path: string, newName: string) => {
+    if (renameInProgressRef.current) return;
+    renameInProgressRef.current = true;
+    setRenameInProgress(true);
+    try {
+      await coordinateRename({
+        flushAllAffectedNotes: async () => {
+          if (!((await editorRef.current?.flush()) ?? true)) return false;
+          const vaultId = activeVaultIdRef.current;
+          if (!vaultId) return true;
+          const openNotes = tabsRef.current.filter(
+            (tab): tab is Extract<TabSnapshot, { kind: 'note' }> =>
+              tab.kind === 'note' && tab.vaultId === vaultId,
+          );
+          const active = editorRef.current?.snapshot();
+          for (const tab of openNotes) {
+            const snapshot =
+              active?.vaultId === vaultId && active.note.path === tab.note.path
+                ? active
+                : tab;
+            if (snapshot.state.doc.toString() === snapshot.note.content)
+              continue;
+            const saved = await window.vault.saveNote({
+              vaultPath: snapshot.vaultPath,
+              path: snapshot.note.path,
+              content: snapshot.state.doc.toString(),
+              revision: snapshot.note.revision,
+            });
+            if (!saved?.revision) return false;
+          }
+          return true;
+        },
+        mutate: () => window.vault.renameEntry({ path, newName }),
+        remap: (rename) => {
+          agentHost.current?.invalidateFinishedDocuments([
+            rename.oldPath,
+            rename.newPath,
+            ...rename.changedNotes.map((note) => note.path),
+          ]);
+          const remapTabs = (source: TabSnapshot[]) =>
+            remapRenamedTabs(source, rename, (content) =>
+              editorRef.current!.createState(content),
+            );
+          for (const [id, session] of sessions.current) {
+            const nextTabs = remapTabs(session.tabs);
+            const nextAssignments = remapRenamedTabAssignments(
+              session.assignments,
+              rename,
+            );
+            sessions.current.set(id, {
+              ...session,
+              tabs: nextTabs,
+              assignments: nextAssignments,
+            });
+            if (id === activeVaultIdRef.current) {
+              tabsRef.current = nextTabs;
+              assignmentsRef.current = nextAssignments;
+              setAssignments(nextAssignments);
+              setTabs(nextTabs);
+              const active = nextTabs.find(
+                (tab) => getTabId(tab) === activeIdRef.current,
+              );
+              if (active) {
+                if (active.kind === 'note') setActivePath(active.note.path);
+                else if (active.kind === 'image') setActivePath(active.path);
+                editorRef.current?.activate(active);
+              }
+            }
+          }
+          if (activeVaultIdRef.current)
+            void refreshNotes(activeVaultIdRef.current);
+        },
+      });
+    } finally {
+      renameInProgressRef.current = false;
+      setRenameInProgress(false);
+    }
+  };
 
   const beginCreate = (kind: 'note' | 'folder', parent: string) => {
     if (!activeVaultId || !vaultPath) {
@@ -2277,6 +2363,7 @@ function App() {
             onImageSelect={(path) => void openImagePreview(path)}
             vaultId={activeVaultId}
             onDeleteEntry={(path) => void handleDeleteEntry(path)}
+            onRenameEntry={renameEntry}
             onCreate={beginCreate}
             onCreateNote={() => {
               const path = activePath?.replace(/\\/g, '/') ?? '';
@@ -2313,6 +2400,7 @@ function App() {
           onToggleReadingMode={toggleReadingMode}
           commandHeld={commandHeld}
           vimMode={vimMode}
+          renameInProgress={renameInProgress}
           appearance={appearance}
           tabsVisible={hasOpenTabs(tabs)}
           vaultId={activeVaultId}

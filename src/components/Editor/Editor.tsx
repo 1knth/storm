@@ -22,6 +22,7 @@ import {
 } from '@codemirror/view';
 import type { NoteData } from '../../shared/types';
 import { markdownEditorExtensions } from './extensions';
+import { foldGutter } from '@codemirror/language';
 import { createMarkdownSyntaxHighlighting } from './markdownHighlighting';
 import type { Appearance } from '../../appearance';
 import { rgbaColor } from '../../appearance';
@@ -132,6 +133,7 @@ type EditorProps = {
   agentStatus?: AgentSessionStatus;
   agentWriting?: boolean;
   agentGenerationFinished?: boolean;
+  renameInProgress?: boolean;
   onStopAgent?: (sessionId: string) => void;
 };
 
@@ -152,6 +154,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     agentStatus,
     agentWriting = false,
     agentGenerationFinished = false,
+    renameInProgress = false,
     onStopAgent,
   },
   ref,
@@ -162,6 +165,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const vimCompartment = useRef(new Compartment());
   const appearanceCompartment = useRef(new Compartment());
   const writingLockCompartment = useRef(new Compartment());
+  const renameReadOnlyCompartment = useRef(new Compartment());
+  const renameInProgressRef = useRef(renameInProgress);
+  renameInProgressRef.current = renameInProgress;
   const extensions = useRef<Extension[]>([]);
   const current = useRef<{
     note: NoteData;
@@ -715,6 +721,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     const view = viewRef.current;
     const active = current.current;
     if (
+      renameInProgressRef.current ||
       !view ||
       !taskToggleMatchesBinding(
         payload,
@@ -735,6 +742,18 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       annotations: Transaction.userEvent.of('input.task'),
     });
   }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: renameReadOnlyCompartment.current.reconfigure(
+        renameInProgress
+          ? [EditorState.readOnly.of(true), EditorView.editable.of(false)]
+          : [],
+      ),
+    });
+  }, [renameInProgress]);
 
   useLayoutEffect(() => {
     const wasReading = previousReadingMode.current;
@@ -1118,6 +1137,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             return true;
           },
           paste: (event, view) => {
+            if (renameInProgressRef.current) return false;
             const target = event.target;
             const active = current.current;
             const installed = binding.current;
@@ -1200,6 +1220,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                   }
                 };
                 if (
+                  renameInProgressRef.current ||
                   viewRef.current !== view ||
                   !current.current ||
                   current.current.vaultId !== captured.vaultId ||
@@ -1264,6 +1285,11 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         }),
       ),
       vimCompartment.current.of(vimMode ? vim() : []),
+      renameReadOnlyCompartment.current.of(
+        renameInProgress
+          ? [EditorState.readOnly.of(true), EditorView.editable.of(false)]
+          : [],
+      ),
       writingLockCompartment.current.of([]),
       ...markdownEditorExtensions,
       appearanceCompartment.current.of(
@@ -1274,6 +1300,28 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         ),
       ),
       lineNumbers(),
+      foldGutter({
+        markerDOM: (open) => {
+          const marker = document.createElement('span');
+          marker.classList.add('cm-foldMarker');
+          const icon = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'svg',
+          );
+          icon.setAttribute('viewBox', '0 0 24 24');
+          icon.setAttribute('aria-hidden', 'true');
+          icon.classList.add('cm-foldMarkerIcon');
+          if (!open) icon.classList.add('is-collapsed');
+          const path = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'path',
+          );
+          path.setAttribute('d', 'm6 9 6 6 6-6');
+          icon.append(path);
+          marker.append(icon);
+          return marker;
+        },
+      }),
       EditorView.lineWrapping,
       drawSelection({ cursorBlinkRate: 1000 }),
       highlightActiveLine(),

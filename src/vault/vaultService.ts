@@ -11,6 +11,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
+import { planRenameLinks } from './renameLinks';
 import type {
   NoteData,
   SaveNoteRequest,
@@ -96,6 +97,224 @@ export class VaultService {
         Number(b.isDirectory) - Number(a.isDirectory) ||
         a.path.localeCompare(b.path),
     );
+  }
+
+  async renameEntry(
+    relativePath: unknown,
+    newBaseName: unknown,
+  ): Promise<{
+    oldPath: string;
+    newPath: string;
+    kind: 'note' | 'image' | 'directory';
+  }> {
+    const move = await this.validateRenameEntry(relativePath, newBaseName);
+    if (move.oldPath !== move.newPath)
+      await rename(move.source, move.destination);
+    return { oldPath: move.oldPath, newPath: move.newPath, kind: move.kind };
+  }
+
+  async validateRenameEntry(
+    relativePath: unknown,
+    newBaseName: unknown,
+  ): Promise<{
+    oldPath: string;
+    newPath: string;
+    kind: 'note' | 'image' | 'directory';
+    source: string;
+    destination: string;
+  }> {
+    const root = this.selectedVaultPath;
+    if (!root) throw new Error('No vault selected');
+    if (
+      typeof relativePath !== 'string' ||
+      !relativePath ||
+      path.isAbsolute(relativePath) ||
+      typeof newBaseName !== 'string' ||
+      !newBaseName ||
+      newBaseName === '.' ||
+      newBaseName === '..' ||
+      /[\\/\\0]/.test(newBaseName)
+    )
+      throw new Error('Invalid rename path or name');
+
+    const segments = relativePath.split(/[\\/]+/);
+    if (
+      segments.some(
+        (segment) => !segment || segment === '.' || segment === '..',
+      )
+    )
+      throw new Error('Invalid rename path');
+    const rootReal = await realpath(root);
+    const source = path.resolve(rootReal, ...segments);
+    const withinRoot = (candidate: string) => {
+      const relative = path.relative(rootReal, candidate);
+      return (
+        relative !== '' &&
+        relative !== '..' &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative)
+      );
+    };
+    if (!withinRoot(source))
+      throw new Error('Cannot rename vault root or escape the selected vault');
+
+    let current = rootReal;
+    for (const segment of segments) {
+      current = path.join(current, segment);
+      const info = await lstat(current);
+      if (info.isSymbolicLink())
+        throw new Error('Cannot rename through symbolic links');
+    }
+    const sourceInfo = await lstat(source);
+    if (!sourceInfo.isFile() && !sourceInfo.isDirectory())
+      throw new Error('Unsupported rename entry');
+    const kind = sourceInfo.isDirectory()
+      ? 'directory'
+      : source.toLowerCase().endsWith('.md')
+        ? 'note'
+        : isSupportedImage(source)
+          ? 'image'
+          : null;
+    if (!kind) throw new Error('Unsupported rename entry');
+    const destination = path.join(path.dirname(source), newBaseName);
+    if (!withinRoot(destination)) throw new Error('Invalid rename destination');
+    const newPath = path
+      .relative(rootReal, destination)
+      .split(path.sep)
+      .join('/');
+    const oldPath = segments.join('/');
+    if (newPath === oldPath)
+      return { oldPath, newPath, kind, source, destination };
+    try {
+      await lstat(destination);
+      throw new Error('Rename destination already exists');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (this.selectedVaultPath !== root)
+      throw new Error('Selected vault changed; rename cancelled');
+    return { oldPath, newPath, kind, source, destination };
+  }
+
+  async renameEntryAndUpdateLinks(
+    relativePath: unknown,
+    newBaseName: unknown,
+  ): Promise<{
+    oldPath: string;
+    newPath: string;
+    kind: 'note' | 'image' | 'directory';
+    changedNotes: { path: string; content: string; revision: string }[];
+  }> {
+    // Reject invalid requests before scanning unrelated notes for link rewrites.
+    const move = await this.validateRenameEntry(relativePath, newBaseName);
+    const root = this.selectedVaultPath;
+    if (!root) throw new Error('No vault selected');
+    const entries = await this.listNotes();
+    const documents: { path: string; content: string; revision: string }[] = [];
+    for (const entry of entries) {
+      if (entry.kind !== 'note') continue;
+      const note = await this.readNote(entry.path);
+      documents.push(note);
+    }
+    // Compute all rewrites before the first mutation.
+    const plans = planRenameLinks(documents, move.oldPath, move.newPath);
+    const changes = plans.flatMap((plan) => {
+      const oldPath =
+        plan.path === move.newPath || plan.path.startsWith(`${move.newPath}/`)
+          ? move.oldPath + plan.path.slice(move.newPath.length)
+          : plan.path;
+      const original = documents.find((doc) => doc.path === oldPath);
+      return original && original.content !== plan.content
+        ? [
+            {
+              oldPath,
+              newPath: plan.path,
+              before: original.content,
+              after: plan.content,
+              revision: original.revision,
+            },
+          ]
+        : [];
+    });
+    if (move.oldPath === move.newPath) return { ...move, changedNotes: [] };
+
+    // Revalidate every document used for resolution, not just documents being edited.
+    for (const doc of documents) {
+      const latest = await this.readNote(doc.path);
+      if (latest.revision !== doc.revision)
+        throw new Error(
+          `Rename aborted: note changed during link planning (${doc.path})`,
+        );
+    }
+    await this.renameEntry(move.oldPath, path.posix.basename(move.newPath));
+    const written: {
+      path: string;
+      before: string;
+      after: string;
+      revision: string;
+    }[] = [];
+    try {
+      for (const change of changes) {
+        const current = await this.readNote(change.newPath);
+        if (current.revision !== change.revision)
+          throw new Error(
+            `Rename aborted: note changed before rewrite (${change.newPath})`,
+          );
+        await this.saveNote({
+          vaultPath: root,
+          path: change.newPath,
+          content: change.after,
+          revision: current.revision,
+        });
+        written.push({
+          path: change.newPath,
+          before: change.before,
+          after: change.after,
+          revision: revisionOf(change.after),
+        });
+      }
+    } catch (error) {
+      const recovery: string[] = [];
+      for (const item of written.reverse()) {
+        try {
+          const current = await this.readNote(item.path);
+          if (current.revision !== item.revision)
+            throw new Error('revision changed');
+          await this.saveNote({
+            vaultPath: root,
+            path: item.path,
+            content: item.before,
+            revision: current.revision,
+          });
+        } catch {
+          recovery.push(item.path);
+        }
+      }
+      if (recovery.length)
+        throw new Error(
+          `Rename failed; rollback incomplete. Recoverable paths: ${[move.newPath, ...recovery].join(', ')}. Original error: ${String(error)}`,
+        );
+      try {
+        await this.renameEntry(move.newPath, path.posix.basename(move.oldPath));
+      } catch {
+        throw new Error(
+          `Rename failed; rollback incomplete. Recoverable path: ${move.newPath}. Original error: ${String(error)}`,
+        );
+      }
+      throw error;
+    }
+    const changedNotes = changes.map((change) => ({
+      oldPath: change.oldPath,
+      newPath: change.newPath,
+      oldContent: change.before,
+      newContent: change.after,
+      oldRevision: change.revision,
+      newRevision: revisionOf(change.after),
+      path: change.newPath,
+      content: change.after,
+      revision: revisionOf(change.after),
+    }));
+    return { ...move, changedNotes };
   }
 
   async readNote(relativePath: unknown): Promise<NoteData> {

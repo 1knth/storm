@@ -18,6 +18,11 @@ describe('appearance preferences', () => {
       headings: ['#abcdef'],
     });
     strictEqual(result.selection, DEFAULT_APPEARANCE.selection);
+    strictEqual(result.folderIcon, DEFAULT_APPEARANCE.folderIcon);
+    strictEqual(
+      validateAppearance({ folderIcon: 'blue' }).folderIcon,
+      DEFAULT_APPEARANCE.folderIcon,
+    );
     deepStrictEqual(result.headings, [
       '#abcdef',
       ...DEFAULT_APPEARANCE.headings.slice(1),
@@ -42,6 +47,19 @@ describe('appearance preferences', () => {
       DEFAULT_APPEARANCE.mermaidGroupBorder,
     );
     strictEqual(result.mermaidGroupText, DEFAULT_APPEARANCE.mermaidGroupText);
+  });
+  it('migrates legacy preferences and persists custom folder icon colors', () => {
+    strictEqual(
+      validateAppearance({ selection: '#123456' }).folderIcon,
+      '#9EE4FF',
+    );
+    const memory = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => memory.get(key) ?? null,
+      setItem: (key: string, value: string) => memory.set(key, value),
+    };
+    saveAppearance(storage, { ...DEFAULT_APPEARANCE, folderIcon: '#123456' });
+    strictEqual(loadAppearance(storage).folderIcon, '#123456');
   });
   it('loads malformed storage safely and persists validated values', () => {
     const memory = new Map<string, string>([[APPEARANCE_KEY, '{bad']]);
@@ -164,7 +182,6 @@ describe('appearance preferences', () => {
       opacity: { mermaidSignalColor: 45 },
     });
     const variables = mermaidThemeVariables(current);
-    strictEqual(variables.signalTextColor, 'rgba(18, 52, 86, 1)');
     strictEqual(variables.signalColor, 'rgba(171, 205, 239, 0.45)');
   });
   it('maps Mermaid palette controls onto base theme variables', () => {

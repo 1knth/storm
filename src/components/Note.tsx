@@ -3,6 +3,7 @@ import { IoIosArrowForward } from 'react-icons/io';
 import { FaFolder } from 'react-icons/fa';
 import { FaRegFile } from 'react-icons/fa6';
 import type { VaultEntry } from '../shared/types';
+import type { Appearance } from '../appearance';
 import NotePeek from './NotePeek';
 
 type NoteProps = {
@@ -13,6 +14,7 @@ type NoteProps = {
   onNoteClick: (id: string) => void;
   onImageClick: (path: string) => void;
   vaultId: string | null;
+  appearance: Appearance;
 };
 
 export default function Note({
@@ -23,6 +25,7 @@ export default function Note({
   onNoteClick,
   onImageClick,
   vaultId,
+  appearance,
 }: NoteProps) {
   const [expanded, setExpanded] = useState(false);
   const children = entries.filter((candidate) => {
@@ -97,6 +100,7 @@ export default function Note({
               <FaFolder
                 aria-hidden="true"
                 className="file-tree-icon h-3.5 w-3.5 shrink-0"
+                style={{ color: appearance.folderIcon }}
               />
               <span className="file-tree-label truncate">{entry.name}</span>
             </span>
@@ -117,6 +121,7 @@ export default function Note({
                   onNoteClick={onNoteClick}
                   onImageClick={onImageClick}
                   vaultId={vaultId}
+                  appearance={appearance}
                 />
               ))}
             </ul>

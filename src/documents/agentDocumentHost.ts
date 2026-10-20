@@ -244,6 +244,27 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
   return {
     controller,
     getAdapterFor: options.getAdapterFor,
+    invalidateFinishedDocuments(paths: string[]): void {
+      const affected = paths.map((path) => path.replace(/\\/g, '/'));
+      for (const [sessionId, identity] of identities) {
+        const path = identity.path.replace(/\\/g, '/');
+        if (
+          !affected.some(
+            (candidate) =>
+              path === candidate || path.startsWith(`${candidate}/`),
+          )
+        )
+          continue;
+        const document = sessions.get(sessionId);
+        if (
+          document?.status === 'finished' &&
+          controller.resetFinished(document.key)
+        ) {
+          sessions.delete(sessionId);
+          identities.delete(sessionId);
+        }
+      }
+    },
     lookupDocument,
     handleRequest,
     onCancelled,

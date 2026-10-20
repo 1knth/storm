@@ -3,8 +3,9 @@ import { test } from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import Note from './Note';
 import type { VaultEntry } from '../shared/types';
+import { DEFAULT_APPEARANCE } from '../appearance';
 
-function render(entry: VaultEntry) {
+function render(entry: VaultEntry, appearance = DEFAULT_APPEARANCE) {
   return renderToStaticMarkup(
     <ul>
       <Note
@@ -15,10 +16,25 @@ function render(entry: VaultEntry) {
         onNoteClick={() => assert.fail('SSR must not select a note')}
         onImageClick={() => assert.fail('SSR must not open the viewer')}
         vaultId="vault-1"
+        appearance={appearance}
       />
     </ul>,
   );
 }
+
+test('folder icons use the configured appearance color', () => {
+  const markup = render(
+    {
+      path: 'folder',
+      name: 'folder',
+      kind: 'directory',
+      isDirectory: true,
+      peek: '',
+    },
+    { ...DEFAULT_APPEARANCE, folderIcon: '#123456' },
+  );
+  assert.match(markup, /style="color:#123456"/);
+});
 
 test('empty note peeks show a subdued italic placeholder', () => {
   const markup = render({
@@ -45,9 +61,7 @@ test('image entries use the existing compact file-row layout without a note peek
 
   assert.match(markup, /data-entry-kind="image"/);
   assert.match(markup, /aria-label="Preview image photo\.png"/);
-  assert.match(markup, /min-h-10 w-full flex-col justify-center p-1\.5/);
-  assert.match(markup, /file-tree-icon flex h-3\.5 w-3\.5/);
-  assert.match(markup, /file-tree-label truncate/);
+  assert.match(markup, /file-tree-label[^>]*>photo\.png<\/span>/);
   assert.match(markup, /photo\.png/);
   assert.doesNotMatch(markup, />IMG</);
   assert.doesNotMatch(markup, /must not render as a note peek/);

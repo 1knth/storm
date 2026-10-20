@@ -332,6 +332,19 @@ export class AgentDocumentController {
     }
   }
 
+  resetFinished(key: string): boolean {
+    const document = this.documents.get(key);
+    if (!document || document.closed) {
+      this.documents.delete(key);
+      return true;
+    }
+    if (document.status !== 'finished' || document.dirty || document.inFlight)
+      return false;
+    document.closed = true;
+    this.documents.delete(key);
+    return true;
+  }
+
   get(key: string): AgentDocument | undefined {
     return this.documents.get(key);
   }
