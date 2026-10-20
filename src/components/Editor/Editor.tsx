@@ -204,17 +204,65 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     },
     [],
   );
-  const previousWriting = useRef(false);
-  const writingBaseline = useRef<{
-    documentKey: string;
-    markdown: string;
-  } | null>(null);
-  const [appendReveal, setAppendReveal] = useState<{
-    documentKey: string;
-    markdown: string;
-    startLine: number;
-    id: string;
-  } | null>(null);
+  const documentKey = current.current
+    ? JSON.stringify([current.current.vaultId, current.current.note.path])
+    : null;
+  const previousWriting = useRef(new Map<string, boolean>());
+  const writingBaseline = useRef(new Map<string, string>());
+  const [appendReveals, setAppendReveals] = useState(
+    () =>
+      new Map<
+        string,
+        {
+          documentKey: string;
+          markdown: string;
+          startLine: number;
+          id: string;
+        }
+      >(),
+  );
+  const appendReveal = documentKey
+    ? (appendReveals.get(documentKey) ?? null)
+    : null;
+  const setAppendReveal = useCallback(
+    (
+      value:
+        | {
+            documentKey: string;
+            markdown: string;
+            startLine: number;
+            id: string;
+          }
+        | null
+        | ((
+            current: {
+              documentKey: string;
+              markdown: string;
+              startLine: number;
+              id: string;
+            } | null,
+          ) => {
+            documentKey: string;
+            markdown: string;
+            startLine: number;
+            id: string;
+          } | null),
+    ) => {
+      const key = documentKey;
+      if (!key) return;
+      setAppendReveals((previous) => {
+        const next =
+          typeof value === 'function'
+            ? value(previous.get(key) ?? null)
+            : value;
+        const updated = new Map(previous);
+        if (next) updated.set(key, next);
+        else updated.delete(key);
+        return updated;
+      });
+    },
+    [documentKey],
+  );
   const revealReceipts = useRef(
     new Map<
       number,
@@ -227,6 +275,15 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   );
   const [revealProgressVersion, setRevealProgressVersion] = useState(0);
   const revealId = useRef(0);
+  const revealSessions = useRef(
+    new Map<
+      string,
+      {
+        identity: string | undefined;
+        registry: ReturnType<typeof createRevealScheduleRegistry>;
+      }
+    >(),
+  );
   const revealSession = useRef<{
     identity: string | undefined;
     registry: ReturnType<typeof createRevealScheduleRegistry>;
@@ -272,10 +329,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     Set<string>
   >(() => new Set());
   const seenAgentSessionsByNote = useRef(new Map<string, Set<string>>());
-  const activeNoteKey = current.current
-    ? JSON.stringify([current.current.vaultId, current.current.note.path])
-    : null;
-  const documentKey = activeNoteKey;
+  const activeNoteKey = documentKey;
   const currentRevealIdentity = appendReveal
     ? JSON.stringify([appendReveal.documentKey, appendReveal.id])
     : undefined;
@@ -286,25 +340,26 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   useEffect(() => {
     const writing = Boolean(agentWriting);
     const activeMarkdown = preview?.markdown;
-    if (documentKey !== writingBaseline.current?.documentKey) {
-      writingBaseline.current = null;
-      setAppendReveal(null);
-    }
-    if (writing && !previousWriting.current) {
-      const alreadyCapturedByManagedSync =
-        writingBaseline.current?.documentKey === documentKey;
-      if (!alreadyCapturedByManagedSync) {
-        writingBaseline.current =
-          documentKey && activeMarkdown !== undefined
-            ? acquireWritingBaseline(
-                writingBaseline.current,
-                documentKey,
-                activeMarkdown,
-              )
-            : null;
+    const currentBaseline = documentKey
+      ? writingBaseline.current.get(documentKey)
+      : undefined;
+    const wasWriting = documentKey
+      ? (previousWriting.current.get(documentKey) ?? false)
+      : false;
+    if (writing && !wasWriting) {
+      if (currentBaseline === undefined) {
+        if (documentKey && activeMarkdown !== undefined) {
+          const acquired = acquireWritingBaseline(
+            null,
+            documentKey,
+            activeMarkdown,
+          );
+          if (acquired)
+            writingBaseline.current.set(documentKey, acquired.markdown);
+        }
         setAppendReveal(null);
-      } else if (writingBaseline.current && activeMarkdown !== undefined) {
-        const baseline = writingBaseline.current;
+      } else if (documentKey && activeMarkdown !== undefined) {
+        const baseline = { documentKey, markdown: currentBaseline };
         const startLine = appendedContentStartLine(
           baseline.markdown,
           activeMarkdown,
@@ -323,10 +378,11 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       }
     } else if (
       writing &&
-      writingBaseline.current &&
+      documentKey &&
+      currentBaseline !== undefined &&
       activeMarkdown !== undefined
     ) {
-      const baseline = writingBaseline.current;
+      const baseline = { documentKey, markdown: currentBaseline };
       const startLine = appendedContentStartLine(
         baseline.markdown,
         activeMarkdown,
@@ -342,8 +398,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
               : String(++revealId.current),
         });
       }
-    } else if (!writing && writingBaseline.current) {
-      const baseline = writingBaseline.current;
+    } else if (!writing && documentKey && currentBaseline !== undefined) {
+      const baseline = { documentKey, markdown: currentBaseline };
       if (
         shouldFinalizeReveal(
           baseline.documentKey === documentKey,
@@ -369,16 +425,22 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         }
       }
     }
-    previousWriting.current = writing;
+    if (documentKey) previousWriting.current.set(documentKey, writing);
   }, [agentWriting, agentGenerationFinished, documentKey, preview?.markdown]);
   const agentStatusVisible = Boolean(
     activeNoteKey && agentStatusVisibleForNotes.has(activeNoteKey),
   );
   if (revealSession.current?.identity !== currentRevealIdentity) {
-    revealSession.current = {
-      identity: currentRevealIdentity,
-      registry: createRevealScheduleRegistry(),
-    };
+    const sessionKey = currentRevealIdentity ?? `document:${documentKey ?? ''}`;
+    let session = revealSessions.current.get(sessionKey);
+    if (!session) {
+      session = {
+        identity: currentRevealIdentity,
+        registry: createRevealScheduleRegistry(),
+      };
+      revealSessions.current.set(sessionKey, session);
+    }
+    revealSession.current = session;
   }
   useEffect(() => {
     if (
@@ -874,7 +936,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       };
       const managedWriting =
         (agentDocumentRef.current?.writing ?? agentWriting) ||
-        writingBaseline.current?.documentKey === activeNoteKey;
+        Boolean(activeNoteKey && writingBaseline.current.has(activeNoteKey));
       const currentPreview = previewSnapshot.current;
       const previewUnchanged =
         currentPreview?.vaultId === nextPreview.vaultId &&
@@ -882,14 +944,16 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         currentPreview.markdown === nextPreview.markdown;
       if (previewUnchanged) return true;
       if (managedWriting) {
-        if (!writingBaseline.current && activeNoteKey) {
+        if (activeNoteKey && !writingBaseline.current.has(activeNoteKey)) {
           const baseline = previewSnapshot.current;
           if (baseline?.vaultId === vaultId && baseline.notePath === path) {
-            writingBaseline.current = acquireWritingBaseline(
-              writingBaseline.current,
+            const acquired = acquireWritingBaseline(
+              null,
               activeNoteKey,
               baseline.markdown,
             );
+            if (acquired)
+              writingBaseline.current.set(activeNoteKey, acquired.markdown);
           }
         }
         managedPreviewBatch.current.schedule(nextPreview);

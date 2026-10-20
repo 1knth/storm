@@ -503,7 +503,7 @@ describe('generation-wide word reveal schedule', () => {
     );
   });
 
-  it('rebases overdue unmounted plans together at first render while preserving mounted timings', () => {
+  it('keeps absolute schedules unchanged when a preview remounts after tab switching', () => {
     const registry = createRevealScheduleRegistry();
     const plans = planRevealUnits(
       registry,
@@ -517,7 +517,9 @@ describe('generation-wide word reveal schedule', () => {
     const delays = plans.map(({ key }) => getRevealTiming(registry, key, 2000));
     assert.deepEqual(
       delays,
-      [16, 166, 316, 466, 616, 766, 916, 1066, 1216, 1366],
+      plans.map(({ scheduledAt }) =>
+        2000 - scheduledAt >= 100 ? 0 : scheduledAt - 2000,
+      ),
     );
     const retained = registry.words.get('word-0')!.scheduledAt;
     planRevealUnits(
@@ -530,7 +532,12 @@ describe('generation-wide word reveal schedule', () => {
     );
     assert.equal(getRevealTiming(registry, 'word-0', 3000), 0);
     assert.equal(registry.words.get('word-0')!.scheduledAt, retained);
-    assert.equal(getRevealTiming(registry, 'late', 3000), 516);
+    assert.equal(getRevealTiming(registry, 'late', 3000), 16);
+    assert.equal(registry.words.get('late')!.scheduledAt, 3016);
+    assert.deepEqual(
+      plans.map(({ key }) => registry.words.get(key)!.scheduledAt),
+      plans.map(({ scheduledAt }) => scheduledAt),
+    );
   });
 
   it('resets on cancellation/document generation reset', () => {
