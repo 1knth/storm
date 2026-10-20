@@ -399,6 +399,7 @@ registerVaultRegistryIpc(ipcMain, {
   hasWritableAgentSession: (vaultId) =>
     agentBroker.hasWritableSessionForVault(vaultId),
   withVaultLifecycle: runVaultLifecycleExclusive,
+  openPath: (directory) => shell.openPath(directory),
 });
 
 ipcMain.handle('vault:resolve-note-link', async (_event, request: unknown) => {

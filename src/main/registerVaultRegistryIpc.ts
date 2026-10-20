@@ -20,9 +20,16 @@ export function registerVaultRegistryIpc(
       root: string,
       operation: () => Promise<T>,
     ): Promise<T>;
+    openPath: (directory: string) => Promise<string>;
   },
 ): void {
   const { registry, service, writeBarrier } = dependencies;
+  ipc.handle('vault:open-directory', async () => {
+    const directory = service.getSelectedVaultPath();
+    if (!directory) throw new Error('No vault selected');
+    const error = await dependencies.openPath(directory);
+    if (error) throw new Error(error);
+  });
   ipc.handle('vault:registry-list', () => registry.list());
   ipc.handle('vault:groups-list', () => registry.listGroups());
   ipc.handle('vault:sidebar-move', (_event, value: unknown) => {

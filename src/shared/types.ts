@@ -141,6 +141,7 @@ declare global {
       cliInstalled: () => Promise<boolean>;
       enableCli: () => Promise<boolean>;
       disableCli: () => Promise<boolean>;
+      openDirectory: () => Promise<void>;
       registryList: () => Promise<{
         vaults: RegisteredVault[];
         activeVaultId: string | null;
