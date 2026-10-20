@@ -7,8 +7,8 @@ import {
   useRef,
   useState,
 } from 'react';
-import { AiOutlineFullscreen } from 'react-icons/ai';
-import { FaBrain } from 'react-icons/fa';
+import { MdOutlineHideImage, MdOutlineRemoveRedEye } from 'react-icons/md';
+import { RxLightningBolt } from 'react-icons/rx';
 import { markdown } from '@codemirror/lang-markdown';
 import { Vim, vim } from '@replit/codemirror-vim';
 import { Compartment, EditorState, Prec, Transaction } from '@codemirror/state';
@@ -1461,7 +1461,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 {tabs}
               </div>
             </div>
-            <div className="flex shrink-0 items-center justify-end gap-1">
+            <div className="flex shrink-0 items-center justify-end gap-0.5">
               {hasActiveNote && (
                 <>
                   <button
@@ -1475,9 +1475,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                       cancelScrollAnimations();
                       setPreviewVisible((visible) => !visible);
                     }}
-                    className="editor-action-button app-button relative inline-flex h-7 items-center justify-center gap-1.5 px-2 text-xs text-white/60"
+                    className={`editor-action-button app-icon-button relative ${previewVisible ? 'bg-white/10 !text-white' : ''}`}
                   >
-                    {previewVisible ? 'Hide preview' : 'Show preview'}
+                    <MdOutlineHideImage size={14} aria-hidden="true" />
                     <span
                       aria-hidden="true"
                       className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
@@ -1496,12 +1496,16 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                         ? 'Hide agent status'
                         : 'Show agent status'
                     }
-                    title="Toggle agent mode status"
+                    title={
+                      agentStatusVisible
+                        ? 'Hide agent status'
+                        : 'Show agent status'
+                    }
                     aria-pressed={agentStatusVisible}
                     onClick={toggleAgentStatusVisibility}
-                    className="editor-action-button app-icon-button"
+                    className={`editor-action-button app-icon-button ${agentStatusVisible ? 'bg-white/10 !text-white' : ''}`}
                   >
-                    <FaBrain size={12} aria-hidden="true" />
+                    <RxLightningBolt size={14} aria-hidden="true" />
                   </button>
                   <button
                     type="button"
@@ -1511,9 +1515,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     aria-pressed={readingMode}
                     title={`Toggle reading mode (${navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'})`}
                     onClick={onToggleReadingMode}
-                    className={`editor-action-button app-icon-button relative ${readingMode ? 'bg-white/10 text-white' : ''}`}
+                    className={`editor-action-button app-icon-button relative ${readingMode ? 'bg-white/10 !text-white' : ''}`}
                   >
-                    <AiOutlineFullscreen size={14} aria-hidden="true" />
+                    <MdOutlineRemoveRedEye size={14} aria-hidden="true" />
                     <span
                       aria-hidden="true"
                       className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-150 ${commandHeld ? 'opacity-100' : 'opacity-0'}`}
