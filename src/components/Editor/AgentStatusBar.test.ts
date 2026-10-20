@@ -69,15 +69,16 @@ test('manual visibility hides every status regardless of session state', () => {
   }
 });
 
-test('visual status override does not change backend stop behavior', () => {
+test('finished backend status remains Writing until preview reveal drains', () => {
   const html = renderToStaticMarkup(
     createElement(AgentStatusBar, {
       status: status('finished'),
-      visualStatus: 'Revealing…',
+      visualStatus: 'Writing',
     }),
   );
-  assert.match(html, /Revealing…/);
+  assert.match(html, />Writing</);
   assert.doesNotMatch(html, /Finished/);
+  assert.doesNotMatch(html, /Revealing/);
   assert.doesNotMatch(html, /Stop/);
 });
 

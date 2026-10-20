@@ -27,6 +27,7 @@ import {
   PREVIEW_REVEAL_CADENCE_MS,
   planRevealUnits,
   getRevealTiming,
+  isRevealComplete,
   wordSegments,
 } from './managedPreviewBatch';
 
@@ -209,11 +210,14 @@ type Props = {
   appearance: Appearance;
   revealStartLine?: number;
   revealId?: string;
+  previewRevision?: number;
+  revealRegistry?: ReturnType<typeof createRevealScheduleRegistry>;
   onRevealProgress?: (progress: {
     generationId: string;
     previewKey: number;
     pending: boolean;
     snapshot: string;
+    revision: number;
   }) => void;
 };
 
@@ -503,15 +507,16 @@ function RevealBlock({ sourceProps, children }: any) {
   const schedule = registry?.words.get(
     String(sourceProps?.['data-reveal-key']),
   );
-  const delay = useRef(
-    schedule && registry
-      ? getRevealTiming(
-          registry,
-          String(sourceProps?.['data-reveal-key']),
-          Date.now(),
-        )
-      : 0,
-  );
+  const timing = useRef<{ delay: number; complete: boolean } | null>(null);
+  if (timing.current === null && schedule && registry) {
+    const key = String(sourceProps?.['data-reveal-key']);
+    const now = Date.now();
+    timing.current = {
+      delay: getRevealTiming(registry, key, now),
+      complete: isRevealComplete(registry, key, now),
+    };
+  }
+  const delay = timing.current?.delay ?? 0;
   if (
     !context ||
     !registry ||
@@ -525,7 +530,11 @@ function RevealBlock({ sourceProps, children }: any) {
       {...sourceProps}
       data-preview-reveal-block=""
       className="markdown-block-reveal"
-      style={{ animationDelay: `${delay.current}ms` }}
+      style={
+        timing.current?.complete
+          ? { animation: 'none', opacity: 1 }
+          : { animationDelay: `${delay}ms` }
+      }
     >
       {children}
     </div>
@@ -535,13 +544,19 @@ function RevealBlock({ sourceProps, children }: any) {
 export function AnimatedRevealWord({ children, ...props }: any) {
   const registry = useContext(RevealRegistryContext);
   const key = props['data-reveal-key'];
-  const delay = useRef(
-    registry && typeof key === 'string'
-      ? getRevealTiming(registry, key, Date.now())
-      : 0,
-  );
+  const timing = useRef<{ delay: number; complete: boolean } | null>(null);
+  if (timing.current === null && registry && typeof key === 'string') {
+    const now = Date.now();
+    timing.current = {
+      delay: getRevealTiming(registry, key, now),
+      complete: isRevealComplete(registry, key, now),
+    };
+  }
+  const style = timing.current?.complete
+    ? { animation: 'none', opacity: 1 }
+    : { animationDelay: `${timing.current?.delay ?? 0}ms` };
   return (
-    <span {...props} style={{ animationDelay: `${delay.current}ms` }}>
+    <span {...props} style={style}>
       {children}
     </span>
   );
@@ -593,6 +608,8 @@ function MarkdownPreview({
   appearance,
   revealStartLine,
   revealId,
+  previewRevision,
+  revealRegistry,
   onRevealProgress,
 }: Props) {
   const viteEnv = (
@@ -670,7 +687,12 @@ function MarkdownPreview({
     id?: string;
     registry: ReturnType<typeof createRevealScheduleRegistry>;
   } | null>(null);
-  if (registryRef.current === null || registryRef.current.id !== revealId) {
+  if (revealRegistry) {
+    registryRef.current = { id: revealId, registry: revealRegistry };
+  } else if (
+    registryRef.current === null ||
+    registryRef.current.id !== revealId
+  ) {
     registryRef.current = {
       id: revealId,
       registry: createRevealScheduleRegistry(),
@@ -685,7 +707,7 @@ function MarkdownPreview({
   useEffect(() => {
     const root = diagnosticsRoot.current;
     if (!root || !onRevealProgress) return;
-    const previewKey = ++previewVersion.current;
+    const previewKey = previewRevision ?? ++previewVersion.current;
     const generationId = revealId ?? `preview-${previewKey}`;
     const units = [
       ...root.querySelectorAll<HTMLElement>(
@@ -712,6 +734,7 @@ function MarkdownPreview({
         previewKey,
         pending: isPending,
         snapshot: markdown,
+        revision: previewKey,
       });
     notify(pending.size > 0);
     const onAnimationFinished = (event: AnimationEvent) => {

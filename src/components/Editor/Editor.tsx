@@ -55,9 +55,13 @@ import {
   acquireWritingBaseline,
   appendedContentStartLine,
   createManagedPreviewBatch,
+  createRevealScheduleRegistry,
+  revealSessionIdentity,
   hasRecentPreviewScrollIntent,
   PREVIEW_SCROLL_INTENT_MS,
   shouldFinalizeReveal,
+  deriveFinalPreviewState,
+  shouldAutoOpenAgentStatus,
   shouldShowRevealingStatus,
 } from './managedPreviewBatch';
 import {
@@ -181,9 +185,25 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     vaultId: string;
     notePath: string;
     markdown: string;
+    previewRevision: number;
   } | null>(null);
+  const previewRevision = useRef(0);
   const previewSnapshot = useRef(preview);
-  previewSnapshot.current = preview;
+  const publishPreviewSnapshot = useCallback(
+    (next: { vaultId: string; notePath: string; markdown: string }) => {
+      const previous = previewSnapshot.current;
+      if (
+        previous?.vaultId === next.vaultId &&
+        previous.notePath === next.notePath &&
+        previous.markdown === next.markdown
+      )
+        return;
+      const snapshot = { ...next, previewRevision: ++previewRevision.current };
+      previewSnapshot.current = snapshot;
+      setPreview(snapshot);
+    },
+    [],
+  );
   const previousWriting = useRef(false);
   const writingBaseline = useRef<{
     documentKey: string;
@@ -195,15 +215,28 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     startLine: number;
     id: string;
   } | null>(null);
-  const [revealProgress, setRevealProgress] = useState<{
-    generationId: string;
-    previewKey: number;
-    snapshot: string;
-    pending: boolean;
-  } | null>(null);
+  const revealReceipts = useRef(
+    new Map<
+      number,
+      {
+        generationId: string;
+        previewKey: number;
+        pending: boolean;
+      }
+    >(),
+  );
+  const [revealProgressVersion, setRevealProgressVersion] = useState(0);
   const revealId = useRef(0);
+  const revealSession = useRef<{
+    identity: string | undefined;
+    registry: ReturnType<typeof createRevealScheduleRegistry>;
+  } | null>(null);
   const managedPreviewBatch = useRef(
-    createManagedPreviewBatch<NonNullable<typeof preview>>(setPreview),
+    createManagedPreviewBatch<{
+      vaultId: string;
+      notePath: string;
+      markdown: string;
+    }>(publishPreviewSnapshot),
   );
   const [hasActiveNote, setHasActiveNote] = useState(false);
   const previousReadingMode = useRef(readingMode);
@@ -238,10 +271,18 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const [agentStatusVisibleForNotes, setAgentStatusVisibleForNotes] = useState<
     Set<string>
   >(() => new Set());
+  const seenAgentSessionsByNote = useRef(new Map<string, Set<string>>());
   const activeNoteKey = current.current
     ? JSON.stringify([current.current.vaultId, current.current.note.path])
     : null;
   const documentKey = activeNoteKey;
+  const currentRevealIdentity = appendReveal
+    ? JSON.stringify([appendReveal.documentKey, appendReveal.id])
+    : undefined;
+  const currentRevealIdentityRef = useRef(currentRevealIdentity);
+  currentRevealIdentityRef.current = currentRevealIdentity;
+  const currentDocumentKeyRef = useRef(documentKey);
+  currentDocumentKeyRef.current = documentKey;
   useEffect(() => {
     const writing = Boolean(agentWriting);
     const activeMarkdown = preview?.markdown;
@@ -333,37 +374,90 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const agentStatusVisible = Boolean(
     activeNoteKey && agentStatusVisibleForNotes.has(activeNoteKey),
   );
+  if (revealSession.current?.identity !== currentRevealIdentity) {
+    revealSession.current = {
+      identity: currentRevealIdentity,
+      registry: createRevealScheduleRegistry(),
+    };
+  }
+  useEffect(() => {
+    if (
+      !activeNoteKey ||
+      !agentStatus ||
+      !['connected', 'writing'].includes(agentStatus.state)
+    )
+      return;
+    let seen = seenAgentSessionsByNote.current.get(activeNoteKey);
+    if (!seen) {
+      seen = new Set();
+      seenAgentSessionsByNote.current.set(activeNoteKey, seen);
+    }
+    if (
+      !shouldAutoOpenAgentStatus(agentStatus.sessionId, agentStatus.state, seen)
+    )
+      return;
+    setAgentStatusVisibleForNotes((visibleNotes) =>
+      new Set(visibleNotes).add(activeNoteKey),
+    );
+  }, [activeNoteKey, agentStatus?.sessionId, agentStatus?.state]);
   const onRevealProgress = useCallback(
     (progress: {
       generationId: string;
       previewKey: number;
       pending: boolean;
       snapshot: string;
+      revision: number;
     }) => {
-      setRevealProgress((currentProgress) => {
-        if (
-          currentProgress?.generationId === progress.generationId &&
-          currentProgress.previewKey > progress.previewKey
-        )
-          return currentProgress;
-        return progress;
-      });
+      if (
+        progress.generationId !== currentRevealIdentityRef.current ||
+        JSON.parse(progress.generationId)[0] !== currentDocumentKeyRef.current
+      )
+        return;
+      const receipt = {
+        generationId: progress.generationId,
+        previewKey: progress.revision,
+        pending: progress.pending,
+      };
+      const previous = revealReceipts.current.get(progress.revision);
+      revealReceipts.current.set(progress.revision, receipt);
+      if (
+        !previous ||
+        previous.pending !== receipt.pending ||
+        previous.generationId !== receipt.generationId
+      )
+        setRevealProgressVersion((version) => version + 1);
     },
     [],
   );
-  const finalRevealDrained = Boolean(
-    appendReveal &&
-    revealProgress?.generationId === appendReveal.id &&
-    revealProgress.snapshot === appendReveal.markdown &&
-    !revealProgress.pending,
-  );
+  const publishedPreview = previewSnapshot.current;
+  const editorDocument = viewRef.current?.state.doc.toString();
+  const finalRevealDrained = deriveFinalPreviewState({
+    activeDocumentKey: documentKey,
+    latestAcceptedMarkdown: editorDocument,
+    publishedSnapshot: publishedPreview
+      ? {
+          docKey: JSON.stringify([
+            publishedPreview.vaultId,
+            publishedPreview.notePath,
+          ]),
+          markdown: publishedPreview.markdown,
+          previewRevision: publishedPreview.previewRevision,
+        }
+      : null,
+    batchPending: managedPreviewBatch.current.hasPending,
+    generationKey: appendReveal
+      ? revealSessionIdentity(appendReveal.documentKey, appendReveal.id)
+      : '',
+    receiptsMap: revealReceipts.current,
+  });
+  void revealProgressVersion;
   const statusVisualOverride = shouldShowRevealingStatus(
     agentGenerationFinished,
     agentWriting,
     Boolean(appendReveal && appendReveal.documentKey === documentKey),
     finalRevealDrained,
   )
-    ? 'Revealing…'
+    ? 'Writing'
     : undefined;
   const toggleAgentStatusVisibility = () => {
     if (!activeNoteKey) return;
@@ -743,7 +837,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     blocked.current = false;
     view.setState(tab.state);
     binding.current = { view, generation: generation.current };
-    setPreview({
+    publishPreviewSnapshot({
       vaultId: tab.vaultId,
       notePath: tab.note.path,
       markdown: tab.state.doc.toString(),
@@ -837,6 +931,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         blocked.current = false;
         revision.current = null;
         setHasActiveNote(false);
+        previewSnapshot.current = null;
         setPreview(null);
         viewRef.current?.setState(
           EditorState.create({
@@ -917,6 +1012,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           extensions: [...extensions.current, EditorState.readOnly.of(true)],
         }),
       );
+      previewSnapshot.current = null;
       setPreview(null);
       view.dispatch({
         effects: vimCompartment.current.reconfigure(vimMode ? vim() : []),
@@ -1138,7 +1234,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         }
         if (!update.docChanged) return;
         if (active) {
-          setPreview({
+          publishPreviewSnapshot({
             vaultId: active.vaultId,
             notePath: active.note.path,
             markdown: update.state.doc.toString(),
@@ -1406,6 +1502,19 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     onReadingKeyDown={onReadingKeyDown}
                     appearance={appearance}
                     compact
+                    previewRevision={preview?.previewRevision}
+                    revealStartLine={
+                      appendReveal?.documentKey === documentKey
+                        ? appendReveal.startLine
+                        : undefined
+                    }
+                    revealId={
+                      appendReveal?.documentKey === documentKey
+                        ? currentRevealIdentity
+                        : undefined
+                    }
+                    revealRegistry={revealSession.current?.registry}
+                    onRevealProgress={onRevealProgress}
                   />
                 </div>
               )}
@@ -1433,6 +1542,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 onScrollIntent={markPreviewScrollIntent}
                 onUserScroll={cancelScrollAnimations}
                 appearance={appearance}
+                previewRevision={preview?.previewRevision}
                 revealStartLine={
                   appendReveal?.documentKey === documentKey
                     ? appendReveal.startLine
@@ -1440,9 +1550,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 }
                 revealId={
                   appendReveal?.documentKey === documentKey
-                    ? appendReveal.id
+                    ? currentRevealIdentity
                     : undefined
                 }
+                revealRegistry={revealSession.current?.registry}
                 onRevealProgress={onRevealProgress}
               />
             ) : !hasActiveNote && !imageAsset ? (
