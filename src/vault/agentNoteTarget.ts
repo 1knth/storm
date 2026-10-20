@@ -22,6 +22,7 @@ export type AgentNoteTargetErrorCode =
   | 'PATH_OUTSIDE_VAULT'
   | 'UNREGISTERED_VAULT'
   | 'MISSING_PARENT'
+  | 'MISSING_NOTE'
   | 'NOT_A_DIRECTORY'
   | 'NOT_A_REGULAR_NOTE'
   | 'READ_ONLY';
@@ -40,6 +41,22 @@ export class AgentNoteTargetError extends Error {
 export async function resolveAgentNoteTarget(
   absolutePath: string,
   registeredVaults: readonly AgentRegisteredVault[],
+): Promise<AgentNoteTarget> {
+  return resolveAgentNoteTargetWithMode(absolutePath, registeredVaults, true);
+}
+
+/** Resolve an existing note without creating the note or any parent directories. */
+export async function resolveExistingAgentNoteTarget(
+  absolutePath: string,
+  registeredVaults: readonly AgentRegisteredVault[],
+): Promise<AgentNoteTarget> {
+  return resolveAgentNoteTargetWithMode(absolutePath, registeredVaults, false);
+}
+
+async function resolveAgentNoteTargetWithMode(
+  absolutePath: string,
+  registeredVaults: readonly AgentRegisteredVault[],
+  createMissing: boolean,
 ): Promise<AgentNoteTarget> {
   if (typeof absolutePath !== 'string' || !path.isAbsolute(absolutePath)) {
     throw new AgentNoteTargetError(
@@ -153,6 +170,9 @@ export async function resolveAgentNoteTarget(
           'Note cannot be read or created',
         );
       throw error;
+    }
+    if (!createMissing) {
+      throw new AgentNoteTargetError('MISSING_NOTE', 'Note does not exist');
     }
     try {
       const handle = await open(canonicalTarget, 'wx', 0o666);

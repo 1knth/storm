@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   resolveAgentNoteTarget,
+  resolveExistingAgentNoteTarget,
   AgentNoteTargetError,
 } from './agentNoteTarget';
 
@@ -36,6 +37,43 @@ async function fixture() {
   ];
   return { base, school, nested, vaults };
 }
+
+describe('resolveExistingAgentNoteTarget', () => {
+  test('returns an existing target identity without changing its contents', async () => {
+    const { school, vaults } = await fixture();
+    const filename = path.join(school, 'existing.md');
+    await writeFile(filename, 'keep this');
+    const result = await resolveExistingAgentNoteTarget(filename, vaults);
+    assert.equal(
+      result.absolutePath,
+      path.join(await realpath(school), 'existing.md'),
+    );
+    assert.equal(result.vaultId, 'school');
+    assert.equal(result.content, 'keep this');
+  });
+
+  test('missing target fails without creating the note or parent directories', async () => {
+    const { school, vaults } = await fixture();
+    const filename = path.join(school, 'missing', 'note.md');
+    await assert.rejects(resolveExistingAgentNoteTarget(filename, vaults), {
+      code: 'MISSING_PARENT',
+    });
+    assert.equal(await readFile(filename).catch(() => null), null);
+    assert.equal(
+      await readFile(path.dirname(filename)).catch(() => null),
+      null,
+    );
+  });
+
+  test('missing note fails without creating it', async () => {
+    const { school, vaults } = await fixture();
+    const filename = path.join(school, 'missing.md');
+    await assert.rejects(resolveExistingAgentNoteTarget(filename, vaults), {
+      code: 'MISSING_NOTE',
+    });
+    assert.equal(await readFile(filename).catch(() => null), null);
+  });
+});
 
 describe('resolveAgentNoteTarget', () => {
   test('creates empty markdown under most-specific registered root without clobbering', async () => {

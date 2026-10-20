@@ -4,6 +4,180 @@ import { EditorState } from '@codemirror/state';
 import { AgentDocumentController } from './agentDocumentController';
 
 describe('AgentDocumentController', () => {
+  it('previews exact original-snapshot replacements, rejects invalid plans, and applies atomically', async () => {
+    const saved: string[] = [];
+    const controller = new AgentDocumentController(async ({ content }) => {
+      saved.push(content);
+      return { revision: 'r2' };
+    });
+    const document = controller.attach(
+      'edit',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'A🙂 B A' }),
+      'r1',
+    );
+    assert.deepEqual(
+      controller.previewEdit(document, 0, {
+        type: 'replaceText',
+        replacements: [
+          { find: '🙂', replace: 'é\n' },
+          { find: 'B', replace: '' },
+        ],
+      }),
+      { content: 'Aé\n  A', changed: true },
+    );
+    for (const plan of [
+      {
+        type: 'replaceText' as const,
+        replacements: [{ find: 'missing', replace: '' }],
+      },
+      {
+        type: 'replaceText' as const,
+        replacements: [{ find: 'A', replace: '' }],
+      },
+      {
+        type: 'replaceText' as const,
+        replacements: [
+          { find: '🙂 B', replace: '' },
+          { find: 'B A', replace: '' },
+        ],
+      },
+    ])
+      assert.throws(() => controller.previewEdit(document, 0, plan));
+    assert.equal(document.state.doc.toString(), 'A🙂 B A');
+    const result = await controller.applyEdit(document, 0, {
+      type: 'replace',
+      content: '',
+    });
+    assert.equal(result.content, '');
+    assert.deepEqual(saved, ['']);
+    assert.equal(document.acceptedVersion, 1);
+  });
+
+  it('acknowledges a clean no-op against the attached revision and content', async () => {
+    let calls = 0;
+    const controller = new AgentDocumentController(async () => {
+      calls++;
+      return { revision: 'unexpected' };
+    });
+    const document = controller.attach(
+      'doc',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'same' }),
+      'r1',
+    );
+    assert.deepEqual(
+      await controller.applyEdit(document, 0, {
+        type: 'replace',
+        content: 'same',
+      }),
+      {
+        version: 0,
+        content: 'same',
+      },
+    );
+    assert.equal(document.revision, 'r1');
+    assert.equal(document.persistedContent, 'same');
+    assert.equal(calls, 0);
+  });
+
+  it('does not acknowledge a no-op edit until pre-existing dirty content is persisted', async () => {
+    let resolveSave!: (value: { revision: string }) => void;
+    const controller = new AgentDocumentController(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const document = controller.attach(
+      'doc',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'same' }),
+      'r1',
+    );
+    controller.updateFromEditor('doc', EditorState.create({ doc: 'same' }));
+    const applying = controller.applyEdit(document, 1, {
+      type: 'replace',
+      content: 'same',
+    });
+    await Promise.resolve();
+    let acknowledged = false;
+    void applying.then(() => {
+      acknowledged = true;
+    });
+    await Promise.resolve();
+    assert.equal(acknowledged, false);
+    resolveSave({ revision: 'r2' });
+    assert.deepEqual(await applying, { version: 1, content: 'same' });
+  });
+
+  it('rejects an edit acknowledgment if a human edit arrives during its save', async () => {
+    let resolveSave!: (value: { revision: string }) => void;
+    let calls = 0;
+    const controller = new AgentDocumentController(() => {
+      calls++;
+      if (calls > 1) return Promise.resolve({ revision: 'r3' });
+      return new Promise((resolve) => {
+        resolveSave = resolve;
+      });
+    });
+    const document = controller.attach(
+      'doc',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'old' }),
+      'r1',
+    );
+    const applying = controller.applyEdit(document, 0, {
+      type: 'replace',
+      content: 'agent',
+    });
+    await Promise.resolve();
+    controller.updateFromEditor(
+      'doc',
+      EditorState.create({ doc: 'human edit' }),
+    );
+    resolveSave({ revision: 'r2' });
+    await assert.rejects(applying, /changed while saving/);
+    assert.equal(document.state.doc.toString(), 'human edit');
+    assert.equal(document.persistedContent, 'human edit');
+    assert.equal(document.dirty, false);
+  });
+
+  it('guards against human unsaved edits and reports save failures without partial target changes', async () => {
+    const controller = new AgentDocumentController(async () => {
+      throw new Error('save failed');
+    });
+    const document = controller.attach(
+      'edit',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'old' }),
+      'disk-r1',
+    );
+    controller.updateFromEditor(
+      'edit',
+      EditorState.create({ doc: 'human unsaved' }),
+    );
+    assert.throws(
+      () =>
+        controller.previewEdit(document, 0, {
+          type: 'replace',
+          content: 'new',
+        }),
+      /Stale/,
+    );
+    await assert.rejects(
+      controller.applyEdit(document, 1, { type: 'replace', content: 'new' }),
+      /save failed/,
+    );
+    assert.equal(document.state.doc.toString(), 'new');
+    assert.equal(document.dirty, true);
+  });
+
   it('keeps per-document state isolated across background appends', async () => {
     const controller = new AgentDocumentController();
     const first = controller.attach(
@@ -34,7 +208,7 @@ describe('AgentDocumentController', () => {
     controller.publishHumanTransaction(document, checkbox);
     await controller.append(document, '\nagent text');
     assert.equal(document.state.doc.toString(), '- [x] task\nagent text');
-    assert.equal(document.acceptedVersion, 1);
+    assert.equal(document.acceptedVersion, 2);
   });
 
   it('applies appends to a background document without disturbing another active buffer', async () => {

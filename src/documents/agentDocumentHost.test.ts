@@ -8,6 +8,7 @@ describe('agent document host', () => {
     const published: string[] = [];
     const statuses: string[] = [];
     const host = createAgentDocumentHost({
+      lookupDocument: () => undefined,
       openDocument: async ({ absolutePath }) => ({
         key: 'vault:notes/a.md',
         vaultId: 'vault',
@@ -35,6 +36,7 @@ describe('agent document host', () => {
       flush: async () => true,
     };
     const options = {
+      lookupDocument: () => undefined,
       openDocument: async () => ({
         key: 'vault:notes/a.md',
         vaultId: 'vault',
@@ -62,6 +64,77 @@ describe('agent document host', () => {
       closeCaller.getAdapterFor('vault', 'notes/ordinary.md'),
       undefined,
     );
+    host.dispose();
+  });
+
+  it('inspects only an already-open document without creating a session or saving', async () => {
+    const document = {
+      key: 'vault:notes/a.md',
+      vaultId: 'vault',
+      absolutePath: '/vault/notes/a.md',
+      vaultPath: '/vault',
+      path: 'notes/a.md',
+      state: EditorState.create({ doc: 'unsaved live text' }),
+      revision: 'r1',
+    };
+    let opened = 0;
+    let saved = 0;
+    const host = createAgentDocumentHost({
+      lookupDocument: () => document,
+      openDocument: async () => {
+        opened++;
+        return document;
+      },
+      publishDocument: () => {},
+      publishStatus: () => {},
+      saveNote: async () => {
+        saved++;
+        return { revision: 'r2' };
+      },
+      getAdapterFor: () => undefined,
+    });
+    const result = await host.handleRequest({
+      type: 'inspect',
+      requestId: 'i',
+      vaultId: 'vault',
+      path: 'notes/a.md',
+      absolutePath: '/vault/notes/a.md',
+      vaultRoot: '/vault',
+      content: 'disk',
+      diskRevision: 'r0',
+    } as any);
+    assert.deepEqual(result, {
+      ok: true,
+      inspected: true,
+      open: true,
+      content: 'unsaved live text',
+      documentVersion: 0,
+      diskRevision: 'r1',
+      saveState: 'saved',
+    });
+    assert.equal(opened, 0);
+    assert.equal(saved, 0);
+    assert.equal(
+      host.controller.get('vault:notes/a.md')?.state.doc.toString(),
+      'unsaved live text',
+    );
+    host.dispose();
+  });
+
+  it('returns a closed-document marker without opening it', async () => {
+    const { host } = makeHost();
+    const result = await host.handleRequest({
+      type: 'inspect',
+      requestId: 'i',
+      vaultId: 'vault',
+      path: 'notes/a.md',
+      absolutePath: '/vault/notes/a.md',
+      vaultRoot: '/vault',
+      content: 'disk text',
+      diskRevision: 'r1',
+    } as any);
+    assert.deepEqual(result, { ok: true, inspected: true, open: false });
+    assert.equal(host.controller.get('vault:notes/a.md'), undefined);
     host.dispose();
   });
 

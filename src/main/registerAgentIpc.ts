@@ -195,6 +195,17 @@ function isResult(value: unknown): value is AgentBridgeResult {
     return (
       typeof result.code === 'string' && typeof result.message === 'string'
     );
+  if (result.ok === true && result.inspected === true)
+    return (
+      result.open === false ||
+      (result.open === true &&
+        typeof result.content === 'string' &&
+        Number.isSafeInteger(result.documentVersion) &&
+        typeof result.diskRevision === 'string' &&
+        (result.saveState === 'pending' ||
+          result.saveState === 'saved' ||
+          result.saveState === 'failed'))
+    );
   return (
     result.ok === true &&
     Number.isSafeInteger(result.documentVersion) &&

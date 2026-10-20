@@ -141,6 +141,27 @@ function App() {
 
   useEffect(() => {
     const host = createAgentDocumentHost({
+      lookupDocument: ({ vaultId, path }) => {
+        const tab = tabsRef.current.find(
+          (candidate) =>
+            candidate.kind === 'note' &&
+            candidate.vaultId === vaultId &&
+            candidate.note.path === path,
+        );
+        if (!tab || tab.kind !== 'note') return undefined;
+        const live = editorRef.current?.snapshot();
+        const snapshot =
+          live?.vaultId === vaultId && live.note.path === path ? live : tab;
+        return {
+          key: `${vaultId}:${path}`,
+          vaultId,
+          absolutePath: `${tab.vaultPath}/${path}`,
+          vaultPath: tab.vaultPath,
+          path,
+          state: snapshot.state,
+          revision: snapshot.note.revision,
+        };
+      },
       openDocument: async ({ absolutePath, vaultId, vaultRoot }) => {
         const relativePath = absolutePath
           .slice(vaultRoot.length)

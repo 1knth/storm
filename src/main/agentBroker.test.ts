@@ -6,6 +6,14 @@ import { runVaultLifecycleExclusive } from './vaultLifecycle';
 function setup() {
   const calls: AgentRendererRequest[] = [];
   const broker = new AgentBroker({
+    resolveExistingTarget: async (absolutePath) => ({
+      absolutePath,
+      vaultId: 'fixture',
+      vaultRoot: '/private/fixture',
+      relativePath: 'note.md',
+      content: 'disk text',
+      diskRevision: 'rev',
+    }),
     resolveTarget: async (absolutePath) => ({
       absolutePath,
       vaultId: 'fixture',
@@ -17,13 +25,37 @@ function setup() {
     renderer: {
       dispatch: async (request) => {
         calls.push(request);
-        return {
-          ok: true,
-          content: '',
-          documentVersion: calls.length,
-          diskRevision: 'rev',
-          saveState: 'saved',
-        };
+        if (request.type === 'inspect')
+          return {
+            ok: true,
+            inspected: true,
+            open: true,
+            content: 'live text',
+            documentVersion: 1,
+            diskRevision: 'rev',
+            saveState: 'saved',
+          };
+        if (request.type === 'snapshot')
+          return {
+            ok: true,
+            content: '',
+            documentVersion: calls.length,
+            diskRevision: 'rev',
+            saveState: 'saved',
+          };
+        if (request.type === 'append')
+          return {
+            ok: true,
+            documentVersion: calls.length,
+            diskRevision: 'rev',
+          };
+        if (request.type === 'finish' || request.type === 'cancel')
+          return {
+            ok: true,
+            documentVersion: calls.length,
+            diskRevision: 'rev',
+          };
+        return { ok: true, inspected: true, open: false };
       },
     },
   });
@@ -45,6 +77,268 @@ function deferred<T = void>() {
 }
 
 describe('AgentBroker', () => {
+  it('inspects existing notes without creating sessions and returns disk content when closed', async () => {
+    const { broker, calls } = setup();
+    const result = (await broker.handle(
+      req('inspect', { absolutePath: '/private/fixture/note.md' }),
+    )) as any;
+    assert.deepEqual(result, {
+      protocol: 1,
+      requestId: (result as any).requestId,
+      ok: true,
+      type: 'inspected',
+      open: true,
+      source: 'live',
+      content: 'live text',
+      documentVersion: 1,
+      diskRevision: 'rev',
+      saveState: 'saved',
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.type, 'inspect');
+    assert.equal(broker.hasWritableSessionForVault('fixture'), false);
+  });
+  it('maps preview and apply renderer actions and returns saved confirmation only after apply', async () => {
+    const calls: AgentRendererRequest[] = [];
+    const broker = new AgentBroker({
+      resolveTarget: async (absolutePath) => ({
+        absolutePath,
+        vaultId: 'v',
+        vaultRoot: '/v',
+        relativePath: 'n.md',
+        content: '',
+        diskRevision: 'r0',
+      }),
+      renderer: {
+        dispatch: async (request) => {
+          calls.push(request);
+          if (request.type === 'snapshot')
+            return { ok: true, documentVersion: 2, diskRevision: 'r0' };
+          if (request.type === 'edit-preview')
+            return {
+              ok: true,
+              preview: true,
+              content: 'draft',
+              changed: true,
+              documentVersion: 2,
+              diskRevision: 'r0',
+            };
+          if (request.type === 'edit-apply')
+            return {
+              ok: true,
+              edited: true,
+              content: 'saved',
+              documentVersion: 3,
+              diskRevision: 'r1',
+            };
+          return { ok: true, inspected: true, open: false };
+        },
+      },
+    });
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/v/n.md' }),
+    )) as any;
+    const sessionId = connected.session.sessionId;
+    const plan = { type: 'replace', content: 'saved' };
+    const preview = (await broker.handle(
+      req('edit-preview', {
+        sessionId,
+        expectedVersion: 2,
+        operationId: 'preview',
+        plan,
+      }),
+    )) as any;
+    const applied = (await broker.handle(
+      req('edit-apply', {
+        sessionId,
+        expectedVersion: 2,
+        operationId: 'apply',
+        plan,
+      }),
+    )) as any;
+    assert.equal(preview.type, 'preview');
+    assert.equal('saveState' in preview, false);
+    assert.equal(applied.type, 'edited');
+    assert.equal(applied.saveState, 'saved');
+    assert.deepEqual(
+      calls
+        .filter(
+          (call) => call.type === 'edit-preview' || call.type === 'edit-apply',
+        )
+        .map((call) =>
+          call.type === 'edit-preview' || call.type === 'edit-apply'
+            ? [call.type, call.expectedVersion, call.plan]
+            : null,
+        ),
+      [
+        ['edit-preview', 2, plan],
+        ['edit-apply', 2, plan],
+      ],
+    );
+  });
+
+  it('replays the original edit apply outcome for identical operation IDs and rejects changed payloads', async () => {
+    let applyCalls = 0;
+    const broker = new AgentBroker({
+      resolveTarget: async (absolutePath) => ({
+        absolutePath,
+        vaultId: 'v',
+        vaultRoot: '/v',
+        relativePath: 'n.md',
+        content: '',
+        diskRevision: 'r0',
+      }),
+      renderer: {
+        dispatch: async (request) => {
+          if (request.type === 'snapshot')
+            return { ok: true, documentVersion: 1, diskRevision: 'r0' };
+          if (request.type === 'edit-apply') {
+            applyCalls++;
+            return {
+              ok: true,
+              edited: true,
+              content: 'saved once',
+              documentVersion: 2,
+              diskRevision: 'r1',
+              saveState: 'saved',
+            };
+          }
+          return { ok: false, code: 'INTERNAL', message: 'unexpected request' };
+        },
+      },
+    });
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/v/n.md' }),
+    )) as any;
+    const sessionId = connected.session.sessionId;
+    const payload = {
+      sessionId,
+      operationId: 'once',
+      expectedVersion: 1,
+      plan: { type: 'replace', content: 'x' },
+    };
+    const first = (await broker.handle(req('edit-apply', payload))) as any;
+    const replay = (await broker.handle(req('edit-apply', payload))) as any;
+    const conflict = (await broker.handle(
+      req('edit-apply', {
+        ...payload,
+        plan: { type: 'replace', content: 'different' },
+      }),
+    )) as any;
+    assert.deepEqual({ ...replay, requestId: first.requestId }, first);
+    assert.equal(applyCalls, 1);
+    assert.equal(conflict.error.code, 'DUPLICATE_OPERATION');
+  });
+
+  it('returns stale and save errors without claiming an edit was saved', async () => {
+    for (const [message, code] of [
+      ['stale document version', 'STALE_VERSION'],
+      ['save failed', 'SAVE_FAILED'],
+    ] as const) {
+      const broker = new AgentBroker({
+        resolveTarget: async (absolutePath) => ({
+          absolutePath,
+          vaultId: 'v',
+          vaultRoot: '/v',
+          relativePath: 'n.md',
+          content: '',
+          diskRevision: 'r',
+        }),
+        renderer: {
+          dispatch: async (request) =>
+            request.type === 'snapshot'
+              ? { ok: true, documentVersion: 4, diskRevision: 'r' }
+              : { ok: false, code, message },
+        },
+      });
+      const connected = (await broker.handle(
+        req('connect', { absolutePath: '/v/n.md' }),
+      )) as any;
+      const response = (await broker.handle(
+        req('edit-apply', {
+          sessionId: connected.session.sessionId,
+          expectedVersion: 3,
+          operationId: 'edit',
+          plan: { type: 'replace', content: 'x' },
+        }),
+      )) as any;
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, code);
+      assert.equal('saveState' in response, false);
+    }
+  });
+
+  it('serializes concurrent edit requests through the renderer queue', async () => {
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const order: string[] = [];
+    const broker = new AgentBroker({
+      resolveTarget: async (absolutePath) => ({
+        absolutePath,
+        vaultId: 'v',
+        vaultRoot: '/v',
+        relativePath: 'n.md',
+        content: '',
+        diskRevision: 'r',
+      }),
+      renderer: {
+        dispatch: async (request) => {
+          if (request.type === 'snapshot')
+            return { ok: true, documentVersion: 1, diskRevision: 'r' };
+          if (request.type === 'edit-preview') {
+            order.push('first-start');
+            started.resolve();
+            await release.promise;
+            order.push('first-end');
+            return {
+              ok: true,
+              preview: true,
+              content: '',
+              changed: false,
+              documentVersion: 1,
+              diskRevision: 'r',
+            };
+          }
+          if (request.type === 'edit-apply') {
+            order.push('second');
+            return {
+              ok: true,
+              edited: true,
+              content: 'x',
+              documentVersion: 2,
+              diskRevision: 'r2',
+            };
+          }
+          return { ok: true, inspected: true, open: false };
+        },
+      },
+    });
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/v/n.md' }),
+    )) as any;
+    const sessionId = connected.session.sessionId;
+    const first = broker.handle(
+      req('edit-preview', {
+        sessionId,
+        expectedVersion: 1,
+        operationId: 'p',
+        plan: { type: 'replace', content: 'x' },
+      }),
+    );
+    await started.promise;
+    const second = broker.handle(
+      req('edit-apply', {
+        sessionId,
+        expectedVersion: 1,
+        operationId: 'a',
+        plan: { type: 'replace', content: 'x' },
+      }),
+    );
+    release.resolve();
+    await Promise.all([first, second]);
+    assert.deepEqual(order, ['first-start', 'first-end', 'second']);
+  });
+
   it('serializes connect snapshot against unload and rejects unload once session exists', async () => {
     const snapshot = deferred<void>();
     const started = deferred<void>();

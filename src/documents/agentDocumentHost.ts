@@ -28,6 +28,10 @@ export interface AgentDocumentHostOptions {
     vaultId: string;
     vaultRoot: string;
   }) => Promise<OpenAgentDocument>;
+  lookupDocument: (target: {
+    vaultId: string;
+    path: string;
+  }) => OpenAgentDocument | undefined;
   publishDocument: (document: AgentDocument) => void;
   publishStatus: (event: AgentBridgeStatusEvent) => void;
   saveNote: SaveNote;
@@ -50,10 +54,46 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
     }
   });
 
+  function lookupDocument(
+    vaultId: string,
+    path: string,
+  ): AgentDocument | undefined {
+    const opened = options.lookupDocument({ vaultId, path });
+    if (!opened) return undefined;
+    const document = controller.attach(
+      opened.key,
+      opened.vaultPath,
+      opened.path,
+      opened.state,
+      opened.revision,
+    );
+    document.vaultId = opened.vaultId;
+    document.absolutePath = opened.absolutePath;
+    return document;
+  }
+
   async function handleRequest(
     request: AgentBridgeRequest & { vaultId?: string; vaultRoot?: string },
   ): Promise<AgentBridgeResult> {
     try {
+      if (request.type === 'inspect') {
+        const document = lookupDocument(request.vaultId, request.path);
+        if (!document || document.closed)
+          return { ok: true, inspected: true, open: false };
+        return {
+          ok: true,
+          inspected: true,
+          open: true,
+          content: document.state.doc.toString(),
+          documentVersion: document.acceptedVersion,
+          diskRevision: document.revision,
+          saveState: document.saveError
+            ? 'failed'
+            : document.dirty || document.inFlight
+              ? 'pending'
+              : 'saved',
+        };
+      }
       if (request.type === 'snapshot') {
         const opened = await options.openDocument({
           absolutePath: request.absolutePath,
@@ -111,6 +151,35 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           code: 'SESSION_CLOSED',
           message: 'Session is not open',
         };
+      if (request.type === 'edit-preview') {
+        const preview = controller.previewEdit(
+          document,
+          request.expectedVersion,
+          request.plan,
+        );
+        return {
+          ok: true,
+          preview: true,
+          ...preview,
+          documentVersion: document.acceptedVersion,
+          diskRevision: document.revision,
+        };
+      }
+      if (request.type === 'edit-apply') {
+        const applied = await controller.applyEdit(
+          document,
+          request.expectedVersion,
+          request.plan,
+        );
+        return {
+          ok: true,
+          edited: true,
+          content: applied.content,
+          documentVersion: applied.version,
+          diskRevision: document.revision,
+          saveState: 'saved',
+        };
+      }
       if (request.type === 'finish') {
         controller.finish(document);
         const adapter = options.getAdapterFor(identity.vaultId, identity.path);
@@ -149,14 +218,15 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
         message: 'Unsupported renderer request',
       };
     } catch (error) {
-      return {
-        ok: false,
-        code:
-          error instanceof Error && /closed/i.test(error.message)
-            ? 'SESSION_CLOSED'
-            : 'SAVE_FAILED',
-        message: error instanceof Error ? error.message : String(error),
-      };
+      const message = error instanceof Error ? error.message : String(error);
+      const code = /closed/i.test(message)
+        ? 'SESSION_CLOSED'
+        : /stale document version/i.test(message)
+          ? 'STALE_VERSION'
+          : /find text|replacement targets overlap/i.test(message)
+            ? 'INVALID_EDIT'
+            : 'SAVE_FAILED';
+      return { ok: false, code, message };
     }
   }
 
@@ -174,6 +244,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
   return {
     controller,
     getAdapterFor: options.getAdapterFor,
+    lookupDocument,
     handleRequest,
     onCancelled,
     subscribe: controller.subscribe.bind(controller),

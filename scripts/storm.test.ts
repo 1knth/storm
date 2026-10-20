@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import {
@@ -440,6 +440,264 @@ test('CLI discovers installed app metadata and rejects ambiguous profile discove
   }
 });
 
+test('inspect sends a read-only request and prints the live-or-disk JSON response', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'storm-cli-inspect-'));
+  const requests: any[] = [];
+  const endpoint = await startAgentEndpoint({
+    userDataPath: directory,
+    broker: {
+      async handle(value: any) {
+        requests.push(value);
+        return {
+          protocol: 1,
+          requestId: value.requestId,
+          ok: true,
+          type: 'inspected',
+          open: true,
+          source: 'live',
+          content: 'unsaved editor text',
+          documentVersion: 7,
+          diskRevision: 'disk-r6',
+          saveState: 'pending',
+        };
+      },
+    },
+  });
+  try {
+    const output: string[] = [];
+    assert.equal(
+      await runCli(
+        [
+          '--endpoint',
+          endpoint.metadataPath,
+          'inspect',
+          '/vault/note.md',
+          '--json',
+        ],
+        { stdout: (text) => output.push(text), stderr: () => {} },
+      ),
+      0,
+    );
+    assert.equal(requests.length, 1);
+    assert.deepEqual(
+      { ...requests[0], requestId: undefined },
+      {
+        protocol: 1,
+        requestId: undefined,
+        type: 'inspect',
+        absolutePath: '/vault/note.md',
+      },
+    );
+    assert.equal(JSON.parse(output.join('')).content, 'unsaved editor text');
+    assert.match(output.join(''), /"documentVersion":7/);
+    assert.match(output.join(''), /"saveState":"pending"/);
+  } finally {
+    await endpoint.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('replace and patch CLI requests forward plans, versions, previews, and saved confirmations', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'storm-cli-edit-'));
+  const requests: any[] = [];
+  const endpoint = await startAgentEndpoint({
+    userDataPath: directory,
+    broker: {
+      async handle(value: any) {
+        requests.push(value);
+        const preview = value.type === 'edit-preview';
+        return {
+          protocol: 1,
+          requestId: value.requestId,
+          ok: true,
+          type: preview ? 'preview' : 'edited',
+          operationId: value.operationId,
+          content: preview ? 'preview text' : 'saved text',
+          changed: true,
+          documentVersion: 8,
+          diskRevision: 'rev-8',
+          ...(!preview ? { saveState: 'saved' } : {}),
+        };
+      },
+    },
+  });
+  try {
+    const invoke = async (args: string[], text: string) => {
+      const output: string[] = [];
+      const errors: string[] = [];
+      const code = await runCli(
+        ['--endpoint', endpoint.metadataPath, ...args],
+        {
+          stdin: Readable.from([text]),
+          stdout: (value) => output.push(value),
+          stderr: (value) => errors.push(value),
+        },
+      );
+      assert.equal(code, 0, errors.join(''));
+      return JSON.parse(output.join(''));
+    };
+    assert.equal(
+      (
+        await invoke(
+          [
+            'replace',
+            'session-a',
+            '--expected-version',
+            '7',
+            '--stdin',
+            '--json',
+          ],
+          'whole note',
+        )
+      ).saveState,
+      'saved',
+    );
+    assert.equal(
+      (
+        await invoke(
+          [
+            'replace',
+            'session-a',
+            '--expected-version',
+            '8',
+            '--stdin',
+            '--dry-run',
+            '--json',
+          ],
+          'draft',
+        )
+      ).type,
+      'preview',
+    );
+    assert.equal(
+      (
+        await invoke(
+          [
+            'patch',
+            'session-a',
+            '--expected-version',
+            '8',
+            '--stdin',
+            '--json',
+          ],
+          '[{"find":"old","replace":"new"}]',
+        )
+      ).type,
+      'edited',
+    );
+    assert.equal(
+      (
+        await invoke(
+          [
+            'patch',
+            'session-a',
+            '--expected-version',
+            '8',
+            '--stdin',
+            '--dry-run',
+            '--json',
+          ],
+          '[{"find":"a","replace":"b"}]',
+        )
+      ).type,
+      'preview',
+    );
+    assert.deepEqual(
+      requests.map(({ type, sessionId, expectedVersion, plan }) => ({
+        type,
+        sessionId,
+        expectedVersion,
+        plan,
+      })),
+      [
+        {
+          type: 'edit-apply',
+          sessionId: 'session-a',
+          expectedVersion: 7,
+          plan: { type: 'replace', content: 'whole note' },
+        },
+        {
+          type: 'edit-preview',
+          sessionId: 'session-a',
+          expectedVersion: 8,
+          plan: { type: 'replace', content: 'draft' },
+        },
+        {
+          type: 'edit-apply',
+          sessionId: 'session-a',
+          expectedVersion: 8,
+          plan: {
+            type: 'replaceText',
+            replacements: [{ find: 'old', replace: 'new' }],
+          },
+        },
+        {
+          type: 'edit-preview',
+          sessionId: 'session-a',
+          expectedVersion: 8,
+          plan: {
+            type: 'replaceText',
+            replacements: [{ find: 'a', replace: 'b' }],
+          },
+        },
+      ],
+    );
+  } finally {
+    await endpoint.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('replace and patch report broker save failures as failures, not saved output', async () => {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), 'storm-cli-edit-fail-'),
+  );
+  const endpoint = await startAgentEndpoint({
+    userDataPath: directory,
+    broker: {
+      async handle(value: any) {
+        return {
+          protocol: 1,
+          requestId: value.requestId,
+          ok: false,
+          error: { code: 'SAVE_FAILED', message: 'save failed' },
+        };
+      },
+    },
+  });
+  try {
+    for (const [command, text] of [
+      ['replace', 'new'],
+      ['patch', '[]'],
+    ] as const) {
+      const errors: string[] = [];
+      const code = await runCli(
+        [
+          '--endpoint',
+          endpoint.metadataPath,
+          command,
+          'session-a',
+          '--expected-version',
+          '1',
+          '--stdin',
+          '--json',
+        ],
+        {
+          stdin: Readable.from([text]),
+          stdout: () => {},
+          stderr: (value) => errors.push(value),
+        },
+      );
+      assert.equal(code, 1);
+      assert.match(errors.join(''), /SAVE_FAILED/);
+      assert.doesNotMatch(errors.join(''), /"saveState":"saved"/);
+    }
+  } finally {
+    await endpoint.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('status accepts the documented session plus --json spelling', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'storm-cli-status-'));
   const requests: any[] = [];
@@ -481,8 +739,12 @@ test('project-local Storm skill has portable frontmatter and resolves the CLI re
   const skillPath = new URL('../.pi/skills/storm/SKILL.md', import.meta.url);
   const content = await readFile(skillPath, 'utf8');
   assert.match(content, /^---\nname: storm\ndescription: .+\n---/);
-  assert.match(content, /storm --help/);
-  assert.match(content, /bun scripts\/storm\.ts --help/);
+  assert.match(content, /Read `storm --help`/);
+  assert.match(content, /Prefer the official installed `storm` CLI/);
+  assert.match(
+    content,
+    /development checkout where it is unavailable, use `bun scripts\/storm\.ts`/,
+  );
   assert.ok(existsSync(new URL('../../../scripts/storm.ts', skillPath)));
 });
 

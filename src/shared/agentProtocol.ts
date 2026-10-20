@@ -5,6 +5,12 @@ export const AGENT_PROTOCOL_VERSION = 1 as const;
 
 export type AgentSessionId = string;
 export type AgentOperationId = string;
+export type AgentEditPlan =
+  | { type: 'replace'; content: string }
+  | {
+      type: 'replaceText';
+      replacements: Array<{ find: string; replace: string }>;
+    };
 
 export type AgentRequest =
   | {
@@ -17,11 +23,26 @@ export type AgentRequest =
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
       requestId: string;
+      type: 'inspect';
+      absolutePath: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
       type: 'append';
       sessionId: AgentSessionId;
       operationId: AgentOperationId;
       sequence: number;
       text: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'edit-preview' | 'edit-apply';
+      sessionId: AgentSessionId;
+      operationId: AgentOperationId;
+      expectedVersion: number;
+      plan: AgentEditPlan;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
@@ -72,6 +93,28 @@ export type AgentResponse =
       protocol: typeof AGENT_PROTOCOL_VERSION;
       requestId: string;
       ok: true;
+      type: 'inspected';
+      open: false;
+      source: 'disk';
+      content: string;
+      diskRevision: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'inspected';
+      open: true;
+      source: 'live';
+      content: string;
+      documentVersion: number;
+      diskRevision: string;
+      saveState: 'pending' | 'saved' | 'failed';
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
       type: 'connected';
       session: AgentSessionStatus;
       content: string;
@@ -84,6 +127,28 @@ export type AgentResponse =
       operationId: AgentOperationId;
       documentVersion: number;
       saveState: 'pending' | 'saved' | 'failed';
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'preview';
+      operationId: AgentOperationId;
+      content: string;
+      changed: boolean;
+      documentVersion: number;
+      diskRevision: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'edited';
+      operationId: AgentOperationId;
+      content: string;
+      documentVersion: number;
+      diskRevision: string;
+      saveState: 'saved';
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
@@ -119,6 +184,8 @@ export type AgentProtocolErrorCode =
   | 'QUEUE_FULL'
   | 'OPERATION_TOO_LARGE'
   | 'DISK_CONFLICT'
+  | 'STALE_VERSION'
+  | 'INVALID_EDIT'
   | 'SAVE_FAILED'
   | 'INTERNAL';
 

@@ -4,22 +4,32 @@ Usage:
   bun scripts/storm.ts [--endpoint PATH | --profile NAME] <command> [arguments]
 
 Commands:
+  inspect ABS_PATH --json                 Read a note without opening or creating it
   connect ABS_PATH --json [--name NAME]  Open/create a vault note and return its session and content
   stream SESSION --stdin                 Append UTF-8 stdin; EOF finishes the session
+  replace SESSION --expected-version N --stdin [--dry-run] [--json] [--operation-id ID]
+  patch SESSION --expected-version N --stdin [--dry-run] [--json] [--operation-id ID]
   status [SESSION] [--json]              Show session state (or all sessions)
   finish SESSION                         Stop writing normally
   cancel SESSION                         Cancel writing; accepted edits remain
 
 Quick workflow:
+  bun scripts/storm.ts inspect "/absolute/vault/plan.md" --json
   bun scripts/storm.ts connect "/absolute/vault/plan.md" --json
   bun scripts/storm.ts stream SESSION_ID --stdin < draft.md
+  bun scripts/storm.ts replace SESSION_ID --expected-version 4 --stdin < new.md
+  bun scripts/storm.ts patch SESSION_ID --expected-version 4 --stdin < edits.json
   bun scripts/storm.ts status SESSION_ID --json
 
 The connect JSON response includes session.sessionId; use that as SESSION_ID. The CLI
 requires a running Storm app and a registered vault. It creates only a missing .md file
 whose parent already exists, and never replaces existing note contents. Stream appends
-only: it does not replace the document. Stdin EOF finishes automatically; do not call
-finish again. Status distinguishes accepted edits from saved edits via saveState/state.
+only. replace/patch perform guarded full or exact-text edits; --dry-run previews without
+mutation. Obtain live documentVersion from connect/status/inspect and pass it as
+--expected-version (not diskRevision). Apply waits for the app's saved response. Patch
+stdin is a JSON array of {"find":"...","replace":"..."} edits. The official CLI
+requires the running Storm app and never writes note files directly. Stdin EOF finishes
+stream automatically; do not call finish again.
 
 Options:
   -h, --help          Show this guide or command-specific help (works offline)
@@ -37,6 +47,15 @@ protocol errors go to stderr) and exits nonzero. Endpoint metadata contains a pr
 authentication token: do not disclose it. Use --help with any command for details.`;
 
 const commandHelp: Record<string, string> = {
+  inspect: `Usage: bun scripts/storm.ts [endpoint options] inspect ABS_PATH --json
+
+Read an existing .md note inside a registered Storm vault without opening a tab,
+creating a file, or starting a session. JSON reports whether content came from the
+live editor or disk. Live content includes documentVersion and saveState; disk content
+has diskRevision only. This is a read-only operation.
+
+Example:
+  bun scripts/storm.ts inspect "/vault/plan.md" --json`,
   connect: `Usage: bun scripts/storm.ts [endpoint options] connect ABS_PATH --json [--name NAME]
 
 Connect to one absolute .md path inside a registered Storm vault. Returns JSON with
@@ -46,6 +65,17 @@ never overwrites an existing note. --name is an optional self-reported agent lab
 
 Example:
   bun scripts/storm.ts connect "/vault/plan.md" --name "writer" --json`,
+  replace: `Usage: bun scripts/storm.ts [endpoint options] replace SESSION --expected-version N --stdin [--dry-run] [--json]
+
+Replace the live note from stdin. --dry-run previews; otherwise applies and waits for
+saved confirmation. Use live documentVersion from connect/status (or open-note inspect),
+not diskRevision. --operation-id enables bounded in-memory replay of an identical request.`,
+  patch: `Usage: bun scripts/storm.ts [endpoint options] patch SESSION --expected-version N --stdin [--dry-run] [--json]
+
+Stdin is a JSON array of exact-text edits: [{"find":"old","replace":"new"}].
+--dry-run previews; otherwise applies and waits for saved confirmation. Use live
+documentVersion from connect/status (or open-note inspect), not diskRevision.
+--operation-id enables bounded in-memory replay of an identical request.`,
   stream: `Usage: bun scripts/storm.ts [endpoint options] stream SESSION --stdin
 
 Append UTF-8 Markdown from stdin in order. EOF automatically finishes the session.
