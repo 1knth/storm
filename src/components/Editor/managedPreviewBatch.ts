@@ -1,5 +1,112 @@
 export type WordSegment = { text: string; offset: number; animate: boolean };
 
+export type RevealProgress = {
+  generationId: string;
+  previewKey: number;
+  pending: boolean;
+};
+
+export type FinalPreviewStateInput = {
+  activeDocumentKey: string | null;
+  latestAcceptedMarkdown: string | undefined;
+  publishedSnapshot: {
+    docKey: string;
+    markdown: string;
+    previewRevision: number;
+  } | null;
+  batchPending: boolean;
+  generationKey: string;
+  receiptsMap: ReadonlyMap<number, RevealProgress>;
+};
+
+/** Derive the actual editor barrier from its accepted source and published snapshot. */
+export function deriveFinalPreviewState({
+  activeDocumentKey,
+  latestAcceptedMarkdown,
+  publishedSnapshot,
+  batchPending,
+  generationKey,
+  receiptsMap,
+}: FinalPreviewStateInput): boolean {
+  const sourceMatchesPublished = Boolean(
+    activeDocumentKey !== null &&
+    publishedSnapshot?.docKey === activeDocumentKey &&
+    latestAcceptedMarkdown !== undefined &&
+    publishedSnapshot.markdown === latestAcceptedMarkdown,
+  );
+  const requiredRevision =
+    sourceMatchesPublished && !batchPending
+      ? publishedSnapshot?.previewRevision
+      : undefined;
+  return isFinalPreviewDrained({
+    requiredRevision,
+    latestPublishedRevision: publishedSnapshot?.previewRevision ?? 0,
+    requiredGenerationId: generationKey,
+    progressReceipt:
+      requiredRevision === undefined
+        ? null
+        : (receiptsMap.get(requiredRevision) ?? null),
+  });
+}
+
+export function isFinalPreviewDrained({
+  requiredRevision,
+  latestPublishedRevision,
+  requiredGenerationId,
+  progressReceipt,
+}: {
+  requiredRevision: number | null | undefined;
+  latestPublishedRevision: number;
+  requiredGenerationId: string;
+  progressReceipt: RevealProgress | null;
+}): boolean {
+  return Boolean(
+    requiredRevision !== null &&
+    latestPublishedRevision === requiredRevision &&
+    progressReceipt?.previewKey === requiredRevision &&
+    progressReceipt.generationId === requiredGenerationId &&
+    !progressReceipt.pending,
+  );
+}
+
+export type RevealProgressState = {
+  generationId: string;
+  previewKey: number;
+  pendingKeys: Set<string>;
+};
+
+export function shouldShowRevealingStatus(
+  isFinished: boolean,
+  isWriting: boolean,
+  hasFinalAppend: boolean,
+  finalRevealDrained: boolean,
+): boolean {
+  return isFinished && !isWriting && hasFinalAppend && !finalRevealDrained;
+}
+
+export function createRevealProgressState(
+  generationId: string,
+  previewKey: number,
+  keys: readonly string[],
+  reducedMotion: boolean,
+): RevealProgressState {
+  return {
+    generationId,
+    previewKey,
+    pendingKeys: reducedMotion ? new Set() : new Set(keys),
+  };
+}
+
+export function completeRevealProgressUnit(
+  state: RevealProgressState,
+  generationId: string,
+  key: string,
+): boolean | null {
+  if (state.generationId !== generationId || !state.pendingKeys.delete(key))
+    return null;
+  return state.pendingKeys.size > 0;
+}
+
 export const PREVIEW_SCROLL_INTENT_MS = 450;
 export const PREVIEW_REVEAL_CADENCE_MS = 150;
 export const PREVIEW_REVEAL_FRAME_PADDING_MS = 16;
@@ -30,6 +137,27 @@ export type RevealUnitDescriptor = {
   paragraphKey?: string;
 };
 export type PlannedRevealUnit = RevealUnitDescriptor & RevealSchedule;
+export function revealSessionIdentity(
+  documentKey: string,
+  generationId: string,
+): string {
+  return JSON.stringify([documentKey, generationId]);
+}
+
+export function shouldAutoOpenAgentStatus(
+  sessionId: string,
+  state: string,
+  seenSessionIds: Set<string>,
+): boolean {
+  if (
+    !['connected', 'writing'].includes(state) ||
+    seenSessionIds.has(sessionId)
+  )
+    return false;
+  seenSessionIds.add(sessionId);
+  return true;
+}
+
 export type RevealScheduleRegistry = {
   startedAt: number | null;
   nextOrdinal: number;
@@ -147,7 +275,7 @@ export function scheduleRevealBlock(
   return scheduleRevealWords(registry, [key], now, cadence)[0];
 }
 
-/** Resolve once from the shared registry at first component render; mounted units never move. */
+/** Resolve a unit's CSS delay against its shared absolute schedule. */
 export function getRevealTiming(
   registry: RevealScheduleRegistry,
   key: string,
@@ -174,7 +302,19 @@ export function getRevealTiming(
     }
     schedule.mounted = true;
   }
-  return Math.max(0, schedule.scheduledAt - now);
+  const elapsed = now - schedule.scheduledAt;
+  if (elapsed >= 100) return 0;
+  return -elapsed;
+}
+
+export function isRevealComplete(
+  registry: RevealScheduleRegistry,
+  key: string,
+  now: number,
+  duration = 100,
+): boolean {
+  const schedule = registry.words.get(key);
+  return schedule !== undefined && now >= schedule.scheduledAt + duration;
 }
 
 /** Whether a source-positioned word begins in newly appended content. */
@@ -267,6 +407,9 @@ export function createManagedPreviewBatch<T>(
   };
 
   return {
+    get hasPending() {
+      return latest !== null;
+    },
     schedule(value: T) {
       latest = value;
       if (!timer) timer = setTimeout(flush, delay);

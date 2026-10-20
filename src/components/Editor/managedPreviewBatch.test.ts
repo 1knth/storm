@@ -7,12 +7,18 @@ import {
   wordSegments,
   PREVIEW_REVEAL_CADENCE_MS,
   createRevealScheduleRegistry,
+  revealSessionIdentity,
+  shouldAutoOpenAgentStatus,
   scheduleRevealWords,
   getRevealTiming,
+  isRevealComplete,
   planRevealUnits,
   hasRecentPreviewScrollIntent,
   PREVIEW_SCROLL_INTENT_MS,
   shouldFinalizeReveal,
+  shouldShowRevealingStatus,
+  isFinalPreviewDrained,
+  deriveFinalPreviewState,
 } from './managedPreviewBatch';
 
 const originalSetTimeout = globalThis.setTimeout;
@@ -72,7 +78,226 @@ describe('preview scroll intent', () => {
   });
 });
 
+describe('agent status auto-open', () => {
+  it('opens for first connected/writing session per note, stays manually closed on updates, and permits a new session', () => {
+    const seen = new Set<string>();
+    assert.equal(shouldAutoOpenAgentStatus('one', 'connected', seen), true);
+    // Closing the bar does not remove the session from seen state.
+    assert.equal(shouldAutoOpenAgentStatus('one', 'writing', seen), false);
+    assert.equal(shouldAutoOpenAgentStatus('one', 'finished', seen), false);
+    assert.equal(shouldAutoOpenAgentStatus('two', 'writing', seen), true);
+    const anotherNote = new Set<string>();
+    assert.equal(
+      shouldAutoOpenAgentStatus('one', 'connected', anotherNote),
+      true,
+    );
+  });
+});
+
+describe('reveal session identity', () => {
+  it('scopes generations by document while preserving stable same-document identity', () => {
+    assert.notEqual(
+      revealSessionIdentity('A', '1'),
+      revealSessionIdentity('B', '1'),
+    );
+    assert.equal(
+      revealSessionIdentity('A', '1'),
+      revealSessionIdentity('A', '1'),
+    );
+    assert.notEqual(
+      revealSessionIdentity('A', '1'),
+      revealSessionIdentity('A', '2'),
+    );
+  });
+});
+
+describe('final preview revision barrier', () => {
+  it('derives readiness from queued publication, document/source identity, and actual receipts', () => {
+    useFakeClock();
+    let revision = 1;
+    let published = { docKey: 'A', markdown: 'old', previewRevision: revision };
+    const receipts = new Map<
+      number,
+      { generationId: string; previewKey: number; pending: boolean }
+    >();
+    const batch = createManagedPreviewBatch((markdown: string) => {
+      published = { docKey: 'A', markdown, previewRevision: ++revision };
+    });
+    const ready = (
+      input: {
+        activeDocumentKey?: string;
+        source?: string;
+        pending?: boolean;
+        generation?: string;
+      } = {},
+    ) =>
+      deriveFinalPreviewState({
+        activeDocumentKey: input.activeDocumentKey ?? 'A',
+        latestAcceptedMarkdown: input.source ?? 'new',
+        publishedSnapshot: published,
+        batchPending: input.pending ?? batch.hasPending,
+        generationKey: input.generation ?? 'A:gen',
+        receiptsMap: receipts,
+      });
+
+    receipts.set(1, { generationId: 'A:gen', previewKey: 1, pending: false });
+    batch.schedule('new');
+    assert.equal(ready(), false); // queued source cannot borrow the old receipt
+    advance(150);
+    assert.deepEqual(published, {
+      docKey: 'A',
+      markdown: 'new',
+      previewRevision: 2,
+    });
+    receipts.set(2, { generationId: 'A:gen', previewKey: 2, pending: false });
+    assert.equal(ready(), true); // matching receipt may precede barrier evaluation
+    assert.equal(ready({ activeDocumentKey: 'B' }), false); // equal text, other document
+    assert.equal(ready({ source: 'edited-after-toggle' }), false);
+    assert.equal(ready({ pending: true }), false); // pending blocks even equal strings
+    assert.equal(ready({ generation: 'A:old-gen' }), false);
+    batch.dispose();
+  });
+
+  const receipt = (
+    previewKey: number,
+    pending: boolean,
+    generationId = 'doc:gen',
+  ) => ({
+    generationId,
+    previewKey,
+    pending,
+  });
+
+  it('does not finish on an old drained preview while a final snapshot is queued', () => {
+    assert.equal(
+      isFinalPreviewDrained({
+        requiredRevision: 8,
+        latestPublishedRevision: 7,
+        requiredGenerationId: 'doc:gen',
+        progressReceipt: receipt(7, false),
+      }),
+      false,
+    );
+    assert.equal(
+      isFinalPreviewDrained({
+        requiredRevision: null,
+        latestPublishedRevision: 7,
+        requiredGenerationId: 'doc:gen',
+        progressReceipt: receipt(7, false),
+      }),
+      false,
+    );
+  });
+
+  it('retains matching-revision callback receipt before the barrier is assigned', () => {
+    const cached = receipt(9, false);
+    assert.equal(
+      isFinalPreviewDrained({
+        requiredRevision: null,
+        latestPublishedRevision: 9,
+        requiredGenerationId: 'doc:gen',
+        progressReceipt: cached,
+      }),
+      false,
+    );
+    assert.equal(
+      isFinalPreviewDrained({
+        requiredRevision: 9,
+        latestPublishedRevision: 9,
+        requiredGenerationId: 'doc:gen',
+        progressReceipt: cached,
+      }),
+      true,
+    );
+  });
+
+  it('waits for the final animation and rejects wrong revision or generation', () => {
+    assert.equal(
+      isFinalPreviewDrained({
+        requiredRevision: 10,
+        latestPublishedRevision: 10,
+        requiredGenerationId: 'doc:gen',
+        progressReceipt: receipt(10, true),
+      }),
+      false,
+    );
+    assert.equal(
+      isFinalPreviewDrained({
+        requiredRevision: 10,
+        latestPublishedRevision: 10,
+        requiredGenerationId: 'doc:gen',
+        progressReceipt: receipt(9, false),
+      }),
+      false,
+    );
+    assert.equal(
+      isFinalPreviewDrained({
+        requiredRevision: 10,
+        latestPublishedRevision: 10,
+        requiredGenerationId: 'doc:gen',
+        progressReceipt: receipt(10, false, 'old-generation'),
+      }),
+      false,
+    );
+  });
+});
+
+describe('reveal progress tracking', () => {
+  it('remains pending until every unit completes and ignores stale generations', async () => {
+    const { createRevealProgressState, completeRevealProgressUnit } =
+      await import('./managedPreviewBatch');
+    const state = createRevealProgressState(
+      'generation-a',
+      7,
+      ['word-a', 'block-b'],
+      false,
+    );
+    assert.equal(state.pendingKeys.size, 2);
+    assert.equal(
+      completeRevealProgressUnit(state, 'generation-a', 'word-a'),
+      true,
+    );
+    assert.equal(
+      completeRevealProgressUnit(state, 'generation-old', 'block-b'),
+      null,
+    );
+    assert.equal(
+      completeRevealProgressUnit(state, 'generation-a', 'block-b'),
+      false,
+    );
+  });
+
+  it('completes immediately for reduced motion or no eligible units', async () => {
+    const { createRevealProgressState, completeRevealProgressUnit } =
+      await import('./managedPreviewBatch');
+    const reduced = createRevealProgressState(
+      'generation-a',
+      1,
+      ['word-a'],
+      true,
+    );
+    const empty = createRevealProgressState('generation-b', 2, [], false);
+    assert.equal(reduced.pendingKeys.size, 0);
+    assert.equal(empty.pendingKeys.size, 0);
+    assert.equal(
+      completeRevealProgressUnit(reduced, 'generation-a', 'word-a'),
+      null,
+    );
+  });
+});
+
 describe('generation-wide word reveal schedule', () => {
+  it('recomputes remount timing from the shared absolute schedule', () => {
+    const registry = createRevealScheduleRegistry();
+    scheduleRevealWords(registry, ['unit'], 1000);
+    const start = registry.words.get('unit')!.scheduledAt;
+
+    assert.equal(getRevealTiming(registry, 'unit', start - 20), 20);
+    assert.equal(getRevealTiming(registry, 'unit', start + 40), -40);
+    assert.equal(isRevealComplete(registry, 'unit', start + 100), true);
+    assert.equal(getRevealTiming(registry, 'unit', start + 100), 0);
+    assert.equal(registry.words.get('unit')!.scheduledAt, start);
+  });
   it('uses the single 150ms cadence and keeps assignments fixed across rapid appends', () => {
     const registry = createRevealScheduleRegistry();
     const baseline = scheduleRevealWords(registry, ['p1:first'], 1000);
@@ -417,6 +642,23 @@ describe('append paragraph reveal boundary', () => {
 });
 
 describe('managed preview batching', () => {
+  it('shows Revealing until the final matching preview snapshot drains', () => {
+    assert.equal(shouldShowRevealingStatus(true, false, true, false), true);
+    assert.equal(shouldShowRevealingStatus(true, false, true, true), false);
+    // A drained earlier snapshot does not count for the newer final commit.
+    const earlierSnapshot = { snapshot: 'partial', pending: false };
+    const finalSnapshot = 'complete';
+    assert.equal(
+      earlierSnapshot.snapshot === finalSnapshot && !earlierSnapshot.pending,
+      false,
+    );
+  });
+
+  it('does not override active writing or terminal non-finished statuses', () => {
+    assert.equal(shouldShowRevealingStatus(true, true, true, false), false);
+    assert.equal(shouldShowRevealingStatus(false, false, true, false), false);
+  });
+
   it('publishes only the latest update in the 150ms window', () => {
     useFakeClock();
     const published: string[] = [];

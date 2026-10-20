@@ -69,6 +69,19 @@ test('manual visibility hides every status regardless of session state', () => {
   }
 });
 
+test('finished backend status remains Writing until preview reveal drains', () => {
+  const html = renderToStaticMarkup(
+    createElement(AgentStatusBar, {
+      status: status('finished'),
+      visualStatus: 'Writing',
+    }),
+  );
+  assert.match(html, />Writing</);
+  assert.doesNotMatch(html, /Finished/);
+  assert.doesNotMatch(html, /Revealing/);
+  assert.doesNotMatch(html, /Stop/);
+});
+
 test('Stop appears only while writing and finished has the brief label', () => {
   assert.match(
     render('writing', () => {}),
