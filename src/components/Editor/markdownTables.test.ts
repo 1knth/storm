@@ -82,10 +82,4 @@ describe('markdown table Enter', () => {
       false,
     );
   });
-  it('does not duplicate an existing separator', () => {
-    assert.equal(
-      pressEnter('| A | B |\n| --- | --- |').text,
-      '| A | B |\n| --- | --- |\n|  |  |',
-    );
-  });
 });

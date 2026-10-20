@@ -71,10 +71,10 @@ describe('preview scroll intent', () => {
     );
   });
 
-  it('blocks layout-only scroll and ordinary pointer clicks without intent', () => {
+  it('reports absent and expired intent as inactive', () => {
     assert.equal(hasRecentPreviewScrollIntent(0, 1000), false);
-    // Link clicks and other pointer presses do not extend the intent deadline.
-    assert.equal(hasRecentPreviewScrollIntent(0, 1000), false);
+    const deadline = 1200;
+    assert.equal(hasRecentPreviewScrollIntent(deadline, deadline + 1), false);
   });
 });
 
