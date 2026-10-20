@@ -14,6 +14,80 @@ import { helpText, knownCommands } from './stormHelp';
 
 class CliUsageError extends Error {}
 
+const STDIN_HIGH_WATER_MARK = 1024 * 1024;
+const STDIN_LOW_WATER_MARK = STDIN_HIGH_WATER_MARK / 2;
+
+export class BoundedStdinReader implements AsyncIterator<Buffer> {
+  private queue: Buffer[] = [];
+  private queuedBytes = 0;
+  private ended = false;
+  private failure: Error | undefined;
+  private waiter: (() => void) | undefined;
+  private closed = false;
+
+  constructor(
+    private readonly stream: NodeJS.ReadableStream & {
+      pause(): unknown;
+      resume(): unknown;
+    },
+  ) {
+    stream.on('data', this.onData);
+    stream.on('end', this.onEnd);
+    stream.on('error', this.onError);
+    stream.resume();
+  }
+
+  private notify = () => {
+    this.waiter?.();
+    this.waiter = undefined;
+  };
+  private onData = (chunk: Buffer | Uint8Array | string) => {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.queue.push(buffer);
+    this.queuedBytes += buffer.length;
+    if (this.queuedBytes >= STDIN_HIGH_WATER_MARK) this.stream.pause();
+    this.notify();
+  };
+  private onEnd = () => {
+    this.ended = true;
+    this.notify();
+  };
+  private onError = (error: Error) => {
+    this.failure = error;
+    this.notify();
+  };
+
+  async next(): Promise<IteratorResult<Buffer>> {
+    while (!this.queue.length && !this.ended && !this.failure && !this.closed)
+      await new Promise<void>((resolve) => {
+        this.waiter = resolve;
+      });
+    if (this.queue.length) {
+      const value = this.queue.shift()!;
+      this.queuedBytes -= value.length;
+      if (this.queuedBytes < STDIN_LOW_WATER_MARK && !this.ended)
+        this.stream.resume();
+      return { done: false, value };
+    }
+    if (this.failure) throw this.failure;
+    return { done: true, value: undefined };
+  }
+
+  async return(): Promise<IteratorResult<Buffer>> {
+    this.close();
+    return { done: true, value: undefined };
+  }
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.stream.pause();
+    this.stream.removeListener('data', this.onData);
+    this.stream.removeListener('end', this.onEnd);
+    this.stream.removeListener('error', this.onError);
+    this.notify();
+  }
+}
+
 function cliHelp(command?: string): string {
   const executable = path.basename(process.execPath).replace(/\.exe$/i, '');
   const text = helpText(command);
@@ -89,7 +163,9 @@ export async function runCli(
   args: string[],
   io: {
     home?: string;
-    stdin?: AsyncIterable<Uint8Array>;
+    stdin?:
+      | (NodeJS.ReadableStream & { pause(): unknown; resume(): unknown })
+      | AsyncIterable<Uint8Array>;
     stdout?: (text: string) => void;
     stderr?: (text: string) => void;
   } = {},
@@ -240,47 +316,58 @@ export async function runCli(
         return true;
       };
       const stdin = io.stdin ?? process.stdin;
-      const input = stdin[Symbol.asyncIterator]();
+      const input =
+        'on' in stdin && 'pause' in stdin && 'resume' in stdin
+          ? new BoundedStdinReader(
+              stdin as NodeJS.ReadableStream & {
+                pause(): unknown;
+                resume(): unknown;
+              },
+            )
+          : stdin[Symbol.asyncIterator]();
       const stopInput = () => {
         void input.return?.();
-        // Bun's process.stdin async iterator can retain the event loop even
-        // after return(); destroy the CLI-owned Node stdin stream to release it.
-        if (stdin === process.stdin && 'destroy' in stdin)
-          (stdin as NodeJS.ReadStream).destroy();
       };
-      let nextInput = input.next();
-      while (true) {
-        let pollTimer: ReturnType<typeof setTimeout> | undefined;
-        const outcome = await Promise.race([
-          nextInput.then((value) => ({ kind: 'input' as const, value })),
-          new Promise<{ kind: 'poll' }>((resolve) => {
-            pollTimer = setTimeout(() => resolve({ kind: 'poll' }), 250);
-          }),
-        ]);
-        if (pollTimer) clearTimeout(pollTimer);
-        if (outcome.kind === 'poll') {
-          const status = (await request({ type: 'status', sessionId })) as any;
-          const state = status?.sessions?.[0]?.state;
-          if (state && state !== 'connected' && state !== 'writing') {
+      try {
+        let nextInput = input.next();
+        while (true) {
+          let pollTimer: ReturnType<typeof setTimeout> | undefined;
+          const outcome = await Promise.race([
+            nextInput.then((value) => ({ kind: 'input' as const, value })),
+            new Promise<{ kind: 'poll' }>((resolve) => {
+              pollTimer = setTimeout(() => resolve({ kind: 'poll' }), 250);
+            }),
+          ]);
+          if (pollTimer) clearTimeout(pollTimer);
+          if (outcome.kind === 'poll') {
+            const status = (await request({
+              type: 'status',
+              sessionId,
+            })) as any;
+            const state = status?.sessions?.[0]?.state;
+            if (state && state !== 'connected' && state !== 'writing') {
+              stopInput();
+              err(
+                `${JSON.stringify({ ok: false, error: { code: 'SESSION_CLOSED', message: `Session is ${state}` } })}\n`,
+              );
+              return 1;
+            }
+            continue;
+          }
+          if (outcome.value.done) break;
+          buffered += decoder.write(outcome.value.value);
+          if (!(await sendBuffered())) {
             stopInput();
-            err(
-              `${JSON.stringify({ ok: false, error: { code: 'SESSION_CLOSED', message: `Session is ${state}` } })}\n`,
-            );
             return 1;
           }
-          continue;
+          nextInput = input.next();
         }
-        if (outcome.value.done) break;
-        buffered += decoder.write(outcome.value.value);
-        if (!(await sendBuffered())) {
-          stopInput();
-          return 1;
-        }
-        nextInput = input.next();
+        buffered += decoder.end();
+        if (!(await sendBuffered())) return 1;
+        result = await request({ type: 'finish', sessionId });
+      } finally {
+        if (input instanceof BoundedStdinReader) input.close();
       }
-      buffered += decoder.end();
-      if (!(await sendBuffered())) return 1;
-      result = await request({ type: 'finish', sessionId });
     } else throw new CliUsageError(`Invalid arguments for ${command}`);
     if ((result as any)?.ok === false) {
       err(`${JSON.stringify(result)}\n`);

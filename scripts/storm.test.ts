@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { PassThrough } from 'node:stream';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import {
@@ -13,9 +14,81 @@ import {
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { discoverEndpoint, runCli } from './storm';
+import { BoundedStdinReader, discoverEndpoint, runCli } from './storm';
 import { assertNativeTarget, buildCliBinary } from './buildCli';
 import { startAgentEndpoint } from '../src/main/agentEndpoint';
+
+test('bounded stdin reader retains all bytes while its consumer pauses', async () => {
+  const stream = new PassThrough();
+  const reader = new BoundedStdinReader(stream);
+  const first = reader.next();
+  stream.write(Buffer.from('first'));
+  assert.equal((await first).value?.toString(), 'first');
+
+  const tail = Buffer.from('remaining tail ✓');
+  stream.write(tail);
+  stream.end();
+  const chunks: Buffer[] = [];
+  while (true) {
+    const next = await reader.next();
+    if (next.done) break;
+    chunks.push(next.value);
+  }
+  assert.deepEqual(Buffer.concat(chunks), tail);
+  reader.close();
+});
+
+test('bounded stdin reader retains a UTF-8 character split across chunks', async () => {
+  const stream = new PassThrough();
+  const reader = new BoundedStdinReader(stream);
+  const first = reader.next();
+  stream.write(Buffer.from([0xe2, 0x82]));
+  const left = await first;
+  const second = reader.next();
+  stream.end(Buffer.from([0xac]));
+  const right = await second;
+  assert.deepEqual(
+    [left.value, right.value].map((chunk) => chunk?.[0]),
+    [0xe2, 0xac],
+  );
+  reader.close();
+});
+
+test('bounded stdin reader propagates stream errors', async () => {
+  const stream = new PassThrough();
+  const reader = new BoundedStdinReader(stream);
+  const failure = new Error('input failed');
+  const pending = reader.next();
+  stream.destroy(failure);
+  await assert.rejects(pending, failure);
+  reader.close();
+});
+
+test('bounded stdin reader pauses at its high-water mark and resumes below low-water mark', async () => {
+  const stream = new PassThrough();
+  const reader = new BoundedStdinReader(stream);
+  const pause = stream.pause.bind(stream);
+  const resume = stream.resume.bind(stream);
+  let pauses = 0;
+  let resumes = 0;
+  stream.pause = () => {
+    pauses++;
+    return pause();
+  };
+  stream.resume = () => {
+    resumes++;
+    return resume();
+  };
+  const queued = Buffer.alloc(1024 * 1024);
+  stream.write(queued);
+  assert.ok(pauses > 0);
+  const chunk = await reader.next();
+  assert.equal(chunk.value?.length, queued.length);
+  assert.ok(resumes > 0);
+  stream.end();
+  assert.equal((await reader.next()).done, true);
+  reader.close();
+});
 
 test('CLI compiler rejects cross-platform targets instead of downloading a runtime', async () => {
   assert.throws(
