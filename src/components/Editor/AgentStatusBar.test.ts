@@ -26,6 +26,7 @@ test('visible status bar retains Agent label without a decorative icon', () => {
     createElement(AgentStatusBar, { visible: true }),
   );
   assert.match(html, />Agent</);
+  assert.match(html, /<span aria-hidden="true">\|<\/span>/);
   assert.match(html, />Not connected</);
   assert.doesNotMatch(html, /<svg\b/);
 });
@@ -49,6 +50,10 @@ test('status bar retains every status while visible and never offers Stop unless
     else assert.doesNotMatch(html, /aria-label="Stop agent"/);
   }
   assert.match(render('connected'), />Connected</);
+  assert.match(render('connected'), /bg-green-400/);
+  assert.match(render('writing'), /bg-blue-400/);
+  assert.match(render('finished'), /bg-gray-400/);
+  assert.doesNotMatch(render('failed'), /agent-status-dot/);
 });
 
 test('manual visibility hides every status regardless of session state', () => {
@@ -80,6 +85,7 @@ test('finished backend status remains Writing until preview reveal drains', () =
   assert.doesNotMatch(html, /Finished/);
   assert.doesNotMatch(html, /Revealing/);
   assert.doesNotMatch(html, /Stop/);
+  assert.match(html, /bg-blue-400/);
 });
 
 test('Stop appears only while writing and finished has the brief label', () => {

@@ -280,28 +280,13 @@ export function getRevealTiming(
   registry: RevealScheduleRegistry,
   key: string,
   now: number,
-  cadence = PREVIEW_REVEAL_CADENCE_MS,
 ): number {
   const schedule = registry.words.get(key);
   if (!schedule) return 0;
-  if (!schedule.mounted) {
-    const pending = [...registry.words.entries()]
-      .filter(([, item]) => !item.mounted)
-      .sort((a, b) => a[1].ordinal - b[1].ordinal);
-    const overdue = pending.filter(([, item]) => item.scheduledAt <= now);
-    if (overdue.length) {
-      // Rebase the entire unmounted tail, not just slots already overdue. A
-      // later unmounted slot may still be in the future; leaving it fixed
-      // would create a cadence-sized hole after the rebased overdue prefix.
-      let startAt = now + PREVIEW_REVEAL_FRAME_PADDING_MS;
-      for (const [, item] of pending) {
-        item.scheduledAt = startAt;
-        startAt += cadence;
-      }
-      registry.lastPendingStartAt = startAt - cadence;
-    }
-    schedule.mounted = true;
-  }
+  // A tab may unmount while its absolute timeline continues. Never rebase the
+  // remaining tail on remount: doing so changes the generation's schedule and
+  // can make the preview appear to restart or reveal out of order.
+  schedule.mounted = true;
   const elapsed = now - schedule.scheduledAt;
   if (elapsed >= 100) return 0;
   return -elapsed;

@@ -29,14 +29,29 @@ export function AgentStatusBar({
                 ? 'Failed'
                 : null;
   const displayedLabel = visualStatus ?? label;
+  const dotColor =
+    displayedLabel === 'Connected'
+      ? 'bg-green-400'
+      : displayedLabel === 'Writing'
+        ? 'bg-blue-400'
+        : displayedLabel === 'Finished'
+          ? 'bg-gray-400'
+          : null;
   if (!visible) return null;
   return (
     <div
-      className="flex h-[22px] shrink-0 items-center gap-2 border-t border-white/10 bg-white/[0.035] px-2 text-[11px] text-white/65"
+      className="flex h-[22px] shrink-0 items-center gap-2 border-y border-white/10 bg-white/[0.035] px-2 text-[11px] text-white/65"
       data-testid="agent-status-bar"
     >
       <span>{status?.name?.trim() || 'Agent'}</span>
-      <span aria-hidden="true">·</span>
+      <span aria-hidden="true">|</span>
+      {dotColor && (
+        <span
+          aria-hidden="true"
+          data-testid="agent-status-dot"
+          className={`size-2 rounded-full ${dotColor}`}
+        />
+      )}
       <span>{displayedLabel ?? 'Not connected'}</span>
       {status?.state === 'writing' && onStop && (
         <button
