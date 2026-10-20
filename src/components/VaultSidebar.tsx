@@ -20,10 +20,10 @@ import {
 } from '../shared/vaultSidebarDrag';
 import { GROUP_COLORS, groupColorForId } from '../shared/groupColors';
 import { BsPinFill } from 'react-icons/bs';
+import { TbLayoutSidebarRightFilled } from 'react-icons/tb';
 import { FaPlus } from 'react-icons/fa';
 import { FaFolderTree } from 'react-icons/fa6';
 import { IoIosSettings } from 'react-icons/io';
-import { RiMenuUnfold4Fill } from 'react-icons/ri';
 
 type Props = {
   vaults: RegisteredVault[];
@@ -616,7 +616,7 @@ export default function VaultSidebar({
     >
       <div className="mx-1 mb-2 flex h-9 shrink-0 items-center justify-between border-b border-white/10 px-1">
         <h2 className="text-sm font-semibold text-white/80">Vaults</h2>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-0.5">
           <button
             type="button"
             onClick={(event) =>
@@ -627,7 +627,7 @@ export default function VaultSidebar({
             }
             aria-label="Create group"
             title="Create group"
-            className="app-icon-button"
+            className="app-icon-button app-icon-button-no-hover-bg"
           >
             <FaFolderTree aria-hidden="true" size={14} />
           </button>
@@ -641,7 +641,7 @@ export default function VaultSidebar({
             }
             aria-label="Add vault"
             title="Add vault"
-            className="app-icon-button"
+            className="app-icon-button app-icon-button-no-hover-bg"
           >
             <FaPlus aria-hidden="true" size={14} />
           </button>
@@ -652,9 +652,12 @@ export default function VaultSidebar({
               aria-label="Show file explorer"
               aria-expanded="false"
               title={`Show file explorer${toggleExplorerShortcut ? ` (${navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'})` : ''}`}
-              className="app-icon-button relative"
+              className="app-icon-button app-icon-button-no-hover-bg relative"
             >
-              <RiMenuUnfold4Fill aria-hidden="true" className="h-3.5 w-3.5" />
+              <TbLayoutSidebarRightFilled
+                aria-hidden="true"
+                className="!h-[14px] !w-[14px]"
+              />
               {commandHeld && toggleExplorerShortcut && (
                 <span
                   aria-hidden="true"
