@@ -3,8 +3,17 @@ import { createPortal } from 'react-dom';
 import ContextMenu from './ContextMenu';
 import type { ContextMenuPosition } from './ContextMenu';
 import { contextMenuPointForElement, isContextMenuKey } from './ContextMenu';
-import { getExplorerContextMenuItems } from './fileExplorerContextMenu';
+import {
+  absoluteExplorerPath,
+  getExplorerContextMenuItems,
+} from './fileExplorerContextMenu';
 import { runDirectoryPathAction } from './directoryPathAction';
+import { copyPathAction } from './copyPathAction';
+import {
+  actualPathForOptimisticRename,
+  reconcileOptimisticRename,
+  remapOptimisticPath,
+} from './optimisticRename';
 import { FaPlus } from 'react-icons/fa';
 import { TbLayoutSidebarRightFilled } from 'react-icons/tb';
 import Note from './Note';
@@ -71,6 +80,7 @@ type FileExplorerProps = {
   onCreate: (kind: 'note' | 'folder', parentPath: string) => void;
   onCreateNote: () => void;
   onDeleteEntry?: (path: string, kind: 'note' | 'folder' | 'image') => void;
+  onRenameEntry: (path: string, newName: string) => Promise<void>;
   creationPending: boolean;
   onAddVault: () => void;
   onUnloadAllVaults: () => Promise<boolean>;
@@ -103,6 +113,7 @@ export default function FileExplorer({
   vaultId,
   onCreate,
   onDeleteEntry,
+  onRenameEntry,
   creationPending,
   onAddVault,
   onUnloadAllVaults,
@@ -134,6 +145,27 @@ export default function FileExplorer({
     'general',
   );
   const [confirmUnload, setConfirmUnload] = useState(false);
+  const [optimisticRename, setOptimisticRename] = useState<{
+    oldPath: string;
+    newPath: string;
+    committed: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!optimisticRename?.committed) return;
+    setOptimisticRename(
+      reconcileOptimisticRename(
+        optimisticRename,
+        notes.map((note) => note.path),
+      ),
+    );
+  }, [notes, optimisticRename]);
+  const [renameDialog, setRenameDialog] = useState<{
+    path: string;
+    kind: 'note' | 'folder' | 'image';
+    name: string;
+  } | null>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const [unloading, setUnloading] = useState(false);
   const [cliAvailable, setCliAvailable] = useState(false);
   const [cliInstalled, setCliInstalled] = useState(false);
@@ -198,10 +230,6 @@ export default function FileExplorer({
         (!isFolder && !isImage && !isNote) ||
         (isFolder && entryKind !== 'directory'))
     ) {
-      setContextMenu(null);
-      return;
-    }
-    if (row && !isFolder && !onDeleteEntry) {
       setContextMenu(null);
       return;
     }
@@ -383,6 +411,13 @@ export default function FileExplorer({
         )}
         <ul className="flex min-h-0 flex-col overflow-y-auto">
           {notes
+            .map((entry) => {
+              if (!optimisticRename) return entry;
+              return {
+                ...entry,
+                path: remapOptimisticPath(entry.path, optimisticRename),
+              };
+            })
             .filter((note) => !note.path.split('\\').join('/').includes('/'))
             .map((note) => (
               <Note
@@ -394,6 +429,7 @@ export default function FileExplorer({
                 onNoteClick={onNoteSelect}
                 onImageClick={onImageSelect}
                 vaultId={vaultId}
+                appearance={appearance}
               />
             ))}
         </ul>
@@ -414,8 +450,111 @@ export default function FileExplorer({
             contextMenu.parent,
             onCreate,
             onDeleteEntry,
+            (path, kind) =>
+              void window.vault
+                .openLocation(path, kind)
+                .catch((error) =>
+                  onCopyPathError(
+                    error instanceof Error ? error.message : String(error),
+                  ),
+                ),
+            (entryPath, kind) => {
+              const filename = entryPath.split('/').at(-1) ?? entryPath;
+              const dot = filename.lastIndexOf('.');
+              const initial =
+                kind !== 'folder' && dot > 0
+                  ? filename.slice(0, dot)
+                  : filename;
+              setRenameDialog({ path: entryPath, kind, name: initial });
+            },
+            async (entryPath) => {
+              if (!vaultPath) return;
+              const actualPath = actualPathForOptimisticRename(
+                entryPath,
+                optimisticRename,
+              );
+              const path = absoluteExplorerPath(vaultPath, actualPath);
+              await copyPathAction(path, {
+                writeText: (value) => navigator.clipboard.writeText(value),
+                onCopied: () => onPathCopied('copied path to clipboard'),
+                onError: onCopyPathError,
+              });
+            },
           )}
         />
+      )}
+      {renameDialog && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-title"
+            className="w-full max-w-xs rounded-lg border border-white/15 bg-[#202124] p-4 text-white shadow-xl select-none"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const { path, kind } = renameDialog;
+              const filename = path.split('/').at(-1) ?? path;
+              const dot = filename.lastIndexOf('.');
+              const entered = renameDialog.name.trim();
+              const name =
+                kind !== 'folder' && dot > 0
+                  ? `${entered}${filename.slice(dot)}`
+                  : entered;
+              setRenameDialog(null);
+              if (!name || name === filename || optimisticRename) return;
+              const oldPath = path.split('\\\\').join('/');
+              const newPath = `${oldPath.split('/').slice(0, -1).join('/')}${oldPath.includes('/') ? '/' : ''}${name}`;
+              setOptimisticRename({ oldPath, newPath, committed: false });
+              void onRenameEntry(path, name)
+                .then(() =>
+                  setOptimisticRename((current) =>
+                    current ? { ...current, committed: true } : null,
+                  ),
+                )
+                .catch((error) => {
+                  setOptimisticRename(null);
+                  onCopyPathError(
+                    error instanceof Error ? error.message : String(error),
+                  );
+                });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setRenameDialog(null);
+              }
+            }}
+          >
+            <h2 id="rename-title" className="mb-3 text-sm font-semibold">
+              Rename
+            </h2>
+            <label className="block text-xs">
+              Name
+              <input
+                ref={renameInputRef}
+                autoFocus
+                value={renameDialog.name}
+                onFocus={(event) => event.currentTarget.select()}
+                onChange={(event) =>
+                  setRenameDialog({ ...renameDialog, name: event.target.value })
+                }
+                className="mt-1 w-full rounded border border-white/20 bg-black/30 px-2 py-1.5 text-sm select-text"
+              />
+            </label>
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                className="px-2 py-1 text-xs"
+                onClick={() => setRenameDialog(null)}
+              >
+                Cancel
+              </button>
+              <button className="rounded bg-blue-600 px-2 py-1 text-xs">
+                Rename
+              </button>
+            </div>
+          </form>
+        </div>
       )}
       {settingsOpen &&
         createPortal(
@@ -721,6 +860,7 @@ export default function FileExplorer({
                             ['Selection highlight', 'selection'],
                             ['Active line', 'activeLine'],
                             ['Cursor', 'cursor'],
+                            ['Folder icons', 'folderIcon'],
                             ...appearance.headings.map((_, i) => [
                               `Heading ${i + 1}`,
                               `heading-${i + 1}`,

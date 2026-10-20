@@ -5,6 +5,7 @@ export const DEFAULT_APPEARANCE = {
   selection: '#e0bfff',
   activeLine: '#e0bfff',
   cursor: '#027DFF',
+  folderIcon: '#9EE4FF',
   headings: DEFAULT_HEADING_COLORS,
   mermaidBackground: '#ffffff',
   mermaidNodeFill: '#ECECFF',
@@ -64,6 +65,7 @@ export function validateAppearance(value: unknown): Appearance {
     selection: color(input.selection, DEFAULT_APPEARANCE.selection),
     activeLine: color(input.activeLine, DEFAULT_APPEARANCE.activeLine),
     cursor: color(input.cursor, DEFAULT_APPEARANCE.cursor),
+    folderIcon: color(input.folderIcon, DEFAULT_APPEARANCE.folderIcon),
     headings: DEFAULT_HEADING_COLORS.map((fallback, index) =>
       color(headings[index], fallback),
     ),

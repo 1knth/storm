@@ -107,6 +107,8 @@ const MAX_REMEMBERED_OPERATIONS = 256;
 /** Per-session mutation queue preserves renderer order; operation results are retained up to a bounded count per session. */
 export class AgentBroker {
   private readonly sessions = new Map<string, Session>();
+  private readonly maintenanceVaults = new Set<string>();
+  private resolvingConnects = 0;
   private readonly editOperations = new Map<
     string,
     { fingerprint: string; result: Promise<AgentResponse> }
@@ -117,6 +119,26 @@ export class AgentBroker {
       if (session && session.state !== 'finished') session.state = 'cancelled';
     });
   }
+  acquireMaintenanceLease(vaultId: string): (() => void) | null {
+    if (
+      this.maintenanceVaults.has(vaultId) ||
+      this.resolvingConnects > 0 ||
+      this.hasWritableSessionForVault(vaultId)
+    )
+      return null;
+    this.maintenanceVaults.add(vaultId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.maintenanceVaults.delete(vaultId);
+    };
+  }
+
+  isMaintenanceLeased(vaultId: string): boolean {
+    return this.maintenanceVaults.has(vaultId);
+  }
+
   hasWritableSessionForVault(vaultId: string): boolean {
     return [...this.sessions.values()].some(
       (session) =>
@@ -182,49 +204,74 @@ export class AgentBroker {
         };
       }
       if (request.type === 'connect') {
-        const target = await this.options.resolveTarget(request.absolutePath);
-        const withLifecycle =
-          this.options.withVaultLifecycle ?? runVaultLifecycleExclusive;
-        return await withLifecycle(target.vaultRoot, async () => {
-          await this.options.assertTargetRegistered?.(target);
-          const session: Session = {
-            id: randomUUID(),
-            target,
-            ...(request.name ? { name: request.name.trim().slice(0, 64) } : {}),
-            state: 'connected',
-            version: 0,
-            sequence: 0,
-            pending: 0,
-            queue: Promise.resolve(),
-            operations: new Map(),
-            cancelWaiters: new Set(),
-          };
-          const snapshot = await this.options.renderer.dispatch({
-            type: 'snapshot',
-            requestId: request.requestId,
-            sessionId: session.id,
-            absolutePath: target.absolutePath,
-            vaultId: target.vaultId,
-            vaultRoot: target.vaultRoot,
-          });
-          if (!snapshot.ok) return fail(snapshot.code, snapshot.message);
-          if ('inspected' in snapshot)
+        this.resolvingConnects++;
+        try {
+          const target = await this.options.resolveTarget(request.absolutePath);
+          const withLifecycle =
+            this.options.withVaultLifecycle ?? runVaultLifecycleExclusive;
+          if (this.maintenanceVaults.has(target.vaultId))
             return fail(
-              'INTERNAL',
-              'Renderer returned an inspection response for snapshot',
+              'VAULT_MAINTENANCE',
+              'Vault rename is in progress; retry shortly',
+              true,
             );
-          session.version = snapshot.documentVersion;
-          session.target.diskRevision = snapshot.diskRevision;
-          this.sessions.set(session.id, session);
-          return {
-            protocol: AGENT_PROTOCOL_VERSION,
-            requestId: request.requestId,
-            ok: true,
-            type: 'connected',
-            session: this.status(session),
-            content: snapshot.content ?? target.content,
-          };
-        });
+          return await withLifecycle(target.vaultRoot, async () => {
+            if (this.maintenanceVaults.has(target.vaultId))
+              return fail(
+                'VAULT_MAINTENANCE',
+                'Vault rename is in progress; retry shortly',
+                true,
+              );
+            await this.options.assertTargetRegistered?.(target);
+            const session: Session = {
+              id: randomUUID(),
+              target,
+              ...(request.name
+                ? { name: request.name.trim().slice(0, 64) }
+                : {}),
+              state: 'connected',
+              version: 0,
+              sequence: 0,
+              pending: 0,
+              queue: Promise.resolve(),
+              operations: new Map(),
+              cancelWaiters: new Set(),
+            };
+            const snapshot = await this.options.renderer.dispatch({
+              type: 'snapshot',
+              requestId: request.requestId,
+              sessionId: session.id,
+              absolutePath: target.absolutePath,
+              vaultId: target.vaultId,
+              vaultRoot: target.vaultRoot,
+            });
+            if (!snapshot.ok) return fail(snapshot.code, snapshot.message);
+            if ('inspected' in snapshot)
+              return fail(
+                'INTERNAL',
+                'Renderer returned an inspection response for snapshot',
+              );
+            if (this.maintenanceVaults.has(target.vaultId))
+              return fail(
+                'VAULT_MAINTENANCE',
+                'Vault rename is in progress; retry shortly',
+                true,
+              );
+            session.version = snapshot.documentVersion;
+            session.target.diskRevision = snapshot.diskRevision;
+            this.sessions.set(session.id, session);
+            return {
+              protocol: AGENT_PROTOCOL_VERSION,
+              requestId: request.requestId,
+              ok: true,
+              type: 'connected',
+              session: this.status(session),
+              content: snapshot.content ?? target.content,
+            };
+          });
+        } finally {
+          this.resolvingConnects--;
+        }
       }
       if (request.type === 'status') {
         const sessions = request.sessionId
@@ -266,6 +313,17 @@ export class AgentBroker {
         return fail('SESSION_CLOSED', `Session is ${session.state}`);
       if (session.state === 'finished' && request.type !== 'finish')
         return fail('SESSION_CLOSED', 'Session is finished');
+      if (
+        this.maintenanceVaults.has(session.target.vaultId) &&
+        request.type !== 'finish' &&
+        request.type !== 'cancel' &&
+        request.type !== 'disconnect'
+      )
+        return fail(
+          'VAULT_MAINTENANCE',
+          'Vault rename is in progress; retry shortly',
+          true,
+        );
       if (request.type === 'append') {
         const fingerprint = JSON.stringify([request.sequence, request.text]);
         const previous = session.operations.get(request.operationId);

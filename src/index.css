@@ -1,5 +1,87 @@
 @import 'tailwindcss';
 
+/* Keep the preview's fold affordance out of normal heading layout. */
+.preview-fold-heading {
+  position: relative;
+}
+
+.preview-fold-heading-text {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.preview-heading-fold-control {
+  position: absolute;
+  top: 50%;
+  /* Center the 1rem control in the 1.25rem gutter: (1.25rem - 1rem) / 2. */
+  right: calc(100% + (1.25rem - 1rem) / 2);
+  left: auto;
+  display: inline-flex;
+  width: 1rem;
+  height: 1rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transform: translateY(-50%);
+  color: rgb(255 255 255 / 50%);
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.preview-fold-icon,
+.cm-foldMarkerIcon {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 100ms ease;
+}
+
+.preview-fold-icon.is-collapsed,
+.cm-foldMarkerIcon.is-collapsed {
+  transform: rotate(-90deg);
+}
+
+.cm-foldMarker {
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 0;
+}
+
+.cm-foldMarkerIcon {
+  display: block;
+}
+
+.preview-fold-heading:hover .preview-heading-fold-control,
+.preview-fold-heading:focus-within .preview-heading-fold-control {
+  opacity: 1;
+}
+
+.preview-heading-fold-control:focus-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-heading-fold-control,
+  .preview-fold-icon,
+  .cm-foldMarkerIcon {
+    transition: none;
+  }
+}
+
+/* The folded-content marker is text, not a white-backed pill. */
+.cm-editor .cm-foldPlaceholder {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: inherit;
+  padding: 0 0.15em;
+}
+
 .markdown-word-reveal {
   animation: markdown-word-reveal 100ms ease-out both;
 }

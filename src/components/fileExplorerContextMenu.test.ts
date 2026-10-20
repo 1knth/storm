@@ -1,6 +1,9 @@
 // @ts-nocheck
 import { describe, expect, it } from 'bun:test';
-import { getExplorerContextMenuItems } from './fileExplorerContextMenu';
+import {
+  absoluteExplorerPath,
+  getExplorerContextMenuItems,
+} from './fileExplorerContextMenu';
 
 const create = () => {};
 const remove = () => {};
@@ -43,6 +46,77 @@ describe('file explorer context menu', () => {
       'new-note',
       'new-folder',
     ]);
+  });
+
+  it.each([
+    [{ path: 'note.md', kind: 'note' }, 'note'],
+    [{ path: 'folder', kind: 'folder' }, 'folder'],
+  ] as const)('routes Open Location for %s', (target, expectedKind) => {
+    const opened: unknown[][] = [];
+    const items = getExplorerContextMenuItems(
+      target,
+      '',
+      create,
+      remove,
+      (path, kind) => opened.push([path, kind]),
+    );
+    const action = items.find((item) => item.id === 'open-location');
+    expect(action?.label).toBe('Open Location');
+    if (action?.type !== 'separator') action?.onSelect?.();
+    expect(opened).toEqual([[target.path, expectedKind]]);
+  });
+
+  it.each(['note', 'folder'] as const)(
+    'routes Rename for a %s to its actual target kind',
+    (kind) => {
+      const renamed: unknown[][] = [];
+      const target = {
+        path: kind === 'folder' ? 'folder' : 'note.md',
+        kind,
+      } as const;
+      const items = getExplorerContextMenuItems(
+        target,
+        '',
+        create,
+        remove,
+        undefined,
+        (path, targetKind) => renamed.push([path, targetKind]),
+      );
+      const action = items.find((item) => item.id === 'rename-entry');
+      expect(action?.label).toBe('Rename…');
+      if (action?.type !== 'separator') action?.onSelect?.();
+      expect(renamed).toEqual([[target.path, kind]]);
+    },
+  );
+
+  it.each([
+    [{ path: 'nested/note.md', kind: 'note' }, '/vault/nested/note.md'],
+    [{ path: 'nested/image.png', kind: 'image' }, '/vault/nested/image.png'],
+    [{ path: 'nested/folder', kind: 'folder' }, '/vault/nested/folder'],
+  ] as const)(
+    'copies the full absolute path for %s',
+    (target, absolutePath) => {
+      const copied: string[] = [];
+      const items = getExplorerContextMenuItems(
+        target,
+        '',
+        create,
+        remove,
+        undefined,
+        undefined,
+        (path) => copied.push(absoluteExplorerPath('/vault', path)),
+      );
+      const action = items.find((item) => item.id === 'copy-path');
+      expect(action?.label).toBe('Copy Path');
+      if (action?.type !== 'separator') action?.onSelect?.();
+      expect(copied).toEqual([absolutePath]);
+    },
+  );
+
+  it('normalizes relative separators using the vault path platform style', () => {
+    expect(absoluteExplorerPath('C:\\vault\\', 'nested/file.md')).toBe(
+      'C:\\vault\\nested\\file.md',
+    );
   });
 
   it('does not expose deletion when no delete handler is provided', () => {

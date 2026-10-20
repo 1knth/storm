@@ -142,6 +142,10 @@ declare global {
       enableCli: () => Promise<boolean>;
       disableCli: () => Promise<boolean>;
       openDirectory: () => Promise<void>;
+      openLocation: (
+        relativePath: string,
+        kind: 'note' | 'image' | 'folder',
+      ) => Promise<void>;
       registryList: () => Promise<{
         vaults: RegisteredVault[];
         activeVaultId: string | null;
@@ -190,6 +194,12 @@ declare global {
       listNotes: () => Promise<VaultEntry[]>;
       createNote: (request: CreateEntryRequest) => Promise<VaultEntry>;
       createFolder: (request: CreateEntryRequest) => Promise<VaultEntry>;
+      renameEntry: (request: { path: string; newName: string }) => Promise<{
+        oldPath: string;
+        newPath: string;
+        kind: 'note' | 'image' | 'directory';
+        changedNotes: { path: string; content: string; revision: string }[];
+      }>;
       deleteEntry: (request: {
         vaultId: string;
         path: string;

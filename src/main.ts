@@ -407,6 +407,7 @@ registerVaultRegistryIpc(ipcMain, {
     agentBroker.hasWritableSessionForVault(vaultId),
   withVaultLifecycle: runVaultLifecycleExclusive,
   openPath: (directory) => shell.openPath(directory),
+  showItemInFolder: (file) => shell.showItemInFolder(file),
 });
 
 ipcMain.handle('vault:resolve-note-link', async (_event, request: unknown) => {
@@ -610,6 +611,43 @@ ipcMain.handle('vault:list-notes', async () => {
 ipcMain.handle('vault:read-note', async (_event, relativePath: unknown) =>
   vaultService.readNote(relativePath),
 );
+ipcMain.handle('vault:rename-entry', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    throw new Error('Invalid rename request');
+  const value = request as Record<string, unknown>;
+  if (typeof value.path !== 'string' || typeof value.newName !== 'string')
+    throw new Error('Invalid rename request');
+  const selectedPath = vaultService.getSelectedVaultPath();
+  if (!selectedPath) throw new Error('No vault selected');
+  const { vaults } = await vaultRegistry.list();
+  const selected = vaults.find((vault) => vault.path === selectedPath);
+  if (!selected) throw new Error('Selected vault is not registered');
+  const deadline = Date.now() + 30_000;
+  let releaseLease: (() => void) | null = null;
+  while (!releaseLease) {
+    releaseLease = agentBroker.acquireMaintenanceLease(selected.id);
+    if (releaseLease) break;
+    if (Date.now() >= deadline)
+      throw new Error(
+        'Rename timed out waiting for agent sessions to finish. No rename was performed.',
+      );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  try {
+    return await vaultWriteBarrier.run(async () => {
+      if (vaultService.getSelectedVaultPath() !== selectedPath)
+        throw new Error('Selected vault changed; rename cancelled');
+      const result = await vaultService.renameEntryAndUpdateLinks(
+        value.path,
+        value.newName,
+      );
+      invalidateSelectedVault(selected.id);
+      return result;
+    });
+  } finally {
+    releaseLease();
+  }
+});
 ipcMain.handle('vault:save-note', async (_event, request: unknown) =>
   vaultWriteBarrier.run(async () => {
     const result = await vaultService.saveNote(request);

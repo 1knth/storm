@@ -742,6 +742,47 @@ describe('AgentBroker', () => {
     assert.equal(calls.filter((call) => call.type === 'append').length, 1);
   });
 
+  it('fences rename leases against connects already resolving targets', async () => {
+    const target = deferred<any>();
+    const resolved = deferred<void>();
+    const broker = new AgentBroker({
+      resolveTarget: async (absolutePath) => {
+        resolved.resolve();
+        return target.promise.then((value) => ({ ...value, absolutePath }));
+      },
+      renderer: {
+        dispatch: async () => ({
+          ok: true,
+          documentVersion: 1,
+          diskRevision: 'r',
+        }),
+      },
+    });
+    const connecting = broker.handle(
+      req('connect', { absolutePath: '/v/n.md' }),
+    );
+    await resolved.promise;
+    assert.equal(broker.acquireMaintenanceLease('v'), null);
+    target.resolve({
+      vaultId: 'v',
+      vaultRoot: '/v',
+      relativePath: 'n.md',
+      content: '',
+      diskRevision: 'r',
+    });
+    const connected = (await connecting) as any;
+    assert.equal(connected.ok, true);
+    assert.equal(broker.acquireMaintenanceLease('v'), null);
+    await broker.handle(
+      req('finish', { sessionId: connected.session.sessionId }),
+    );
+    const release = broker.acquireMaintenanceLease('v');
+    assert.equal(typeof release, 'function');
+    assert.equal(broker.isMaintenanceLeased('v'), true);
+    release?.();
+    assert.equal(broker.isMaintenanceLeased('v'), false);
+  });
+
   it('rejects append after cancellation', async () => {
     const { broker, calls } = setup();
     const connected = (await broker.handle(
