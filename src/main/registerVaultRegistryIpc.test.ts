@@ -101,6 +101,10 @@ function setup() {
       calls.push(['clearWatchedVaultId']);
     },
     hasWritableAgentSession: () => false,
+    openPath: async (directory: string) => {
+      calls.push(['openPath', directory]);
+      return '';
+    },
   };
   registerVaultRegistryIpc(
     { handle: (name, listener) => handlers.set(name, listener) },
@@ -114,6 +118,33 @@ const invoke = (
   channel: string,
   ...args: unknown[]
 ) => handlers.get(channel)!(event, ...args);
+
+test('opens the selected vault directory and rejects when none is selected', async () => {
+  const { handlers, calls, dependencies } = setup();
+  await invoke(handlers, 'vault:open-directory');
+  assert.deepEqual(calls, [['openPath', '/vault']]);
+
+  (
+    dependencies.service as unknown as {
+      getSelectedVaultPath: () => string | null;
+    }
+  ).getSelectedVaultPath = () => null;
+  await assert.rejects(
+    async () => invoke(handlers, 'vault:open-directory'),
+    /No vault selected/,
+  );
+
+  (
+    dependencies.service as unknown as {
+      getSelectedVaultPath: () => string | null;
+    }
+  ).getSelectedVaultPath = () => '/vault';
+  dependencies.openPath = async () => 'Finder failed';
+  await assert.rejects(
+    async () => invoke(handlers, 'vault:open-directory'),
+    /Finder failed/,
+  );
+});
 
 test('unloads one registered vault through the write barrier without deleting files', async () => {
   const { handlers, calls } = setup();
@@ -293,6 +324,7 @@ test('does not persist active state or watch if selecting fails', async () => {
       },
       stopWatcher: () => {},
       clearWatchedVaultId: () => {},
+      openPath: async () => '',
     },
   );
   await assert.rejects(

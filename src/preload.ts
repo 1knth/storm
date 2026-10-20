@@ -145,6 +145,8 @@ contextBridge.exposeInMainWorld('vault', {
   cliInstalled: (): Promise<boolean> => ipcRenderer.invoke('cli:installed'),
   enableCli: (): Promise<boolean> => ipcRenderer.invoke('cli:enable'),
   disableCli: (): Promise<boolean> => ipcRenderer.invoke('cli:disable'),
+  openDirectory: (): Promise<void> =>
+    ipcRenderer.invoke('vault:open-directory'),
   registryList: (): Promise<{
     vaults: RegisteredVault[];
     activeVaultId: string | null;

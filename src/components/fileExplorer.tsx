@@ -4,6 +4,7 @@ import ContextMenu from './ContextMenu';
 import type { ContextMenuPosition } from './ContextMenu';
 import { contextMenuPointForElement, isContextMenuKey } from './ContextMenu';
 import { getExplorerContextMenuItems } from './fileExplorerContextMenu';
+import { runDirectoryPathAction } from './directoryPathAction';
 import { FaPlus } from 'react-icons/fa';
 import { TbLayoutSidebarRightFilled } from 'react-icons/tb';
 import Note from './Note';
@@ -307,18 +308,16 @@ export default function FileExplorer({
             {vaultName && vaultPath && (
               <button
                 type="button"
-                aria-label="Copy vault path"
-                title={`Copy path: ${vaultPath}`}
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(vaultPath);
-                    onPathCopied('copied path to clipboard');
-                  } catch (error) {
-                    onCopyPathError(
-                      `Could not copy vault path: ${error instanceof Error ? error.message : String(error)}`,
-                    );
-                  }
-                }}
+                aria-label="Copy vault path; Command-click to open directory"
+                title={`Copy path: ${vaultPath}\nCommand-click to open directory in Finder`}
+                onClick={(event) =>
+                  void runDirectoryPathAction(event.metaKey, vaultPath, {
+                    openDirectory: () => window.vault.openDirectory(),
+                    copyPath: (path) => navigator.clipboard.writeText(path),
+                    onCopied: () => onPathCopied('copied path to clipboard'),
+                    onError: onCopyPathError,
+                  })
+                }
                 className="truncate rounded-sm text-left text-sm text-white/50 hover:text-white/80 hover:underline underline-offset-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
               >
                 {vaultName}
