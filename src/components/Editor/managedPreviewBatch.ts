@@ -1,5 +1,49 @@
 export type WordSegment = { text: string; offset: number; animate: boolean };
 
+export type RevealProgress = {
+  generationId: string;
+  previewKey: number;
+  pending: boolean;
+};
+
+export type RevealProgressState = {
+  generationId: string;
+  previewKey: number;
+  pendingKeys: Set<string>;
+};
+
+export function shouldShowRevealingStatus(
+  isFinished: boolean,
+  isWriting: boolean,
+  hasFinalAppend: boolean,
+  finalRevealDrained: boolean,
+): boolean {
+  return isFinished && !isWriting && hasFinalAppend && !finalRevealDrained;
+}
+
+export function createRevealProgressState(
+  generationId: string,
+  previewKey: number,
+  keys: readonly string[],
+  reducedMotion: boolean,
+): RevealProgressState {
+  return {
+    generationId,
+    previewKey,
+    pendingKeys: reducedMotion ? new Set() : new Set(keys),
+  };
+}
+
+export function completeRevealProgressUnit(
+  state: RevealProgressState,
+  generationId: string,
+  key: string,
+): boolean | null {
+  if (state.generationId !== generationId || !state.pendingKeys.delete(key))
+    return null;
+  return state.pendingKeys.size > 0;
+}
+
 export const PREVIEW_SCROLL_INTENT_MS = 450;
 export const PREVIEW_REVEAL_CADENCE_MS = 150;
 export const PREVIEW_REVEAL_FRAME_PADDING_MS = 16;

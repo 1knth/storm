@@ -58,6 +58,7 @@ import {
   hasRecentPreviewScrollIntent,
   PREVIEW_SCROLL_INTENT_MS,
   shouldFinalizeReveal,
+  shouldShowRevealingStatus,
 } from './managedPreviewBatch';
 import {
   isCurrentSaveCompletion,
@@ -194,6 +195,12 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     startLine: number;
     id: string;
   } | null>(null);
+  const [revealProgress, setRevealProgress] = useState<{
+    generationId: string;
+    previewKey: number;
+    snapshot: string;
+    pending: boolean;
+  } | null>(null);
   const revealId = useRef(0);
   const managedPreviewBatch = useRef(
     createManagedPreviewBatch<NonNullable<typeof preview>>(setPreview),
@@ -326,6 +333,38 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const agentStatusVisible = Boolean(
     activeNoteKey && agentStatusVisibleForNotes.has(activeNoteKey),
   );
+  const onRevealProgress = useCallback(
+    (progress: {
+      generationId: string;
+      previewKey: number;
+      pending: boolean;
+      snapshot: string;
+    }) => {
+      setRevealProgress((currentProgress) => {
+        if (
+          currentProgress?.generationId === progress.generationId &&
+          currentProgress.previewKey > progress.previewKey
+        )
+          return currentProgress;
+        return progress;
+      });
+    },
+    [],
+  );
+  const finalRevealDrained = Boolean(
+    appendReveal &&
+    revealProgress?.generationId === appendReveal.id &&
+    revealProgress.snapshot === appendReveal.markdown &&
+    !revealProgress.pending,
+  );
+  const statusVisualOverride = shouldShowRevealingStatus(
+    agentGenerationFinished,
+    agentWriting,
+    Boolean(appendReveal && appendReveal.documentKey === documentKey),
+    finalRevealDrained,
+  )
+    ? 'Revealing…'
+    : undefined;
   const toggleAgentStatusVisibility = () => {
     if (!activeNoteKey) return;
     setAgentStatusVisibleForNotes((visibleNotes) => {
@@ -1334,6 +1373,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             status={agentStatus}
             onStop={onStopAgent}
             visible={agentStatusVisible}
+            visualStatus={statusVisualOverride}
           />
           <div className="flex w-full min-h-0 min-w-0 flex-1 overflow-hidden">
             {imageAsset ? (
@@ -1403,6 +1443,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     ? appendReveal.id
                     : undefined
                 }
+                onRevealProgress={onRevealProgress}
               />
             ) : !hasActiveNote && !imageAsset ? (
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">

@@ -5,12 +5,14 @@ export type AgentStatusBarProps = {
   status?: AgentSessionStatus;
   onStop?: (sessionId: string) => void;
   visible?: boolean;
+  visualStatus?: string;
 };
 
 export function AgentStatusBar({
   status,
   onStop,
   visible = true,
+  visualStatus,
 }: AgentStatusBarProps) {
   const label =
     status?.state === 'writing'
@@ -26,6 +28,7 @@ export function AgentStatusBar({
               : status?.state === 'failed'
                 ? 'Failed'
                 : null;
+  const displayedLabel = visualStatus ?? label;
   if (!visible) return null;
   return (
     <div
@@ -34,7 +37,7 @@ export function AgentStatusBar({
     >
       <span>{status?.name?.trim() || 'Agent'}</span>
       <span aria-hidden="true">·</span>
-      <span>{label ?? 'Not connected'}</span>
+      <span>{displayedLabel ?? 'Not connected'}</span>
       {status?.state === 'writing' && onStop && (
         <button
           type="button"

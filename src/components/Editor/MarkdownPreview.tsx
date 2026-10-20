@@ -209,6 +209,12 @@ type Props = {
   appearance: Appearance;
   revealStartLine?: number;
   revealId?: string;
+  onRevealProgress?: (progress: {
+    generationId: string;
+    previewKey: number;
+    pending: boolean;
+    snapshot: string;
+  }) => void;
 };
 
 // Runs on Markdown text nodes only, leaving inline and fenced code literal.
@@ -587,6 +593,7 @@ function MarkdownPreview({
   appearance,
   revealStartLine,
   revealId,
+  onRevealProgress,
 }: Props) {
   const viteEnv = (
     import.meta as ImportMeta & { env?: Record<string, string | boolean> }
@@ -670,6 +677,63 @@ function MarkdownPreview({
     };
   }
   const diagnosticsRoot = useRef<HTMLElement>(null);
+  const revealProgressCallback = useRef(onRevealProgress);
+  const previewVersion = useRef(0);
+  useEffect(() => {
+    revealProgressCallback.current = onRevealProgress;
+  }, [onRevealProgress]);
+  useEffect(() => {
+    const root = diagnosticsRoot.current;
+    if (!root || !onRevealProgress) return;
+    const previewKey = ++previewVersion.current;
+    const generationId = revealId ?? `preview-${previewKey}`;
+    const units = [
+      ...root.querySelectorAll<HTMLElement>(
+        '[data-preview-reveal-word], [data-preview-reveal-block]',
+      ),
+    ];
+    const reducedMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    const pending = new Set<string>();
+    if (!reducedMotion) {
+      for (const unit of units) {
+        const key = unit.dataset.revealKey;
+        if (!key) continue;
+        const animation = unit
+          .getAnimations()
+          .find((item) => item.playState === 'running');
+        if (animation) pending.add(key);
+      }
+    }
+    const notify = (isPending: boolean) =>
+      revealProgressCallback.current?.({
+        generationId,
+        previewKey,
+        pending: isPending,
+        snapshot: markdown,
+      });
+    notify(pending.size > 0);
+    const onAnimationFinished = (event: AnimationEvent) => {
+      if (
+        !(event.target instanceof HTMLElement) ||
+        !event.target.matches(
+          '[data-preview-reveal-word], [data-preview-reveal-block]',
+        )
+      )
+        return;
+      if (event.animationName !== 'markdown-word-reveal') return;
+      const key = event.target.dataset.revealKey;
+      if (!key || !pending.delete(key)) return;
+      notify(pending.size > 0);
+    };
+    root.addEventListener('animationend', onAnimationFinished, true);
+    root.addEventListener('animationcancel', onAnimationFinished, true);
+    return () => {
+      root.removeEventListener('animationend', onAnimationFinished, true);
+      root.removeEventListener('animationcancel', onAnimationFinished, true);
+    };
+  }, [markdown, revealId, revealStartLine]);
   useEffect(() => {
     const root = diagnosticsRoot.current;
     if (!diagnosticsEnabled || !root) return;

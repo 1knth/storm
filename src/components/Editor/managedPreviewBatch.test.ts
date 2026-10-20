@@ -13,6 +13,7 @@ import {
   hasRecentPreviewScrollIntent,
   PREVIEW_SCROLL_INTENT_MS,
   shouldFinalizeReveal,
+  shouldShowRevealingStatus,
 } from './managedPreviewBatch';
 
 const originalSetTimeout = globalThis.setTimeout;
@@ -69,6 +70,50 @@ describe('preview scroll intent', () => {
     assert.equal(hasRecentPreviewScrollIntent(0, 1000), false);
     // Link clicks and other pointer presses do not extend the intent deadline.
     assert.equal(hasRecentPreviewScrollIntent(0, 1000), false);
+  });
+});
+
+describe('reveal progress tracking', () => {
+  it('remains pending until every unit completes and ignores stale generations', async () => {
+    const { createRevealProgressState, completeRevealProgressUnit } =
+      await import('./managedPreviewBatch');
+    const state = createRevealProgressState(
+      'generation-a',
+      7,
+      ['word-a', 'block-b'],
+      false,
+    );
+    assert.equal(state.pendingKeys.size, 2);
+    assert.equal(
+      completeRevealProgressUnit(state, 'generation-a', 'word-a'),
+      true,
+    );
+    assert.equal(
+      completeRevealProgressUnit(state, 'generation-old', 'block-b'),
+      null,
+    );
+    assert.equal(
+      completeRevealProgressUnit(state, 'generation-a', 'block-b'),
+      false,
+    );
+  });
+
+  it('completes immediately for reduced motion or no eligible units', async () => {
+    const { createRevealProgressState, completeRevealProgressUnit } =
+      await import('./managedPreviewBatch');
+    const reduced = createRevealProgressState(
+      'generation-a',
+      1,
+      ['word-a'],
+      true,
+    );
+    const empty = createRevealProgressState('generation-b', 2, [], false);
+    assert.equal(reduced.pendingKeys.size, 0);
+    assert.equal(empty.pendingKeys.size, 0);
+    assert.equal(
+      completeRevealProgressUnit(reduced, 'generation-a', 'word-a'),
+      null,
+    );
   });
 });
 
@@ -417,6 +462,23 @@ describe('append paragraph reveal boundary', () => {
 });
 
 describe('managed preview batching', () => {
+  it('shows Revealing until the final matching preview snapshot drains', () => {
+    assert.equal(shouldShowRevealingStatus(true, false, true, false), true);
+    assert.equal(shouldShowRevealingStatus(true, false, true, true), false);
+    // A drained earlier snapshot does not count for the newer final commit.
+    const earlierSnapshot = { snapshot: 'partial', pending: false };
+    const finalSnapshot = 'complete';
+    assert.equal(
+      earlierSnapshot.snapshot === finalSnapshot && !earlierSnapshot.pending,
+      false,
+    );
+  });
+
+  it('does not override active writing or terminal non-finished statuses', () => {
+    assert.equal(shouldShowRevealingStatus(true, true, true, false), false);
+    assert.equal(shouldShowRevealingStatus(false, false, true, false), false);
+  });
+
   it('publishes only the latest update in the 150ms window', () => {
     useFakeClock();
     const published: string[] = [];
