@@ -5,7 +5,7 @@ import type { ContextMenuPosition } from './ContextMenu';
 import { contextMenuPointForElement, isContextMenuKey } from './ContextMenu';
 import { getExplorerContextMenuItems } from './fileExplorerContextMenu';
 import { FaPlus } from 'react-icons/fa';
-import { RiMenuUnfold4Fill } from 'react-icons/ri';
+import { TbLayoutSidebarRightFilled } from 'react-icons/tb';
 import Note from './Note';
 import { commitOpacityDraft, DEFAULT_APPEARANCE } from '../appearance';
 import type { Appearance } from '../appearance';
@@ -325,7 +325,7 @@ export default function FileExplorer({
               </button>
             )}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <button
               type="button"
               ref={addButtonRef}
@@ -343,7 +343,7 @@ export default function FileExplorer({
                   target: null,
                 });
               }}
-              className="app-icon-button relative disabled:cursor-not-allowed disabled:opacity-40"
+              className="app-icon-button app-icon-button-no-hover-bg relative disabled:cursor-not-allowed disabled:opacity-40"
             >
               <FaPlus aria-hidden="true" size={14} />
               <ShortcutHint visible={commandHeld}>
@@ -357,9 +357,12 @@ export default function FileExplorer({
               aria-label="Hide file explorer"
               title="Hide file explorer (⌘/Ctrl+S)"
               onClick={onToggleCollapsed}
-              className="app-icon-button relative"
+              className="app-icon-button app-icon-button-no-hover-bg relative"
             >
-              <RiMenuUnfold4Fill aria-hidden="true" className="h-3.5 w-3.5" />
+              <TbLayoutSidebarRightFilled
+                aria-hidden="true"
+                className="!h-[14px] !w-[14px]"
+              />
               <ShortcutHint visible={commandHeld && toggleExplorerShortcut}>
                 {navigator.platform.toLowerCase().includes('mac')
                   ? '⌘S'

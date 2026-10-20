@@ -224,6 +224,10 @@
   color: white;
 }
 
+.app-icon-button-no-hover-bg:hover:not(:disabled) {
+  background-color: transparent;
+}
+
 .app-button {
   border-radius: 0.375rem;
   padding: 0.375rem 0.625rem;
