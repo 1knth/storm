@@ -45,6 +45,24 @@ describe('file explorer context menu', () => {
     ]);
   });
 
+  it.each([
+    [{ path: 'note.md', kind: 'note' }, 'note'],
+    [{ path: 'folder', kind: 'folder' }, 'folder'],
+  ] as const)('routes Open Location for %s', (target, expectedKind) => {
+    const opened: unknown[][] = [];
+    const items = getExplorerContextMenuItems(
+      target,
+      '',
+      create,
+      remove,
+      (path, kind) => opened.push([path, kind]),
+    );
+    const action = items.find((item) => item.id === 'open-location');
+    expect(action?.label).toBe('Open Location');
+    if (action?.type !== 'separator') action?.onSelect?.();
+    expect(opened).toEqual([[target.path, expectedKind]]);
+  });
+
   it('does not expose deletion when no delete handler is provided', () => {
     expect(
       ids(

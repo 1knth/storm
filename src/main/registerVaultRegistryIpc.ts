@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { lstat, realpath } from 'node:fs/promises';
 import type { VaultRegistry } from '../vault/vaultRegistry';
 import type { VaultService } from '../vault/vaultService';
 import type { VaultWriteBarrier } from '../vault/writeBarrier';
@@ -21,6 +23,7 @@ export function registerVaultRegistryIpc(
       operation: () => Promise<T>,
     ): Promise<T>;
     openPath: (directory: string) => Promise<string>;
+    showItemInFolder: (file: string) => void;
   },
 ): void {
   const { registry, service, writeBarrier } = dependencies;
@@ -30,6 +33,63 @@ export function registerVaultRegistryIpc(
     const error = await dependencies.openPath(directory);
     if (error) throw new Error(error);
   });
+  ipc.handle(
+    'vault:open-location',
+    async (_event, relativePath: unknown, kind: unknown) => {
+      if (
+        typeof relativePath !== 'string' ||
+        !relativePath ||
+        (kind !== 'note' && kind !== 'image' && kind !== 'folder') ||
+        path.isAbsolute(relativePath) ||
+        relativePath
+          .split(/[\\/]+/)
+          .some((part) => !part || part === '.' || part === '..')
+      ) {
+        throw new Error('Invalid vault path');
+      }
+      const root = service.getSelectedVaultPath();
+      if (!root) throw new Error('No vault selected');
+      const target = path.resolve(root, ...relativePath.split(/[\\/]+/));
+      const relative = path.relative(root, target);
+      if (
+        !relative ||
+        relative.startsWith(`..${path.sep}`) ||
+        relative === '..' ||
+        path.isAbsolute(relative)
+      )
+        throw new Error('Path is outside the selected vault');
+      const resolvedRoot = await realpath(root);
+      let currentPath = resolvedRoot;
+      for (const segment of relativePath.split(/[\\/]+/)) {
+        currentPath = path.join(currentPath, segment);
+        if ((await lstat(currentPath)).isSymbolicLink())
+          throw new Error('Symbolic links are not valid vault entries');
+      }
+      const [resolvedTarget, info] = await Promise.all([
+        realpath(target),
+        lstat(target),
+      ]);
+      const resolvedRelative = path.relative(resolvedRoot, resolvedTarget);
+      if (
+        resolvedRelative.startsWith(`..${path.sep}`) ||
+        resolvedRelative === '..' ||
+        path.isAbsolute(resolvedRelative) ||
+        info.isSymbolicLink()
+      )
+        throw new Error('Path is outside the selected vault');
+      if (
+        (kind === 'folder' && !info.isDirectory()) ||
+        (kind !== 'folder' && !info.isFile())
+      )
+        throw new Error('Vault entry type changed');
+      if (kind === 'folder') {
+        const error = await dependencies.openPath(resolvedTarget);
+        if (error) throw new Error(error);
+      } else {
+        dependencies.showItemInFolder(resolvedTarget);
+      }
+    },
+  );
   ipc.handle('vault:registry-list', () => registry.list());
   ipc.handle('vault:groups-list', () => registry.listGroups());
   ipc.handle('vault:sidebar-move', (_event, value: unknown) => {

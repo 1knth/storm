@@ -142,6 +142,10 @@ declare global {
       enableCli: () => Promise<boolean>;
       disableCli: () => Promise<boolean>;
       openDirectory: () => Promise<void>;
+      openLocation: (
+        relativePath: string,
+        kind: 'note' | 'image' | 'folder',
+      ) => Promise<void>;
       registryList: () => Promise<{
         vaults: RegisteredVault[];
         activeVaultId: string | null;

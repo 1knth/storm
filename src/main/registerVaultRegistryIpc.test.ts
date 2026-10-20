@@ -1,4 +1,14 @@
 import { strict as assert } from 'node:assert';
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  rm,
+  realpath,
+  symlink,
+} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import { VaultWriteBarrier } from '../vault/writeBarrier';
 import { registerVaultRegistryIpc } from './registerVaultRegistryIpc';
@@ -105,6 +115,7 @@ function setup() {
       calls.push(['openPath', directory]);
       return '';
     },
+    showItemInFolder: (file: string) => calls.push(['showItemInFolder', file]),
   };
   registerVaultRegistryIpc(
     { handle: (name, listener) => handlers.set(name, listener) },
@@ -144,6 +155,55 @@ test('opens the selected vault directory and rejects when none is selected', asy
     async () => invoke(handlers, 'vault:open-directory'),
     /Finder failed/,
   );
+});
+
+test('opens only validated vault locations with the requested Finder behavior', async () => {
+  const { handlers, calls, dependencies } = setup();
+  const root = await mkdtemp(path.join(os.tmpdir(), 'storm-open-location-'));
+  try {
+    await mkdir(path.join(root, 'folder'));
+    await writeFile(path.join(root, 'note.md'), '');
+    await symlink(path.join(root, 'note.md'), path.join(root, 'linked.md'));
+    (
+      dependencies.service as unknown as { getSelectedVaultPath: () => string }
+    ).getSelectedVaultPath = () => root;
+    await invoke(handlers, 'vault:open-location', 'note.md', 'note');
+    await invoke(handlers, 'vault:open-location', 'folder', 'folder');
+    const canonicalRoot = await realpath(root);
+    assert.deepEqual(calls, [
+      ['showItemInFolder', path.join(canonicalRoot, 'note.md')],
+      ['openPath', path.join(canonicalRoot, 'folder')],
+    ]);
+    await assert.rejects(
+      async () => invoke(handlers, 'vault:open-location', '../outside', 'note'),
+      /Invalid vault path/,
+    );
+    await assert.rejects(
+      async () => invoke(handlers, 'vault:open-location', 'folder', 'note'),
+      /type changed/,
+    );
+    await assert.rejects(
+      async () => invoke(handlers, 'vault:open-location', 'linked.md', 'note'),
+      /Symbolic links/,
+    );
+    await assert.rejects(
+      async () =>
+        invoke(
+          handlers,
+          'vault:open-location',
+          path.join(root, 'note.md'),
+          'note',
+        ),
+      /Invalid vault path/,
+    );
+    dependencies.openPath = async () => 'Finder failed';
+    await assert.rejects(
+      async () => invoke(handlers, 'vault:open-location', 'folder', 'folder'),
+      /Finder failed/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('unloads one registered vault through the write barrier without deleting files', async () => {
@@ -325,6 +385,7 @@ test('does not persist active state or watch if selecting fails', async () => {
       stopWatcher: () => {},
       clearWatchedVaultId: () => {},
       openPath: async () => '',
+      showItemInFolder: () => {},
     },
   );
   await assert.rejects(

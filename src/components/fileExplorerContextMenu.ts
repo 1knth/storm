@@ -7,9 +7,20 @@ export function getExplorerContextMenuItems(
   parent: string,
   onCreate: (kind: 'note' | 'folder', parentPath: string) => void,
   onDeleteEntry?: (path: string, kind: ExplorerTarget['kind']) => void,
+  onOpenLocation?: (path: string, kind: ExplorerTarget['kind']) => void,
 ): ContextMenuItem[] {
-  if (target && target.kind !== 'folder') {
-    return onDeleteEntry
+  const locationAction: ContextMenuItem[] =
+    target && onOpenLocation
+      ? [
+          {
+            id: 'open-location',
+            label: 'Open Location',
+            onSelect: () => onOpenLocation(target.path, target.kind),
+          },
+        ]
+      : [];
+  const deleteAction: ContextMenuItem[] =
+    target && onDeleteEntry
       ? [
           {
             id: 'delete-entry',
@@ -19,6 +30,9 @@ export function getExplorerContextMenuItems(
           },
         ]
       : [];
+
+  if (target && target.kind !== 'folder') {
+    return [...locationAction, ...deleteAction];
   }
 
   return [
@@ -27,16 +41,10 @@ export function getExplorerContextMenuItems(
       label: `New ${kind}`,
       onSelect: () => onCreate(kind, parent),
     })),
-    ...(target && onDeleteEntry
-      ? [
-          { type: 'separator' as const, id: 'entry-actions' },
-          {
-            id: 'delete-entry',
-            label: `Move ${target.kind} to Trash…`,
-            danger: true,
-            onSelect: () => onDeleteEntry(target.path, target.kind),
-          },
-        ]
+    ...(target && (locationAction.length || deleteAction.length)
+      ? [{ type: 'separator' as const, id: 'entry-actions' }]
       : []),
+    ...locationAction,
+    ...deleteAction,
   ];
 }

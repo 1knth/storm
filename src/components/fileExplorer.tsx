@@ -201,10 +201,6 @@ export default function FileExplorer({
       setContextMenu(null);
       return;
     }
-    if (row && !isFolder && !onDeleteEntry) {
-      setContextMenu(null);
-      return;
-    }
     const returnFocusTo =
       row?.querySelector<HTMLElement>('button') ??
       target.closest<HTMLElement>('[data-pane="explorer"]');
@@ -414,6 +410,14 @@ export default function FileExplorer({
             contextMenu.parent,
             onCreate,
             onDeleteEntry,
+            (path, kind) =>
+              void window.vault
+                .openLocation(path, kind)
+                .catch((error) =>
+                  onCopyPathError(
+                    error instanceof Error ? error.message : String(error),
+                  ),
+                ),
           )}
         />
       )}
