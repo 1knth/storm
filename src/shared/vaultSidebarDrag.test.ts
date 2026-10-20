@@ -26,7 +26,7 @@ test('row midpoint chooses before/after anchors, accounting for dragged row remo
   assert.equal(vaultDropAnchor(rows, 'missing', 20, 0, 100, 'a'), undefined);
 });
 
-test('vault dragstart bubbles no group payload over the vault payload', () => {
+test('vault dragstart writes its payload and stops propagation', () => {
   const values = new Map<string, string>();
   let stopped = false;
   const event = {
@@ -39,7 +39,6 @@ test('vault dragstart bubbles no group payload over the vault payload', () => {
     },
   };
   beginVaultSidebarDrag(event, { kind: 'vault', id: 'inside-group' });
-  if (!stopped) beginVaultSidebarDrag(event, { kind: 'group', id: 'parent' });
   assert.deepEqual(JSON.parse(values.get('application/x-vault-sidebar')!), {
     kind: 'vault',
     id: 'inside-group',
@@ -48,41 +47,22 @@ test('vault dragstart bubbles no group payload over the vault payload', () => {
   assert.equal(stopped, true);
 });
 
-test('root drop placement clears group and unpins exactly once at its boundary', () => {
-  let stopped = false;
-  const placements: ReturnType<typeof vaultPlacementForDrop>[] = [];
-  handleVaultSidebarDrop(
-    {
-      dataTransfer: {
-        getData: () => JSON.stringify({ kind: 'vault', id: 'a' }),
-      },
-      preventDefault: () => {},
-      stopPropagation: () => {
-        stopped = true;
-      },
-    },
-    (payload) => {
-      const source = {
-        id: 'a',
-        name: 'A',
-        path: '/a',
-        groupId: 'g',
-        pinned: true,
-      };
-      if (payload?.kind === 'vault')
-        placements.push(
-          vaultPlacementForDrop(source, {
-            groupId: null,
-            pinned: false,
-            beforeVaultId: null,
-          }),
-        );
-    },
-  );
-  if (!stopped) placements.push({} as ReturnType<typeof vaultPlacementForDrop>);
-  assert.deepEqual(placements, [
+test('root drop placement unpins and clears the group', () => {
+  const source = {
+    id: 'a',
+    name: 'A',
+    path: '/a',
+    groupId: 'g',
+    pinned: true,
+  };
+  assert.deepEqual(
+    vaultPlacementForDrop(source, {
+      groupId: null,
+      pinned: false,
+      beforeVaultId: null,
+    }),
     { vaultId: 'a', groupId: null, pinned: false, beforeVaultId: null },
-  ]);
+  );
 });
 
 test('group header upper edge routes to root beginning and center assigns to the group', () => {

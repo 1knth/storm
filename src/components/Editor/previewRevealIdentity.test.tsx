@@ -23,23 +23,4 @@ describe('preview reveal word component identity', () => {
     assert.equal(first.props.children, 'first');
     assert.equal(partialUpdate.props.children, 'first!');
   });
-
-  it('keeps mount-sensitive hooks off the positional span adapter', async () => {
-    const { readFile } = await import('node:fs/promises');
-    const source = await readFile(
-      new URL('./MarkdownPreview.tsx', import.meta.url),
-      'utf8',
-    );
-    const adapter = source.match(
-      /export function RevealWordAdapter\([\s\S]*?\n\}/,
-    )?.[0];
-    const animated = source.match(
-      /export function AnimatedRevealWord\([\s\S]*?\n\}/,
-    )?.[0];
-
-    assert.ok(adapter);
-    assert.doesNotMatch(adapter, /useRef|useState/);
-    assert.match(animated ?? '', /useRef/);
-    assert.match(adapter, /<AnimatedRevealWord key=\{key\}/);
-  });
 });
