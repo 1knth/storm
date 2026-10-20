@@ -2297,6 +2297,13 @@ function App() {
           vaultId={activeVaultId}
           agentDocument={activeAgentAdapter}
           agentStatus={activeAgentStatus}
+          agentWriting={matchingAgentStatuses.some(
+            (status) => status.state === 'writing',
+          )}
+          agentGenerationFinished={
+            matchingAgentStatuses.length > 0 &&
+            matchingAgentStatuses.every((status) => status.state === 'finished')
+          }
           onStopAgent={(sessionId) => {
             window.stormAgent.cancel(sessionId, 'Stopped from editor');
             setAgentStatuses((current) => ({

@@ -1,5 +1,29 @@
 @import 'tailwindcss';
 
+.markdown-word-reveal {
+  animation: markdown-word-reveal 100ms ease-out both;
+}
+
+.markdown-block-reveal {
+  animation: markdown-word-reveal 100ms ease-out both;
+}
+
+@keyframes markdown-word-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown-word-reveal,
+  .markdown-block-reveal {
+    animation: none;
+  }
+}
+
 /*
  * Appearance variables are authoritative for CodeMirror's drawn selection and
  * Vim cursor colors. !important outranks library theme declarations without

@@ -52,6 +52,14 @@ import type { AgentEditorAdapter } from './agentEditorAdapter';
 import type { AgentSessionStatus } from '../../shared/agentProtocol';
 import { AgentStatusBar } from './AgentStatusBar';
 import {
+  acquireWritingBaseline,
+  appendedContentStartLine,
+  createManagedPreviewBatch,
+  hasRecentPreviewScrollIntent,
+  PREVIEW_SCROLL_INTENT_MS,
+  shouldFinalizeReveal,
+} from './managedPreviewBatch';
+import {
   isCurrentSaveCompletion,
   isSaveCompletionContentUnchanged,
   shouldSaveBoundDocument,
@@ -117,6 +125,8 @@ type EditorProps = {
   imageAsset?: { vaultId: string; path: string; filename: string } | null;
   agentDocument?: AgentEditorAdapter | null;
   agentStatus?: AgentSessionStatus;
+  agentWriting?: boolean;
+  agentGenerationFinished?: boolean;
   onStopAgent?: (sessionId: string) => void;
 };
 
@@ -135,6 +145,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     imageAsset = null,
     agentDocument = null,
     agentStatus,
+    agentWriting = false,
+    agentGenerationFinished = false,
     onStopAgent,
   },
   ref,
@@ -171,6 +183,21 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   } | null>(null);
   const previewSnapshot = useRef(preview);
   previewSnapshot.current = preview;
+  const previousWriting = useRef(false);
+  const writingBaseline = useRef<{
+    documentKey: string;
+    markdown: string;
+  } | null>(null);
+  const [appendReveal, setAppendReveal] = useState<{
+    documentKey: string;
+    markdown: string;
+    startLine: number;
+    id: string;
+  } | null>(null);
+  const revealId = useRef(0);
+  const managedPreviewBatch = useRef(
+    createManagedPreviewBatch<NonNullable<typeof preview>>(setPreview),
+  );
   const [hasActiveNote, setHasActiveNote] = useState(false);
   const previousReadingMode = useRef(readingMode);
   const pendingFocus = useRef(false);
@@ -207,6 +234,95 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const activeNoteKey = current.current
     ? JSON.stringify([current.current.vaultId, current.current.note.path])
     : null;
+  const documentKey = activeNoteKey;
+  useEffect(() => {
+    const writing = Boolean(agentWriting);
+    const activeMarkdown = preview?.markdown;
+    if (documentKey !== writingBaseline.current?.documentKey) {
+      writingBaseline.current = null;
+      setAppendReveal(null);
+    }
+    if (writing && !previousWriting.current) {
+      const alreadyCapturedByManagedSync =
+        writingBaseline.current?.documentKey === documentKey;
+      if (!alreadyCapturedByManagedSync) {
+        writingBaseline.current =
+          documentKey && activeMarkdown !== undefined
+            ? acquireWritingBaseline(
+                writingBaseline.current,
+                documentKey,
+                activeMarkdown,
+              )
+            : null;
+        setAppendReveal(null);
+      } else if (writingBaseline.current && activeMarkdown !== undefined) {
+        const baseline = writingBaseline.current;
+        const startLine = appendedContentStartLine(
+          baseline.markdown,
+          activeMarkdown,
+        );
+        if (startLine !== null) {
+          setAppendReveal((currentReveal) => ({
+            documentKey: baseline.documentKey,
+            markdown: activeMarkdown,
+            startLine,
+            id:
+              currentReveal?.documentKey === baseline.documentKey
+                ? currentReveal.id
+                : String(++revealId.current),
+          }));
+        }
+      }
+    } else if (
+      writing &&
+      writingBaseline.current &&
+      activeMarkdown !== undefined
+    ) {
+      const baseline = writingBaseline.current;
+      const startLine = appendedContentStartLine(
+        baseline.markdown,
+        activeMarkdown,
+      );
+      if (startLine !== null) {
+        setAppendReveal({
+          documentKey: baseline.documentKey,
+          markdown: activeMarkdown,
+          startLine,
+          id:
+            appendReveal?.documentKey === baseline.documentKey
+              ? appendReveal.id
+              : String(++revealId.current),
+        });
+      }
+    } else if (!writing && writingBaseline.current) {
+      const baseline = writingBaseline.current;
+      if (
+        shouldFinalizeReveal(
+          baseline.documentKey === documentKey,
+          writing,
+          agentGenerationFinished,
+        ) &&
+        activeMarkdown !== undefined
+      ) {
+        const startLine = appendedContentStartLine(
+          baseline.markdown,
+          activeMarkdown,
+        );
+        if (startLine !== null) {
+          setAppendReveal({
+            documentKey: baseline.documentKey,
+            markdown: activeMarkdown,
+            startLine,
+            id:
+              appendReveal?.documentKey === baseline.documentKey
+                ? appendReveal.id
+                : String(++revealId.current),
+          });
+        }
+      }
+    }
+    previousWriting.current = writing;
+  }, [agentWriting, agentGenerationFinished, documentKey, preview?.markdown]);
   const agentStatusVisible = Boolean(
     activeNoteKey && agentStatusVisibleForNotes.has(activeNoteKey),
   );
@@ -298,6 +414,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     }));
     return mapPreviewTopAtSourceLine(line, anchors);
   };
+  const previewScrollIntentUntil = useRef(0);
+  const markPreviewScrollIntent = useCallback(() => {
+    previewScrollIntentUntil.current = Date.now() + PREVIEW_SCROLL_INTENT_MS;
+  }, []);
   const syncFromPreview = useCallback(() => {
     if (previewAnimation.current.active) return;
     const pane = previewScrollRef.current;
@@ -311,6 +431,13 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       return;
     }
     expectedPreviewScroll.current = null;
+    if (
+      !hasRecentPreviewScrollIntent(
+        previewScrollIntentUntil.current,
+        Date.now(),
+      )
+    )
+      return;
     const line = sourceLineAtPreviewTop(pane.scrollTop);
     if (line === null) return;
     const position = view.state.doc.line(
@@ -559,6 +686,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     editorAnimation.current.cancel();
     expectedPreviewScroll.current = null;
     expectedEditorScroll.current = null;
+    managedPreviewBatch.current.dispose();
     const view = viewRef.current;
     if (!view) return;
     if (timer.current) clearTimeout(timer.current);
@@ -606,7 +734,35 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       )
         return false;
       if (view.state !== state) view.setState(state);
-      setPreview({ vaultId, notePath: path, markdown: state.doc.toString() });
+      const nextPreview = {
+        vaultId,
+        notePath: path,
+        markdown: state.doc.toString(),
+      };
+      const managedWriting =
+        (agentDocumentRef.current?.writing ?? agentWriting) ||
+        writingBaseline.current?.documentKey === activeNoteKey;
+      const currentPreview = previewSnapshot.current;
+      const previewUnchanged =
+        currentPreview?.vaultId === nextPreview.vaultId &&
+        currentPreview.notePath === nextPreview.notePath &&
+        currentPreview.markdown === nextPreview.markdown;
+      if (previewUnchanged) return true;
+      if (managedWriting) {
+        if (!writingBaseline.current && activeNoteKey) {
+          const baseline = previewSnapshot.current;
+          if (baseline?.vaultId === vaultId && baseline.notePath === path) {
+            writingBaseline.current = acquireWritingBaseline(
+              writingBaseline.current,
+              activeNoteKey,
+              baseline.markdown,
+            );
+          }
+        }
+        managedPreviewBatch.current.schedule(nextPreview);
+      } else {
+        managedPreviewBatch.current.publishNow(nextPreview);
+      }
       return true;
     },
     snapshot: () => {
@@ -1032,6 +1188,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       previewAnimation.current.cancel();
       editorAnimation.current.cancel();
       if (timer.current) clearTimeout(timer.current);
+      managedPreviewBatch.current.dispose();
       pendingImagePastes.current = [];
       if (binding.current?.view === view) {
         binding.current = null;
@@ -1043,6 +1200,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   }, []);
 
   useEffect(() => {
+    if (!agentWriting && !agentDocument?.writing)
+      managedPreviewBatch.current.flush();
     viewRef.current?.dispatch({
       effects: [
         vimCompartment.current.reconfigure(vimMode ? vim() : []),
@@ -1051,7 +1210,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         ),
       ],
     });
-  }, [vimMode, agentDocument?.writing]);
+  }, [vimMode, agentDocument?.writing, agentWriting]);
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -1202,6 +1361,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     onOpenNote={onOpenNote}
                     scrollRef={previewScrollRef}
                     onScroll={syncFromPreview}
+                    onScrollIntent={markPreviewScrollIntent}
                     onUserScroll={cancelScrollAnimations}
                     onReadingKeyDown={onReadingKeyDown}
                     appearance={appearance}
@@ -1230,8 +1390,19 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 onOpenNote={onOpenNote}
                 scrollRef={previewScrollRef}
                 onScroll={syncFromPreview}
+                onScrollIntent={markPreviewScrollIntent}
                 onUserScroll={cancelScrollAnimations}
                 appearance={appearance}
+                revealStartLine={
+                  appendReveal?.documentKey === documentKey
+                    ? appendReveal.startLine
+                    : undefined
+                }
+                revealId={
+                  appendReveal?.documentKey === documentKey
+                    ? appendReveal.id
+                    : undefined
+                }
               />
             ) : !hasActiveNote && !imageAsset ? (
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">

@@ -43,6 +43,70 @@ function render(markdown: string) {
 }
 
 describe('Markdown task preview', () => {
+  it('reveals every prose word across real Markdown plugins', () => {
+    const source = [
+      'One **bold word** and *italic text* with [linked words](https://example.com) here.',
+      'Second paragraph has several ordinary words for preview reveals.',
+      'Third paragraph includes more words beyond the first few spans.',
+    ].join('\n\n');
+    const html = renderToStaticMarkup(
+      React.createElement(MarkdownPreview, {
+        markdown: source,
+        vaultId: 'vault-a',
+        notePath: 'all-words.md',
+        appearance: DEFAULT_APPEARANCE,
+        revealStartLine: 1,
+        revealId: 'all-words-regression',
+      }),
+    );
+    const spans = [
+      ...html.matchAll(
+        /<span[^>]*data-preview-reveal-word[^>]*data-reveal-key="([^"]+)"[^>]*>(.*?)<\/span>/g,
+      ),
+    ];
+    const expectedWords =
+      [
+        'One bold word and italic text with linked words here.',
+        'Second paragraph has several ordinary words for preview reveals.',
+        'Third paragraph includes more words beyond the first few spans.',
+      ]
+        .join(' ')
+        .match(/[\p{L}\p{N}]+/gu) ?? [];
+    assert.equal(spans.length, expectedWords.length, html);
+    assert.equal(new Set(spans.map((match) => match[1])).size, spans.length);
+    assert.ok(spans.every((match) => match[1].length > 0));
+    assert.equal(
+      (html.match(/class="markdown-prose-reveal"/g) ?? []).length,
+      3,
+    );
+  });
+  it('renders appended words with per-unit scheduled delays, not ordinal multiplication', () => {
+    const originalNow = Date.now;
+    Date.now = () => 1_000;
+    try {
+      const html = renderToStaticMarkup(
+        React.createElement(MarkdownPreview, {
+          markdown: 'A quick brown fox',
+          vaultId: 'vault',
+          notePath: 'note.md',
+          appearance: DEFAULT_APPEARANCE,
+          revealStartLine: 1,
+          revealId: 'generation-test',
+        }),
+      );
+      assert.match(html, /data-preview-reveal-word/);
+      const delays = [...html.matchAll(/animation-delay:([0-9.]+)ms/g)].map(
+        (match) => Number(match[1]),
+      );
+      assert.equal(delays.length, 4);
+      assert.deepEqual(
+        delays.slice(1).map((delay, index) => delay - delays[index]),
+        [150, 150, 150],
+      );
+    } finally {
+      Date.now = originalNow;
+    }
+  });
   it('renders one accessible-hidden spacer per top-level physical blank line', () => {
     const spacerCount = (source: string) => {
       const html = renderToStaticMarkup(
