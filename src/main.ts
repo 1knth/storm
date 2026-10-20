@@ -40,7 +40,10 @@ import { registerVaultRegistryIpc } from './main/registerVaultRegistryIpc';
 import { AgentBroker } from './main/agentBroker';
 import { runVaultLifecycleExclusive } from './main/vaultLifecycle';
 import { bindAgentBrokerIpc, registerAgentIpc } from './main/registerAgentIpc';
-import { resolveAgentNoteTarget } from './vault/agentNoteTarget';
+import {
+  resolveAgentNoteTarget,
+  resolveExistingAgentNoteTarget,
+} from './vault/agentNoteTarget';
 import {
   startAgentEndpoint,
   type StartedAgentEndpoint,
@@ -101,6 +104,10 @@ const agentBroker = new AgentBroker({
   resolveTarget: async (notePath) => {
     const { vaults } = await vaultRegistry.list();
     return resolveAgentNoteTarget(notePath, vaults);
+  },
+  resolveExistingTarget: async (notePath) => {
+    const { vaults } = await vaultRegistry.list();
+    return resolveExistingAgentNoteTarget(notePath, vaults);
   },
   assertTargetRegistered: async (target) => {
     const { vaults } = await vaultRegistry.list();

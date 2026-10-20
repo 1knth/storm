@@ -198,7 +198,10 @@ export async function runCli(
         arg.startsWith('-') &&
         arg !== '--json' &&
         arg !== '--stdin' &&
-        arg !== '--name'
+        arg !== '--name' &&
+        arg !== '--expected-version' &&
+        arg !== '--dry-run' &&
+        arg !== '--operation-id'
       ) {
         throw new CliUsageError(`Unknown option: ${arg}`);
       } else rest.push(arg);
@@ -222,6 +225,60 @@ export async function runCli(
       throw new CliUsageError(
         'Agent name must be at most 64 characters on one line',
       );
+    let editVersion: number | undefined;
+    let editOperationId: string | undefined;
+    if (command === 'replace' || command === 'patch') {
+      const sessionId = rest[1];
+      if (!sessionId || sessionId.startsWith('-'))
+        throw new CliUsageError(
+          `${command} requires SESSION --expected-version N --stdin`,
+        );
+      let sawVersion = false;
+      let sawStdin = false;
+      let sawDryRun = false;
+      let sawJson = false;
+      let sawOperationId = false;
+      for (let index = 2; index < rest.length; index++) {
+        const flag = rest[index]!;
+        if (flag === '--expected-version') {
+          if (sawVersion)
+            throw new CliUsageError('Duplicate --expected-version');
+          sawVersion = true;
+          const value = rest[++index];
+          if (
+            !value ||
+            !/^(0|[1-9]\d*)$/.test(value) ||
+            !Number.isSafeInteger(Number(value))
+          )
+            throw new CliUsageError(
+              '--expected-version requires a nonnegative safe integer',
+            );
+          editVersion = Number(value);
+        } else if (flag === '--operation-id') {
+          if (sawOperationId)
+            throw new CliUsageError('Duplicate --operation-id');
+          sawOperationId = true;
+          editOperationId = rest[++index];
+          if (!editOperationId || editOperationId.startsWith('-'))
+            throw new CliUsageError('--operation-id requires a value');
+        } else if (flag === '--stdin') {
+          if (sawStdin) throw new CliUsageError('Duplicate --stdin');
+          sawStdin = true;
+        } else if (flag === '--dry-run') {
+          if (sawDryRun) throw new CliUsageError('Duplicate --dry-run');
+          sawDryRun = true;
+        } else if (flag === '--json') {
+          if (sawJson) throw new CliUsageError('Duplicate --json');
+          sawJson = true;
+        } else throw new CliUsageError(`Unknown ${command} argument: ${flag}`);
+      }
+      if (!sawVersion || !sawStdin)
+        throw new CliUsageError(
+          `${command} requires SESSION --expected-version N --stdin`,
+        );
+    }
+    if (command === 'inspect' && (rest.length !== 3 || rest[2] !== '--json'))
+      throw new CliUsageError('inspect requires ABS_PATH --json');
     if (command === 'connect' && (rest.length !== 3 || rest[2] !== '--json'))
       throw new CliUsageError('connect requires ABS_PATH --json');
     if (command === 'stream' && (rest.length !== 3 || rest[2] !== '--stdin'))
@@ -263,13 +320,54 @@ export async function runCli(
       }
     };
     let result: any;
-    if (command === 'connect' && rest[1] && rest[2] === '--json')
+    if (command === 'inspect' && rest[1] && rest[2] === '--json')
+      result = await request({ type: 'inspect', absolutePath: rest[1] });
+    else if (command === 'connect' && rest[1] && rest[2] === '--json')
       result = await request({
         type: 'connect',
         absolutePath: rest[1],
         ...(agentName ? { name: agentName } : {}),
       });
-    else if (command === 'status') {
+    else if (command === 'replace' || command === 'patch') {
+      const stdin = io.stdin ?? process.stdin;
+      let source = '';
+      for await (const chunk of stdin as AsyncIterable<Uint8Array>)
+        source += Buffer.from(chunk).toString('utf8');
+      let plan: import('../src/shared/agentProtocol').AgentEditPlan;
+      try {
+        plan =
+          command === 'replace'
+            ? { type: 'replace', content: source }
+            : { type: 'replaceText', replacements: JSON.parse(source) };
+        if (
+          command === 'patch' &&
+          (!Array.isArray((plan as any).replacements) ||
+            (plan as any).replacements.some(
+              (item: any) =>
+                !item ||
+                typeof item !== 'object' ||
+                Array.isArray(item) ||
+                Object.keys(item).length !== 2 ||
+                typeof item.find !== 'string' ||
+                !item.find ||
+                typeof item.replace !== 'string',
+            ))
+        )
+          throw new Error('invalid patch');
+      } catch {
+        throw new CliUsageError(
+          'patch stdin must be a JSON array of {"find":"non-empty string","replace":"string"} edits',
+        );
+      }
+      const preview = rest.includes('--dry-run');
+      result = await request({
+        type: preview ? 'edit-preview' : 'edit-apply',
+        sessionId: rest[1]!,
+        operationId: editOperationId ?? randomUUID(),
+        expectedVersion: editVersion!,
+        plan,
+      });
+    } else if (command === 'status') {
       const sessionId = rest[1] === '--json' ? undefined : rest[1];
       result = await request({
         type: 'status',

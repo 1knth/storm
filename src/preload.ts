@@ -22,6 +22,7 @@ import type {
   VaultChangeEvent,
 } from './shared/types';
 import type { GroupColor } from './shared/groupColors';
+import { isAgentEditPlan } from './shared/agentEditValidation';
 import type {
   AgentBridgeRequest,
   AgentBridgeResult,
@@ -75,6 +76,8 @@ function isAgentRequest(value: unknown): value is AgentBridgeRequest {
   const item = value as Record<string, unknown>;
   if (typeof item.requestId !== 'string' || item.requestId.length > 128)
     return false;
+  if (item.type === 'inspect')
+    return typeof item.vaultId === 'string' && typeof item.path === 'string';
   if (item.type === 'snapshot')
     return (
       typeof item.absolutePath === 'string' &&
@@ -90,6 +93,13 @@ function isAgentRequest(value: unknown): value is AgentBridgeRequest {
       typeof item.text === 'string' &&
       new TextEncoder().encode(item.text).byteLength <= 262144
     );
+  if (item.type === 'edit-preview' || item.type === 'edit-apply')
+    return (
+      typeof item.sessionId === 'string' &&
+      Number.isSafeInteger(item.expectedVersion) &&
+      Number(item.expectedVersion) >= 0 &&
+      isAgentEditPlan(item.plan)
+    );
   return (
     (item.type === 'finish' || item.type === 'cancel') &&
     typeof item.sessionId === 'string'
@@ -100,6 +110,31 @@ function isAgentResult(value: unknown): value is AgentBridgeResult {
   const item = value as Record<string, unknown>;
   if (item.ok === false)
     return typeof item.code === 'string' && typeof item.message === 'string';
+  if (item.ok === true && item.preview === true)
+    return (
+      typeof item.content === 'string' &&
+      typeof item.changed === 'boolean' &&
+      Number.isSafeInteger(item.documentVersion) &&
+      Number(item.documentVersion) >= 0 &&
+      typeof item.diskRevision === 'string'
+    );
+  if (item.ok === true && item.edited === true)
+    return (
+      typeof item.content === 'string' &&
+      Number.isSafeInteger(item.documentVersion) &&
+      Number(item.documentVersion) >= 0 &&
+      typeof item.diskRevision === 'string' &&
+      item.saveState === 'saved'
+    );
+  if (item.ok === true && item.inspected === true)
+    return (
+      item.open === false ||
+      (item.open === true &&
+        typeof item.content === 'string' &&
+        Number.isSafeInteger(item.documentVersion) &&
+        typeof item.diskRevision === 'string' &&
+        ['pending', 'saved', 'failed'].includes(String(item.saveState)))
+    );
   return (
     item.ok === true &&
     Number.isSafeInteger(item.documentVersion) &&

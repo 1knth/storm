@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isAgentEditPlan } from '../shared/agentEditValidation';
 import type { AgentNoteTarget } from '../vault/agentNoteTarget';
 import { runVaultLifecycleExclusive } from './vaultLifecycle';
 import {
@@ -33,8 +34,26 @@ export type AgentRendererRequest =
       sequence: number;
       text: string;
     }
+  | { type: 'inspect'; requestId: string; vaultId: string; path: string }
+  | {
+      type: 'edit-preview' | 'edit-apply';
+      requestId: string;
+      sessionId: string;
+      expectedVersion: number;
+      plan: import('../shared/agentProtocol').AgentEditPlan;
+    }
   | { type: 'finish' | 'cancel'; requestId: string; sessionId: string };
 export type AgentRendererResult =
+  | { ok: true; inspected: true; open: false }
+  | {
+      ok: true;
+      inspected: true;
+      open: true;
+      content: string;
+      documentVersion: number;
+      diskRevision: string;
+      saveState: 'pending' | 'saved' | 'failed';
+    }
   | {
       ok: true;
       content?: string;
@@ -42,9 +61,27 @@ export type AgentRendererResult =
       diskRevision: string;
       saveState?: 'pending' | 'saved' | 'failed';
     }
+  | {
+      ok: true;
+      preview: true;
+      content: string;
+      changed: boolean;
+      documentVersion: number;
+      diskRevision: string;
+      saveState?: 'saved';
+    }
+  | {
+      ok: true;
+      edited: true;
+      content: string;
+      documentVersion: number;
+      diskRevision: string;
+      saveState: 'saved';
+    }
   | { ok: false; code: string; message: string };
 export interface AgentBrokerOptions {
   resolveTarget(path: string): Promise<AgentNoteTarget>;
+  resolveExistingTarget?(path: string): Promise<AgentNoteTarget>;
   assertTargetRegistered?(target: AgentNoteTarget): Promise<void>;
   withVaultLifecycle?<T>(root: string, operation: () => Promise<T>): Promise<T>;
   renderer: AgentRendererTransport;
@@ -70,6 +107,10 @@ const MAX_REMEMBERED_OPERATIONS = 256;
 /** Per-session mutation queue preserves renderer order; operation results are retained up to a bounded count per session. */
 export class AgentBroker {
   private readonly sessions = new Map<string, Session>();
+  private readonly editOperations = new Map<
+    string,
+    { fingerprint: string; result: Promise<AgentResponse> }
+  >();
   constructor(private readonly options: AgentBrokerOptions) {
     options.renderer.onCancelled?.((id) => {
       const session = this.sessions.get(id);
@@ -99,6 +140,47 @@ export class AgentBroker {
       error: { code: code as never, message, retryable },
     });
     try {
+      if (request.type === 'inspect') {
+        const resolveExisting = this.options.resolveExistingTarget;
+        if (!resolveExisting)
+          return fail('INTERNAL', 'Inspection is unavailable');
+        const target = await resolveExisting(request.absolutePath);
+        const rendered = await this.options.renderer.dispatch({
+          type: 'inspect',
+          requestId: request.requestId,
+          vaultId: target.vaultId,
+          path: target.relativePath,
+        });
+        if (!rendered.ok) return fail(rendered.code, rendered.message);
+        if (!('inspected' in rendered))
+          return fail(
+            'INTERNAL',
+            'Renderer returned a mutation response for inspection',
+          );
+        if (rendered.open)
+          return {
+            protocol: AGENT_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            ok: true,
+            type: 'inspected',
+            open: true,
+            source: 'live',
+            content: rendered.content,
+            documentVersion: rendered.documentVersion,
+            diskRevision: rendered.diskRevision,
+            saveState: rendered.saveState,
+          };
+        return {
+          protocol: AGENT_PROTOCOL_VERSION,
+          requestId: request.requestId,
+          ok: true,
+          type: 'inspected',
+          open: false,
+          source: 'disk',
+          content: target.content,
+          diskRevision: target.diskRevision,
+        };
+      }
       if (request.type === 'connect') {
         const target = await this.options.resolveTarget(request.absolutePath);
         const withLifecycle =
@@ -126,6 +208,11 @@ export class AgentBroker {
             vaultRoot: target.vaultRoot,
           });
           if (!snapshot.ok) return fail(snapshot.code, snapshot.message);
+          if ('inspected' in snapshot)
+            return fail(
+              'INTERNAL',
+              'Renderer returned an inspection response for snapshot',
+            );
           session.version = snapshot.documentVersion;
           session.target.diskRevision = snapshot.diskRevision;
           this.sessions.set(session.id, session);
@@ -155,6 +242,22 @@ export class AgentBroker {
       }
       const session = this.sessions.get(request.sessionId);
       if (!session) return fail('SESSION_NOT_FOUND', 'Unknown session');
+      if (request.type === 'edit-apply') {
+        const key = `${session.id}:${request.operationId}`;
+        const fingerprint = JSON.stringify([
+          request.expectedVersion,
+          request.plan,
+        ]);
+        const previous = this.editOperations.get(key);
+        if (previous) {
+          if (previous.fingerprint !== fingerprint)
+            return fail(
+              'DUPLICATE_OPERATION',
+              'Operation ID was already used with different content',
+            );
+          return { ...(await previous.result), requestId: request.requestId };
+        }
+      }
       if (
         session.state === 'cancelled' ||
         session.state === 'disconnected' ||
@@ -206,7 +309,16 @@ export class AgentBroker {
             sequence: request.sequence,
             text: request.text,
           });
-          if (!result.ok) throw new Error(result.message);
+          if (!result.ok) {
+            if (result.code === 'SESSION_CLOSED') session.state = 'failed';
+            throw Object.assign(new Error(result.message), {
+              code: result.code,
+            });
+          }
+          if ('inspected' in result)
+            throw new Error(
+              'Renderer returned an inspection response for append',
+            );
           if (session.state !== 'connected' && session.state !== 'writing')
             throw new Error('SESSION_CLOSED');
           session.sequence = request.sequence;
@@ -250,6 +362,73 @@ export class AgentBroker {
           );
         }
       }
+      if (request.type === 'edit-preview' || request.type === 'edit-apply') {
+        const cacheKey = `${session.id}:${request.operationId}`;
+        const fingerprint = JSON.stringify([
+          request.expectedVersion,
+          request.plan,
+        ]);
+        if (session.state !== 'connected' && session.state !== 'writing')
+          return fail('SESSION_CLOSED', 'Session is not writable');
+
+        const resultPromise = this.enqueue(
+          session,
+          async (): Promise<AgentResponse> => {
+            const rendered = await this.options.renderer.dispatch({
+              type: request.type,
+              requestId: request.requestId,
+              sessionId: session.id,
+              expectedVersion: request.expectedVersion,
+              plan: request.plan,
+            });
+            if (!rendered.ok) return fail(rendered.code, rendered.message);
+            if (
+              'inspected' in rendered ||
+              !('preview' in rendered || 'edited' in rendered)
+            )
+              return fail(
+                'INTERNAL',
+                'Renderer returned an invalid edit response',
+              );
+            session.version = rendered.documentVersion;
+            session.target.diskRevision = rendered.diskRevision;
+            return 'preview' in rendered
+              ? {
+                  protocol: AGENT_PROTOCOL_VERSION,
+                  requestId: request.requestId,
+                  ok: true,
+                  type: 'preview',
+                  operationId: request.operationId,
+                  content: rendered.content,
+                  changed: rendered.changed,
+                  documentVersion: rendered.documentVersion,
+                  diskRevision: rendered.diskRevision,
+                }
+              : {
+                  protocol: AGENT_PROTOCOL_VERSION,
+                  requestId: request.requestId,
+                  ok: true,
+                  type: 'edited',
+                  operationId: request.operationId,
+                  content: rendered.content,
+                  documentVersion: rendered.documentVersion,
+                  diskRevision: rendered.diskRevision,
+                  saveState: 'saved',
+                };
+          },
+        ).catch((error) => fail('INTERNAL', errorMessage(error)));
+        if (request.type === 'edit-apply') {
+          this.editOperations.set(cacheKey, {
+            fingerprint,
+            result: resultPromise,
+          });
+          while (this.editOperations.size > MAX_REMEMBERED_OPERATIONS) {
+            const oldest = this.editOperations.keys().next().value;
+            if (oldest) this.editOperations.delete(oldest);
+          }
+        }
+        return { ...(await resultPromise), requestId: request.requestId };
+      }
       if (request.type === 'disconnect') {
         this.fenceSession(session, 'disconnected');
         return {
@@ -286,7 +465,17 @@ export class AgentBroker {
             requestId: request.requestId,
             sessionId: session.id,
           });
-          if (!rendererResult.ok) throw new Error(rendererResult.message);
+          if (!rendererResult.ok) {
+            if (rendererResult.code === 'SESSION_CLOSED')
+              session.state = 'failed';
+            throw Object.assign(new Error(rendererResult.message), {
+              code: rendererResult.code,
+            });
+          }
+          if ('inspected' in rendererResult)
+            throw new Error(
+              'Renderer returned an inspection response for finish',
+            );
           if (session.state !== 'connected' && session.state !== 'writing')
             throw new Error('SESSION_CLOSED');
           session.state = 'finished';
@@ -298,6 +487,9 @@ export class AgentBroker {
           (error) => error,
         );
         if (result) {
+          const code = (result as { code?: string }).code;
+          if (code === 'SESSION_CLOSED')
+            return fail('SESSION_CLOSED', errorMessage(result));
           if (errorMessage(result) === 'SESSION_CLOSED')
             return fail('SESSION_CLOSED', 'Session is not writable');
           return fail('INTERNAL', errorMessage(result));
@@ -372,6 +564,7 @@ function isRequest(v: unknown): v is AgentRequest {
     r.requestId.length > 128
   )
     return false;
+  if (r.type === 'inspect') return typeof r.absolutePath === 'string';
   if (r.type === 'connect')
     return (
       typeof r.absolutePath === 'string' &&
@@ -379,6 +572,15 @@ function isRequest(v: unknown): v is AgentRequest {
         (typeof r.name === 'string' &&
           r.name.length <= 64 &&
           !hasControlCharacter(r.name)))
+    );
+  if (r.type === 'edit-preview' || r.type === 'edit-apply')
+    return (
+      typeof r.sessionId === 'string' &&
+      typeof r.operationId === 'string' &&
+      r.operationId.length <= 128 &&
+      Number.isSafeInteger(r.expectedVersion) &&
+      Number(r.expectedVersion) >= 0 &&
+      isAgentEditPlan(r.plan)
     );
   if (r.type === 'append')
     return (

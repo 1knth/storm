@@ -8,6 +8,13 @@ export type AgentDocumentStatus =
   | 'stopped'
   | 'disconnected';
 export type SaveNote = (request: SaveNoteRequest) => Promise<SaveNoteResult>;
+export type AgentEditPlan =
+  | { type: 'replace'; content: string }
+  | {
+      type: 'replaceText';
+      replacements: Array<{ find: string; replace: string }>;
+    };
+export type AgentEditPreview = { content: string; changed: boolean };
 export type AgentDocument = {
   key: string;
   vaultId?: string;
@@ -27,6 +34,7 @@ export type AgentDocument = {
   generation: number;
   conflict: boolean;
   saveError?: unknown;
+  persistedContent?: string;
 };
 
 /** Renderer-side per-document owner. Persistence is injected; no view or global selection is owned here. */
@@ -82,6 +90,7 @@ export class AgentDocumentController {
       inFlight: false,
       generation: 0,
       conflict: false,
+      persistedContent: state.doc.toString(),
     };
     this.documents.set(key, document);
     this.notify(document);
@@ -92,6 +101,7 @@ export class AgentDocumentController {
     const document = this.documents.get(documentId);
     if (!document || document.closed) return;
     document.state = state;
+    document.acceptedVersion++;
     document.generation++;
     document.dirty = true;
     this.notify(document);
@@ -125,6 +135,7 @@ export class AgentDocumentController {
         try {
           const result = await save(request);
           document.revision = result.revision;
+          document.persistedContent = request.content;
           document.dirty = document.generation !== generation;
         } catch (error) {
           document.conflict = true;
@@ -146,6 +157,82 @@ export class AgentDocumentController {
         document.key,
         document.state.update(transaction).state,
       );
+  }
+
+  previewEdit(
+    document: AgentDocument,
+    expectedVersion: number,
+    plan: AgentEditPlan,
+  ): AgentEditPreview {
+    if (document.acceptedVersion !== expectedVersion)
+      throw new Error('Stale document version');
+    const original = document.state.doc.toString();
+    if (plan.type === 'replace')
+      return { content: plan.content, changed: plan.content !== original };
+    const matches = plan.replacements.map(({ find }) => {
+      if (!find) throw new Error('Find text must not be empty');
+      const first = original.indexOf(find);
+      if (first < 0) throw new Error('Find text not found');
+      if (original.indexOf(find, first + 1) >= 0)
+        throw new Error('Find text is ambiguous');
+      return { from: first, to: first + find.length };
+    });
+    const ordered = [...matches].sort((a, b) => a.from - b.from);
+    for (let index = 1; index < ordered.length; index++)
+      if (ordered[index].from < ordered[index - 1].to)
+        throw new Error('Replacement targets overlap');
+    let content = original;
+    for (let index = plan.replacements.length - 1; index >= 0; index--) {
+      const range = matches[index];
+      content =
+        content.slice(0, range.from) +
+        plan.replacements[index].replace +
+        content.slice(range.to);
+    }
+    return { content, changed: content !== original };
+  }
+
+  async applyEdit(
+    document: AgentDocument,
+    expectedVersion: number,
+    plan: AgentEditPlan,
+  ): Promise<{ version: number; content: string }> {
+    const preview = this.previewEdit(document, expectedVersion, plan);
+    if (
+      document.closed ||
+      document.closing ||
+      document.status === 'stopped' ||
+      document.status === 'disconnected'
+    )
+      throw new Error('Agent session is closed');
+    if (preview.changed) {
+      document.state = document.state.update({
+        changes: {
+          from: 0,
+          to: document.state.doc.length,
+          insert: preview.content,
+        },
+        annotations: Transaction.remote.of(true),
+      }).state;
+      document.acceptedVersion++;
+      document.generation++;
+      document.dirty = true;
+      this.notify(document);
+      this.scheduleSave(document);
+    }
+    const acceptedVersion = document.acceptedVersion;
+    const acceptedGeneration = document.generation;
+    await document.pending;
+    const saved = await this.flush(document);
+    if (!saved) throw new Error('Could not save document edit');
+    if (
+      document.generation !== acceptedGeneration ||
+      document.persistedContent !== preview.content
+    )
+      throw new Error(
+        'Document changed while saving edit; requested content was not acknowledged',
+      );
+    return { version: acceptedVersion, content: preview.content };
   }
 
   append(document: AgentDocument, text: string): Promise<{ version: number }> {
@@ -190,7 +277,10 @@ export class AgentDocumentController {
   }
 
   finish(document: AgentDocument): void {
-    if (!document.closed && document.status === 'writing') {
+    if (
+      !document.closed &&
+      (document.status === 'connected' || document.status === 'writing')
+    ) {
       document.status = 'finished';
       this.notify(document);
     }
