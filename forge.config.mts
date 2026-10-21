@@ -1,5 +1,6 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import path from 'node:path';
+import { repairDarwinBundleSignatures } from './scripts/darwinSignatures';
 import { buildCliBinary } from './scripts/buildCli';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
@@ -18,6 +19,19 @@ const config: ForgeConfig = {
   hooks: {
     prePackage: async (_config, platform, arch) => {
       await buildCliBinary(platform, arch);
+    },
+    postPackage: async (forgeConfig, { platform, outputPaths }) => {
+      const signingConfigured = Boolean(
+        forgeConfig.packagerConfig.osxSign ||
+        process.env.CSC_NAME ||
+        (process.env.CSC_IDENTITY_AUTO_DISCOVERY &&
+          process.env.CSC_IDENTITY_AUTO_DISCOVERY !== 'false'),
+      );
+      await repairDarwinBundleSignatures(
+        platform,
+        outputPaths,
+        signingConfigured,
+      );
     },
   },
   rebuildConfig: {},
