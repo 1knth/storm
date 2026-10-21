@@ -20,6 +20,7 @@ import {
   shouldShowRevealingStatus,
   isFinalPreviewDrained,
   deriveFinalPreviewState,
+  collectPendingRevealKeys,
 } from './managedPreviewBatch';
 
 const originalSetTimeout = globalThis.setTimeout;
@@ -58,6 +59,89 @@ function advance(ms: number) {
 afterEach(() => {
   globalThis.setTimeout = originalSetTimeout;
   globalThis.clearTimeout = originalClearTimeout;
+});
+
+describe('large preview reveal work', () => {
+  it('collects pending animations with one subtree query, never one query per word', () => {
+    const units = Array.from({ length: 3008 }, (_, index) => ({
+      getAttribute: () => `word:${index}`,
+      getAnimations: () => {
+        throw new Error('Per-word animation query');
+      },
+    })) as unknown as HTMLElement[];
+    const animation = (
+      target: HTMLElement,
+      playState = 'running',
+      animationName = 'markdown-word-reveal',
+    ) =>
+      ({
+        effect: { target },
+        playState,
+        animationName,
+      }) as unknown as Animation;
+    let queries = 0;
+    const root = {
+      getAnimations(options?: GetAnimationsOptions) {
+        queries++;
+        assert.deepEqual(options, { subtree: true });
+        return [
+          ...units.map((unit) => animation(unit)),
+          animation(units[0], 'finished'),
+          animation(units[0], 'running', 'other-animation'),
+          animation({
+            getAttribute: () => 'unrelated',
+          } as unknown as HTMLElement),
+        ];
+      },
+    };
+    const pending = collectPendingRevealKeys(root, units, false);
+    assert.equal(queries, 1);
+    assert.equal(pending.size, units.length);
+    assert.equal(pending.has('unrelated'), false);
+    assert.deepEqual(collectPendingRevealKeys(root, units, true), new Set());
+    assert.equal(queries, 1); // reduced motion needs no animation query
+    assert.equal(
+      collectPendingRevealKeys(
+        { getAnimations: () => [animation(units[0], 'finished')] },
+        units,
+        false,
+      ).size,
+      0,
+    );
+  });
+
+  it('scans the existing schedule once per batch rather than once per new unit', () => {
+    for (const mode of ['words', 'units'] as const) {
+      const registry = createRevealScheduleRegistry();
+      scheduleRevealWords(registry, ['existing'], 1000);
+      const originalValues = registry.words.values.bind(registry.words);
+      let scans = 0;
+      registry.words.values = () => {
+        scans++;
+        return originalValues();
+      };
+      const keys = Array.from({ length: 3008 }, (_, i) => `new:${i}`);
+      const plans =
+        mode === 'words'
+          ? scheduleRevealWords(registry, keys, 1000)
+          : planRevealUnits(
+              registry,
+              keys.map((key, sourceOffset) => ({
+                key,
+                sourceOffset,
+                kind: 'word' as const,
+              })),
+              1000,
+            );
+      assert.equal(scans, 1);
+      assert.equal(plans.length, 3008);
+      for (let i = 1; i < plans.length; i++)
+        assert.equal(
+          plans[i].scheduledAt - plans[i - 1].scheduledAt,
+          PREVIEW_REVEAL_CADENCE_MS,
+        );
+    }
+  });
 });
 
 describe('preview scroll intent', () => {

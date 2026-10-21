@@ -101,6 +101,7 @@ type Session = {
   queue: Promise<void>;
   operations: Map<string, CachedOperation>;
   cancelWaiters: Set<() => void>;
+  outcomeUncertain: boolean;
 };
 const MAX_REMEMBERED_OPERATIONS = 256;
 
@@ -236,6 +237,7 @@ export class AgentBroker {
               queue: Promise.resolve(),
               operations: new Map(),
               cancelWaiters: new Set(),
+              outcomeUncertain: false,
             };
             const snapshot = await this.options.renderer.dispatch({
               type: 'snapshot',
@@ -358,6 +360,7 @@ export class AgentBroker {
             throw new Error('SESSION_CLOSED');
           if (request.sequence !== session.sequence + 1)
             throw new Error('sequence');
+          session.outcomeUncertain = true;
           const result = await this.options.renderer.dispatch({
             type: 'append',
             requestId: request.requestId,
@@ -377,11 +380,15 @@ export class AgentBroker {
             throw new Error(
               'Renderer returned an inspection response for append',
             );
+          this.observeDocument(
+            session,
+            result.documentVersion,
+            result.diskRevision,
+          );
+          session.outcomeUncertain = false;
           if (session.state !== 'connected' && session.state !== 'writing')
             throw new Error('SESSION_CLOSED');
           session.sequence = request.sequence;
-          session.version = result.documentVersion;
-          session.target.diskRevision = result.diskRevision;
           return {
             protocol: AGENT_PROTOCOL_VERSION,
             requestId: request.requestId,
@@ -413,9 +420,10 @@ export class AgentBroker {
           return { ...(await accepted), requestId: request.requestId };
         } catch (error) {
           return fail(
-            errorMessage(error) === 'sequence'
-              ? 'INVALID_SEQUENCE'
-              : 'SESSION_CLOSED',
+            (error as { code?: string }).code ??
+              (errorMessage(error) === 'sequence'
+                ? 'INVALID_SEQUENCE'
+                : 'SESSION_CLOSED'),
             errorMessage(error),
           );
         }
@@ -429,9 +437,15 @@ export class AgentBroker {
         if (session.state !== 'connected' && session.state !== 'writing')
           return fail('SESSION_CLOSED', 'Session is not writable');
 
+        if (request.type === 'edit-apply') {
+          session.pending++;
+          session.outcomeUncertain = true;
+        }
         const resultPromise = this.enqueue(
           session,
           async (): Promise<AgentResponse> => {
+            if (session.state !== 'connected' && session.state !== 'writing')
+              return fail('SESSION_CLOSED', 'Session is not writable');
             const rendered = await this.options.renderer.dispatch({
               type: request.type,
               requestId: request.requestId,
@@ -448,8 +462,17 @@ export class AgentBroker {
                 'INTERNAL',
                 'Renderer returned an invalid edit response',
               );
-            session.version = rendered.documentVersion;
-            session.target.diskRevision = rendered.diskRevision;
+            this.observeDocument(
+              session,
+              rendered.documentVersion,
+              rendered.diskRevision,
+            );
+            if (request.type === 'edit-apply') session.outcomeUncertain = false;
+            if (session.state !== 'connected' && session.state !== 'writing')
+              return fail(
+                'SESSION_CLOSED',
+                'Session closed before acknowledgement',
+              );
             return 'preview' in rendered
               ? {
                   protocol: AGENT_PROTOCOL_VERSION,
@@ -485,7 +508,9 @@ export class AgentBroker {
             if (oldest) this.editOperations.delete(oldest);
           }
         }
-        return { ...(await resultPromise), requestId: request.requestId };
+        const response = await resultPromise;
+        if (request.type === 'edit-apply') session.pending--;
+        return { ...response, requestId: request.requestId };
       }
       if (request.type === 'disconnect') {
         this.fenceSession(session, 'disconnected');
@@ -499,12 +524,23 @@ export class AgentBroker {
       }
       if (request.type === 'cancel') {
         this.fenceSession(session, 'cancelled');
+        if (session.pending > 0) session.outcomeUncertain = true;
         // Cancellation fences queued work immediately and does not wait for a blocked append.
-        void this.options.renderer.dispatch({
+        const cancellation = await this.options.renderer.dispatch({
           type: 'cancel',
           requestId: request.requestId,
           sessionId: session.id,
         });
+        // Cancellation remains fenced, but its response is authoritative observation
+        // of the renderer's document state (not acknowledgement of queued writes).
+        if (cancellation.ok && !('inspected' in cancellation)) {
+          this.observeDocument(
+            session,
+            cancellation.documentVersion,
+            cancellation.diskRevision,
+          );
+          session.outcomeUncertain = false;
+        }
       } else {
         if (session.state === 'finished') {
           return {
@@ -580,6 +616,12 @@ export class AgentBroker {
     );
     return result;
   }
+  private observeDocument(session: Session, version: number, revision: string) {
+    if (version >= session.version) {
+      session.version = version;
+      session.target.diskRevision = revision;
+    }
+  }
   private status(s: Session): AgentSessionStatus {
     return {
       ...(s.name ? { name: s.name } : {}),
@@ -589,6 +631,7 @@ export class AgentBroker {
       documentVersion: s.version,
       diskRevision: s.target.diskRevision,
       pendingOperations: s.pending,
+      ...(s.outcomeUncertain ? { outcomeUncertain: true } : {}),
     };
   }
 }

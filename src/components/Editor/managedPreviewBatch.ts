@@ -69,6 +69,30 @@ export function isFinalPreviewDrained({
   );
 }
 
+/** Query animations once: per-word getAnimations() repeatedly flushes browser state. */
+export function collectPendingRevealKeys(
+  root: Pick<HTMLElement, 'getAnimations'>,
+  units: readonly HTMLElement[],
+  reducedMotion: boolean,
+): Set<string> {
+  const pending = new Set<string>();
+  if (reducedMotion) return pending;
+  const eligible = new Set<Element>(units);
+  for (const animation of root.getAnimations({ subtree: true })) {
+    if (animation.playState !== 'running') continue;
+    if (
+      'animationName' in animation &&
+      animation.animationName !== 'markdown-word-reveal'
+    )
+      continue;
+    const target = (animation.effect as KeyframeEffect | null)?.target;
+    if (!target || !eligible.has(target)) continue;
+    const key = target.getAttribute('data-reveal-key');
+    if (key) pending.add(key);
+  }
+  return pending;
+}
+
 export type RevealProgressState = {
   generationId: string;
   previewKey: number;
@@ -190,15 +214,14 @@ export function scheduleRevealWords(
   cadence = PREVIEW_REVEAL_CADENCE_MS,
 ): RevealSchedule[] {
   if (keys.length > 0 && registry.startedAt === null) registry.startedAt = now;
+  let previous = [...registry.words.values()].reduce<number | null>(
+    (latest, item) => Math.max(latest ?? item.scheduledAt, item.scheduledAt),
+    null,
+  );
   return keys.map((key) => {
     let schedule = registry.words.get(key);
     if (!schedule) {
       const ordinal = registry.nextOrdinal++;
-      const previous = [...registry.words.values()].reduce<number | null>(
-        (latest, item) =>
-          Math.max(latest ?? item.scheduledAt, item.scheduledAt),
-        null,
-      );
       const scheduledAt = Math.max(
         previous === null
           ? now + PREVIEW_REVEAL_FRAME_PADDING_MS
@@ -209,6 +232,7 @@ export function scheduleRevealWords(
       registry.startedAt ??= scheduledAt;
       schedule = { ordinal, scheduledAt };
       registry.words.set(key, schedule);
+      previous = scheduledAt;
     }
     return schedule;
   });
@@ -229,16 +253,15 @@ export function planRevealUnits(
         a.inputOrder - b.inputOrder,
     );
   const schedules: RevealSchedule[] = [];
+  let previousStart = [...registry.words.values()].reduce<number | null>(
+    (latest, item) => Math.max(latest ?? item.scheduledAt, item.scheduledAt),
+    null,
+  );
   let previousParagraph = registry.tailParagraphKey ?? undefined;
   let previousParagraphEnd = registry.tailParagraphEndAt;
   for (const { unit } of ordered) {
     let schedule = registry.words.get(unit.key);
     if (!schedule) {
-      const previousStart = [...registry.words.values()].reduce<number | null>(
-        (latest, item) =>
-          Math.max(latest ?? item.scheduledAt, item.scheduledAt),
-        null,
-      );
       const paragraphChanged =
         unit.paragraphKey !== undefined &&
         previousParagraph !== undefined &&
@@ -253,6 +276,7 @@ export function planRevealUnits(
       schedule = { ordinal: registry.nextOrdinal++, scheduledAt };
       registry.words.set(unit.key, schedule);
       registry.lastPendingStartAt = scheduledAt;
+      previousStart = scheduledAt;
     }
     schedules.push(schedule);
     if (unit.paragraphKey !== undefined) {
