@@ -220,6 +220,11 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.on('tabs:restore-saved', listener);
     return () => ipcRenderer.removeListener('tabs:restore-saved', listener);
   },
+  onReopenClosedTab: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('tabs:reopen-closed', listener);
+    return () => ipcRenderer.removeListener('tabs:reopen-closed', listener);
+  },
   groupFolderChoose: (): Promise<{
     selectionId: string;
     name: string;

@@ -26,6 +26,12 @@ import {
 } from './components/Editor/tabGroups';
 import type { TabAssignments, TabGroup } from './components/Editor/tabGroups';
 import { closeTabTransition } from './components/Editor/tabTransitions';
+import {
+  captureClosedTab,
+  prepareClosedTabForReopen,
+  restoreClosedTab,
+} from './components/Editor/closedTabs';
+import type { ClosedTabRecord } from './components/Editor/closedTabs';
 import { serializeTabLayout } from './components/Editor/savedTabLayout';
 import { checkpointErrorMessage } from './components/Editor/checkpointError';
 import { ToastProvider, useToast } from './components/Toast';
@@ -140,6 +146,8 @@ function App() {
   const activeIdRef = useRef(activeId);
   const groupsRef = useRef(tabGroups);
   const assignmentsRef = useRef(tabGroupAssignments);
+  const recentlyClosedRef = useRef(new Map<string, ClosedTabRecord[]>());
+  const reopenRequestRef = useRef(0);
   activeVaultIdRef.current = activeVaultId;
   tabsRef.current = tabs;
   activeIdRef.current = activeId;
@@ -1368,6 +1376,76 @@ function App() {
 
   useEffect(
     () =>
+      window.vault.onReopenClosedTab(() => {
+        const vaultId = activeVaultIdRef.current;
+        if (!vaultId || navigationBusy.current) return;
+        const stack = recentlyClosedRef.current.get(vaultId);
+        const record = stack?.[stack.length - 1];
+        if (!record) return;
+        const request = ++reopenRequestRef.current;
+        void (async () => {
+          try {
+            const prepared = await prepareClosedTabForReopen(record, {
+              readNote: async (_id, path) => {
+                const note = await window.vault.readNote(path);
+                return note
+                  ? { content: note.content, revision: note.revision }
+                  : null;
+              },
+              createEditorState: (content) =>
+                editorRef.current!.createState(content),
+              exists: async (_id, path) =>
+                (await window.vault.listNotes()).some(
+                  (entry) => entry.path === path,
+                ),
+            });
+            if (
+              activeVaultIdRef.current !== vaultId ||
+              reopenRequestRef.current !== request ||
+              recentlyClosedRef.current.get(vaultId)?.at(-1) !== record
+            )
+              return;
+            const currentStack = recentlyClosedRef.current.get(vaultId)!;
+            const restored = restoreClosedTab(
+              {
+                tabs: tabsRef.current,
+                groups: groupsRef.current,
+                assignments: assignmentsRef.current,
+                activeID: activeIdRef.current,
+              },
+              prepared,
+              vaultId,
+            );
+            if (restored === undefined) return;
+            currentStack.pop();
+            tabsRef.current = restored.tabs;
+            groupsRef.current = restored.groups;
+            assignmentsRef.current = restored.assignments;
+            setTabs(restored.tabs);
+            setTabGroups(restored.groups);
+            setTabGroupAssignments(restored.assignments);
+            const tab = restored.tabs.find(
+              (item) => getTabId(item) === restored.activeID,
+            );
+            if (tab) activateTab(tab);
+          } catch (error) {
+            if (
+              activeVaultIdRef.current === vaultId &&
+              reopenRequestRef.current === request
+            )
+              notifyError(
+                error instanceof Error
+                  ? error.message
+                  : 'Unable to reopen closed tab',
+              );
+          }
+        })();
+      }),
+    [activeVaultId],
+  );
+
+  useEffect(
+    () =>
       window.vault.onRestoreTabs(() => {
         void restoreSavedTabs();
       }),
@@ -1679,6 +1757,22 @@ function App() {
     const transition = closeTabTransition(tabs, targetId, activeId, getTabId);
     if (activeVaultId) visitedVaults.current.add(activeVaultId);
     if (!transition.wasActive) {
+      if (activeVaultId) {
+        const record = captureClosedTab(
+          tabsRef.current,
+          groupsRef.current,
+          assignmentsRef.current,
+          targetId,
+          activeVaultId,
+        );
+        if (record) {
+          const stack = recentlyClosedRef.current.get(activeVaultId) ?? [];
+          recentlyClosedRef.current.set(
+            activeVaultId,
+            [...stack, record].slice(-20),
+          );
+        }
+      }
       const { remaining } = transition;
       const normalized = normalizeTabGroupState(
         remaining,
@@ -1702,6 +1796,22 @@ function App() {
     navigationBusy.current = true;
     try {
       if (!(await editorRef.current?.flush())) return;
+      if (activeVaultId) {
+        const record = captureClosedTab(
+          tabsRef.current,
+          groupsRef.current,
+          assignmentsRef.current,
+          targetId,
+          activeVaultId,
+        );
+        if (record) {
+          const stack = recentlyClosedRef.current.get(activeVaultId) ?? [];
+          recentlyClosedRef.current.set(
+            activeVaultId,
+            [...stack, record].slice(-20),
+          );
+        }
+      }
       const { remaining, nextActive } = closeTabTransition(
         tabsRef.current,
         targetId,
@@ -2265,7 +2375,7 @@ function App() {
                     ? ['h / j / k / l — Navigate panes and files']
                     : []),
                   'Enter / l — Open focused item',
-                  '⌘⇧T / Ctrl+Shift+T — Restore saved tabs',
+                  '⌘⇧T / Ctrl+Shift+T — Reopen closed tab',
                   ...(vimMode
                     ? ['i — Enter insert mode', 'Esc — Return to normal mode']
                     : []),

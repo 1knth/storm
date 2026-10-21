@@ -842,8 +842,15 @@ app.whenReady().then(async () => {
       label: 'Tabs',
       submenu: [
         {
-          label: 'Restore Saved Tabs',
+          label: 'Reopen Closed Tab',
           accelerator: 'CommandOrControl+Shift+T',
+          click: () =>
+            BrowserWindow.getFocusedWindow()?.webContents.send(
+              'tabs:reopen-closed',
+            ),
+        },
+        {
+          label: 'Restore Saved Tabs',
           click: () =>
             BrowserWindow.getFocusedWindow()?.webContents.send(
               'tabs:restore-saved',
