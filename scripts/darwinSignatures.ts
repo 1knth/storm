@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { readdir } from 'node:fs/promises';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -12,16 +14,29 @@ export async function repairDarwinBundleSignatures(
 ): Promise<void> {
   if (platform !== 'darwin' || signingConfigured) return;
 
-  for (const appPath of outputPaths) {
-    await runCommand('codesign', [
-      '--force',
-      '--deep',
-      '--sign',
-      '-',
-      '--identifier',
-      'com.electron.storm',
-      appPath,
-    ]);
-    await runCommand('codesign', ['--verify', '--deep', '--strict', appPath]);
+  for (const outputPath of outputPaths) {
+    const appPaths = outputPath.endsWith('.app')
+      ? [outputPath]
+      : (await readdir(outputPath, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory() && entry.name.endsWith('.app'))
+          .map((entry) => path.join(outputPath, entry.name));
+    if (appPaths.length === 0) {
+      throw new Error(
+        `No macOS app bundle found in package output: ${outputPath}`,
+      );
+    }
+
+    for (const appPath of appPaths) {
+      await runCommand('codesign', [
+        '--force',
+        '--deep',
+        '--sign',
+        '-',
+        '--identifier',
+        'com.electron.storm',
+        appPath,
+      ]);
+      await runCommand('codesign', ['--verify', '--deep', '--strict', appPath]);
+    }
   }
 }
