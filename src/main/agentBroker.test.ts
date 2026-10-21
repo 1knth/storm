@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { AgentBroker, type AgentRendererRequest } from './agentBroker';
+import {
+  AgentBroker,
+  type AgentRendererRequest,
+  type AgentRendererResult,
+} from './agentBroker';
 import { runVaultLifecycleExclusive } from './vaultLifecycle';
 
 function setup() {
@@ -75,6 +79,158 @@ function deferred<T = void>() {
   });
   return { promise, resolve };
 }
+
+function brokerWithRenderer(
+  dispatch: (request: AgentRendererRequest) => Promise<AgentRendererResult>,
+) {
+  return new AgentBroker({
+    resolveTarget: async (absolutePath) => ({
+      absolutePath,
+      vaultId: 'outcome',
+      vaultRoot: '/outcome',
+      relativePath: 'note.md',
+      content: '',
+      diskRevision: 'r0',
+    }),
+    renderer: { dispatch },
+  });
+}
+
+describe('uncertain write outcomes', () => {
+  for (const type of ['append', 'edit-apply'] as const) {
+    it(`reconciles a saved ${type} after timeout without reopening a cancelled session`, async () => {
+      const calls: string[] = [];
+      const broker = brokerWithRenderer(async (request) => {
+        calls.push(request.type);
+        if (request.type === 'snapshot')
+          return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+        if (request.type === 'cancel')
+          return { ok: true, documentVersion: 1, diskRevision: 'r1' };
+        return {
+          ok: false,
+          code: 'RENDERER_TIMEOUT',
+          message: 'Reply lost after save',
+        };
+      });
+      const {
+        session: { sessionId },
+      } = (await broker.handle(
+        req('connect', { absolutePath: '/outcome/note.md' }),
+      )) as any;
+      const write = {
+        sessionId,
+        operationId: 'one',
+        expectedVersion: 0,
+        plan: { type: 'replace', content: 'saved' },
+        sequence: 1,
+        text: 'saved',
+      };
+      const failed = (await broker.handle(req(type, write))) as any;
+      assert.equal(failed.ok, false);
+      assert.equal(failed.error.code, 'RENDERER_TIMEOUT');
+      const uncertain = (await broker.handle(
+        req('status', { sessionId }),
+      )) as any;
+      assert.equal(uncertain.sessions[0].outcomeUncertain, true);
+      assert.equal(uncertain.sessions[0].pendingOperations, 0);
+      const cancelled = (await broker.handle(
+        req('cancel', { sessionId }),
+      )) as any;
+      assert.equal(cancelled.session.state, 'cancelled');
+      assert.equal(cancelled.session.documentVersion, 1);
+      assert.equal(cancelled.session.diskRevision, 'r1');
+      assert.equal(cancelled.session.outcomeUncertain, undefined);
+      const denied = (await broker.handle(
+        req(type, { ...write, operationId: 'two' }),
+      )) as any;
+      assert.equal(denied.error.code, 'SESSION_CLOSED');
+      assert.deepEqual(calls, ['snapshot', type, 'cancel']);
+    });
+  }
+
+  for (const cancellation of ['timeout', 'throw'] as const) {
+    it(`retains uncertainty when cancellation confirmation is lost (${cancellation})`, async () => {
+      const broker = brokerWithRenderer(async (request) => {
+        if (request.type === 'snapshot')
+          return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+        if (request.type === 'cancel' && cancellation === 'throw')
+          throw new Error('Connection lost');
+        return { ok: false, code: 'RENDERER_TIMEOUT', message: 'No reply' };
+      });
+      const connected = (await broker.handle(
+        req('connect', { absolutePath: '/outcome/note.md' }),
+      )) as any;
+      const sessionId = connected.session.sessionId;
+      await broker.handle(
+        req('edit-apply', {
+          sessionId,
+          operationId: 'one',
+          expectedVersion: 0,
+          plan: { type: 'replace', content: 'saved maybe' },
+        }),
+      );
+      await broker.handle(req('cancel', { sessionId }));
+      const status = (await broker.handle(req('status', { sessionId }))) as any;
+      assert.equal(status.sessions[0].state, 'cancelled');
+      assert.equal(status.sessions[0].outcomeUncertain, true);
+      assert.equal(status.sessions[0].documentVersion, 0);
+      assert.equal(status.sessions[0].diskRevision, 'r0');
+    });
+  }
+
+  it('fences queued edits and never regresses a cancellation save from a late edit response', async () => {
+    const entered = deferred();
+    const held = deferred<AgentRendererResult>();
+    let writes = 0;
+    const broker = brokerWithRenderer(async (request) => {
+      if (request.type === 'snapshot')
+        return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+      if (request.type === 'cancel')
+        return { ok: true, documentVersion: 2, diskRevision: 'r2' };
+      writes++;
+      entered.resolve();
+      return held.promise;
+    });
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/outcome/note.md' }),
+    )) as any;
+    const sessionId = connected.session.sessionId;
+    const edit = {
+      sessionId,
+      expectedVersion: 0,
+      plan: { type: 'replace', content: 'first' },
+    };
+    const first = broker.handle(
+      req('edit-apply', { ...edit, operationId: 'one' }),
+    );
+    await entered.promise;
+    const second = broker.handle(
+      req('edit-apply', { ...edit, operationId: 'two' }),
+    );
+    const cancelled = (await broker.handle(
+      req('cancel', { sessionId }),
+    )) as any;
+    assert.equal(cancelled.session.state, 'cancelled');
+    held.resolve({
+      ok: true,
+      edited: true,
+      content: 'first',
+      documentVersion: 1,
+      diskRevision: 'r1',
+    });
+    for (const response of (await Promise.all([first, second])) as any[]) {
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'SESSION_CLOSED');
+    }
+    assert.equal(writes, 1);
+    const status = (await broker.handle(req('status', { sessionId }))) as any;
+    assert.equal(status.sessions[0].state, 'cancelled');
+    assert.equal(status.sessions[0].documentVersion, 2);
+    assert.equal(status.sessions[0].diskRevision, 'r2');
+    assert.equal(status.sessions[0].pendingOperations, 0);
+    assert.equal(status.sessions[0].outcomeUncertain, undefined);
+  });
+});
 
 describe('AgentBroker', () => {
   it('inspects existing notes without creating sessions and returns disk content when closed', async () => {
@@ -666,7 +822,7 @@ describe('AgentBroker', () => {
     (broker as any).options.renderer.dispatch = original;
   });
 
-  it('disconnect fences queued appends and settles callers before a blocked renderer ACK', async () => {
+  it('disconnect fences callers but observes late document state without reopening', async () => {
     let release!: () => void;
     const calls: AgentRendererRequest[] = [];
     const broker = new AgentBroker({
@@ -727,6 +883,7 @@ describe('AgentBroker', () => {
     )) as any;
     assert.equal(status.sessions[0].state, 'disconnected');
     assert.equal(status.sessions[0].pendingOperations, 0);
+    assert.equal(status.sessions[0].outcomeUncertain, true);
     assert.equal(calls.filter((call) => call.type === 'append').length, 1);
 
     release();
@@ -736,8 +893,9 @@ describe('AgentBroker', () => {
     assert.equal(status.sessions[0].state, 'disconnected');
     assert.equal(
       status.sessions[0].documentVersion,
-      connected.session.documentVersion,
+      connected.session.documentVersion + 1,
     );
+    assert.equal(status.sessions[0].outcomeUncertain, undefined);
     assert.equal(status.sessions[0].pendingOperations, 0);
     assert.equal(calls.filter((call) => call.type === 'append').length, 1);
   });

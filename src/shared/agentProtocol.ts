@@ -86,6 +86,8 @@ export interface AgentSessionStatus {
   documentVersion: number;
   diskRevision: string;
   pendingOperations: number;
+  /** A write may have reached the document without confirmation; version/revision are last observed, not proof of the operation's outcome. */
+  outcomeUncertain?: boolean;
 }
 
 export type AgentResponse =

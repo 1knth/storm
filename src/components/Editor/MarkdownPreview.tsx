@@ -30,6 +30,7 @@ import {
 import type { Appearance } from '../../appearance';
 import {
   createRevealScheduleRegistry,
+  collectPendingRevealKeys,
   PREVIEW_REVEAL_CADENCE_MS,
   planRevealUnits,
   getRevealTiming,
@@ -997,17 +998,7 @@ function MarkdownPreview({
     const reducedMotion = window.matchMedia(
       '(prefers-reduced-motion: reduce)',
     ).matches;
-    const pending = new Set<string>();
-    if (!reducedMotion) {
-      for (const unit of units) {
-        const key = unit.dataset.revealKey;
-        if (!key) continue;
-        const animation = unit
-          .getAnimations()
-          .find((item) => item.playState === 'running');
-        if (animation) pending.add(key);
-      }
-    }
+    const pending = collectPendingRevealKeys(root, units, reducedMotion);
     const notify = (isPending: boolean) =>
       revealProgressCallback.current?.({
         generationId,
