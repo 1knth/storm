@@ -59,7 +59,6 @@ import {
   appendedContentStartLine,
   createManagedPreviewBatch,
   createRevealScheduleRegistry,
-  revealSessionIdentity,
   hasRecentPreviewScrollIntent,
   PREVIEW_SCROLL_INTENT_MS,
   shouldFinalizeReveal,
@@ -547,19 +546,23 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         }
       : null,
     batchPending: managedPreviewBatch.current.hasPending,
-    generationKey: appendReveal
-      ? revealSessionIdentity(appendReveal.documentKey, appendReveal.id)
-      : '',
+    generationKey: currentRevealIdentity ?? '',
     receiptsMap: revealReceipts.current,
   });
   void revealProgressVersion;
   const statusVisualOverride = shouldShowRevealingStatus(
-    agentGenerationFinished,
+    agentStatus?.state === 'finished',
     agentWriting,
-    Boolean(appendReveal && appendReveal.documentKey === documentKey),
+    Boolean(
+      activeReveal &&
+      activeReveal.documentKey === documentKey &&
+      preview &&
+      vaultId === preview.vaultId &&
+      (readingMode || previewVisible),
+    ),
     finalRevealDrained,
   )
-    ? 'Writing'
+    ? 'Revealing…'
     : undefined;
   const toggleAgentStatusVisibility = () => {
     if (!activeNoteKey) return;
@@ -1677,7 +1680,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                         : undefined
                     }
                     revealId={
-                      appendReveal?.documentKey === documentKey
+                      activeReveal?.documentKey === documentKey
                         ? currentRevealIdentity
                         : undefined
                     }
@@ -1723,7 +1726,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     : undefined
                 }
                 revealId={
-                  appendReveal?.documentKey === documentKey
+                  activeReveal?.documentKey === documentKey
                     ? currentRevealIdentity
                     : undefined
                 }
