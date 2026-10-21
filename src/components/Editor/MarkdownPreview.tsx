@@ -714,8 +714,11 @@ export function AnimatedRevealWord({ children, ...props }: any) {
   );
 }
 
-export function RevealWordAdapter({ children, ...props }: any) {
+export function RevealWordAdapter({ children, node: _node, ...props }: any) {
   const key = props['data-reveal-key'];
+  // KaTeX uses inline styles for fractions, scripts, and baselines. Only spans
+  // explicitly marked by our reveal plugin should receive animation styles.
+  if (typeof key !== 'string') return <span {...props}>{children}</span>;
   return (
     <AnimatedRevealWord key={key} {...props}>
       {children}

@@ -4,13 +4,14 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { RevealWordAdapter } from './MarkdownPreview';
 import { remarkTaskOffsets } from './markdownTasks';
 import {
   markdownMathRemarkPlugin,
   markdownMathRehypePlugin,
 } from './markdownMath';
 
-function render(markdown: string) {
+function render(markdown: string, withPreviewSpans = false) {
   return renderToStaticMarkup(
     React.createElement(
       ReactMarkdown,
@@ -21,6 +22,7 @@ function render(markdown: string) {
           () => remarkTaskOffsets(markdown),
         ],
         rehypePlugins: [markdownMathRehypePlugin],
+        components: withPreviewSpans ? { span: RevealWordAdapter } : undefined,
       },
       markdown,
     ),
@@ -34,6 +36,34 @@ describe('Markdown math preview', () => {
     assert.match(html, /class="katex-display"/);
     assert.match(html, /<math xmlns=/);
   });
+
+  for (const [context, markdown] of [
+    [
+      'inline',
+      String.raw`Frequency $B=f_{\max}-f_{\min}$ and $L=\frac{n(n-1)}{2}$.`,
+    ],
+    [
+      'display',
+      String.raw`$$
+T=\frac{1}{5\times10^9}=2\times10^{-10}\ \text{s}=0.2\ \text{ns}=200\ \text{ps}.
+$$`,
+    ],
+    [
+      'table',
+      String.raw`| Question | Relationship |
+| --- | --- |
+| Full-mesh links | $L=\frac{n(n-1)}{2}$ |
+| Frequency bandwidth | $B=f_{\max}-f_{\min}$ |
+| Ideal FDM count | $N=\lfloor B_{\text{available}}/B_{\text{channel}}\rfloor$ |`,
+    ],
+  ]) {
+    it(`preserves native KaTeX layout through preview spans in ${context} math`, () => {
+      const native = render(markdown);
+      assert.match(native, /class="katex"/);
+      assert.match(native, /style="[^"]*(?:vertical-align|top|height):/);
+      assert.equal(render(markdown, true), native);
+    });
+  }
 
   it('leaves inline and fenced code containing dollar signs literal', () => {
     const html = render('`$x^2$`\n\n```txt\n$y^2$\n```');
