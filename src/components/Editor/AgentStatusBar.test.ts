@@ -74,18 +74,36 @@ test('manual visibility hides every status regardless of session state', () => {
   }
 });
 
-test('finished backend status remains Writing until preview reveal drains', () => {
+test('finished backend status shows Revealing until preview reveal drains', () => {
   const html = renderToStaticMarkup(
     createElement(AgentStatusBar, {
       status: status('finished'),
-      visualStatus: 'Writing',
+      visualStatus: 'Revealing…',
     }),
   );
-  assert.match(html, />Writing</);
+  assert.match(html, />Revealing…</);
   assert.doesNotMatch(html, /Finished/);
-  assert.doesNotMatch(html, /Revealing/);
+  assert.doesNotMatch(html, />Writing</);
   assert.doesNotMatch(html, /Stop/);
   assert.match(html, /bg-blue-400/);
+});
+
+test('reveal override never masks cancellation, errors, or other session states', () => {
+  for (const state of [
+    'cancelled',
+    'failed',
+    'disconnected',
+    'writing',
+    'connected',
+  ] as const) {
+    const html = renderToStaticMarkup(
+      createElement(AgentStatusBar, {
+        status: status(state),
+        visualStatus: 'Revealing…',
+      }),
+    );
+    assert.doesNotMatch(html, /Revealing/);
+  }
 });
 
 test('Stop appears only while writing and finished has the brief label', () => {

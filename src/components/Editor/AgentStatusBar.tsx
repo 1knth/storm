@@ -5,7 +5,7 @@ export type AgentStatusBarProps = {
   status?: AgentSessionStatus;
   onStop?: (sessionId: string) => void;
   visible?: boolean;
-  visualStatus?: string;
+  visualStatus?: 'Revealing…';
 };
 
 export function AgentStatusBar({
@@ -28,11 +28,12 @@ export function AgentStatusBar({
               : status?.state === 'failed'
                 ? 'Failed'
                 : null;
-  const displayedLabel = visualStatus ?? label;
+  const displayedLabel =
+    status?.state === 'finished' ? (visualStatus ?? label) : label;
   const dotColor =
     displayedLabel === 'Connected'
       ? 'bg-green-400'
-      : displayedLabel === 'Writing'
+      : displayedLabel === 'Writing' || displayedLabel === 'Revealing…'
         ? 'bg-blue-400'
         : displayedLabel === 'Finished'
           ? 'bg-gray-400'
