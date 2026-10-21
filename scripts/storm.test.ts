@@ -343,6 +343,21 @@ test('CLI help is available offline and invalid commands fail with usage', () =>
     });
     assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
     assert.match(result.stdout, /Usage:/);
+    assert.doesNotMatch(
+      result.stdout,
+      /there is not yet an installed storm executable/i,
+    );
+    if (args.length === 0 || args[0] === '--help') {
+      assert.match(
+        result.stdout,
+        /discovers metadata in the platform's app-data/,
+      );
+      assert.match(
+        result.stdout,
+        /packaged launcher includes its own Bun runtime/,
+      );
+      assert.match(result.stdout, /Application Support\/Storm/);
+    }
   }
   for (const args of [
     ['not-a-command'],
@@ -743,7 +758,7 @@ test('project-local Storm skill has portable frontmatter and resolves the CLI re
   assert.match(content, /Prefer the official installed `storm` CLI/);
   assert.match(
     content,
-    /development checkout where it is unavailable, use `bun scripts\/storm\.ts`/,
+    /for source development with the development app, use `bun scripts\/storm\.ts`/,
   );
   assert.ok(existsSync(new URL('../../../scripts/storm.ts', skillPath)));
 });

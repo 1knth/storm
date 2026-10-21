@@ -93,12 +93,7 @@ function cliHelp(command?: string): string {
   const text = helpText(command);
   if (process.env.STORM_INSTALLED_CLI !== '1' && executable !== 'storm')
     return text;
-  return text
-    .replaceAll('bun scripts/storm.ts', 'storm')
-    .replace(
-      'Without either endpoint option the CLI uses ~/.storm/storm-agent.json. Typical macOS\napp metadata is at ~/Library/Application Support/storm/storm-agent.json; pass it with\n--endpoint if Storm is using that location. This development CLI is invoked with Bun;\nthere is not yet an installed storm executable.',
-      'Without an endpoint override the CLI discovers metadata in ~/Library/Application\nSupport/storm, ~/Library/Application Support/Storm, or the legacy ~/.storm location.\nIf multiple profiles are found, select one explicitly with --endpoint PATH or\n--profile NAME. The installed launcher uses its bundled Bun runtime.',
-    );
+  return text.replaceAll('bun scripts/storm.ts', 'storm');
 }
 
 export async function discoverEndpoint(

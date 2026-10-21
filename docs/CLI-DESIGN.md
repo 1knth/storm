@@ -1,6 +1,19 @@
 # Storm CLI live-note contract
 
-**Status:** implemented in the current feature worktree; not yet verified in the installed packaged executable or GUI acceptance. This is the implemented contract, not a promise of deferred features.
+This document describes the CLI and preview behavior shipped with Storm. The CLI is part of the maintained desktop app, not a separate experimental workflow. Update this contract, command help, and the [agent skill](../.pi/skills/storm/SKILL.md) together when behavior changes. Development builds may contain changes beyond an installed release; use the help bundled with the executable you are running for its available commands and options.
+
+## Running the CLI
+
+Use `storm` after enabling the command in the app. On macOS, the installed launcher is also available directly:
+
+```sh
+/Applications/Storm.app/Contents/Resources/cli/storm --help
+storm connect --help
+```
+
+The packaged CLI includes its own Bun runtime; it needs neither a global Bun installation nor a source checkout. For source development, use `bun scripts/storm.ts` with the development app. See the [README](../README.md#local-storm-cli) for setup and endpoint discovery.
+
+The app must be running and the note must belong to a registered vault. Endpoint metadata contains a private authentication token: never expose it.
 
 ## Commands
 
@@ -15,17 +28,21 @@ storm finish SESSION
 storm cancel SESSION
 ```
 
-In this worktree use `bun scripts/storm.ts`; help is also available with `bun scripts/storm.ts [command] --help`. The official installed binary is not installed here. The app must be running and the path must be inside a registered vault. Endpoint metadata contains a private token: never expose it.
+### Inspect and connect
 
-`inspect` is read-only, requires an existing `.md` file, and neither opens a tab nor creates a session/file. For an open editor note, it returns live `content`, `documentVersion`, `diskRevision`, and `saveState`; otherwise it returns disk `content` and `diskRevision`, with no live version. `connect` opens an existing note or creates an empty missing `.md` file only if its parent exists; it does not replace existing content. Its JSON contains `session.sessionId`, session `documentVersion` / `diskRevision`, and content. Use connect for writing and retain ownership of that session ID until cleanup; process exit does not close it. After successful replace/patch, explicitly finish the owned session; on workflow failure or abandonment, cancel it. Stream EOF finishes automatically. Finish/cancel stop future writes but do not roll back accepted edits. Check status/save state and inspect the note after completion; do not infer persistence or closure from agent-process exit. Never finish or cancel sessions not created by the current workflow.
+`inspect` is read-only, requires an existing `.md` file, and neither opens a tab nor creates a session/file. For an open editor note, it returns live `content`, `documentVersion`, `diskRevision`, and `saveState`; otherwise it returns disk `content` and `diskRevision`, with no live version.
 
-`stream` forwards UTF-8 stdin in order as append operations; EOF finishes automatically. It remains useful for append workflows and stdin backpressure, but is not a reveal API and must not be paced to control preview animation. Append acknowledgements indicate live-editor acceptance, not disk persistence. Check `saveState` / status. Accepted content is not rolled back by cancellation or disconnect; cancellation does not terminate an external agent.
+`connect` opens an existing note or creates an empty missing `.md` file only if its parent exists; it does not replace existing content. Its JSON contains `session.sessionId`, session `documentVersion` / `diskRevision`, and content. Review that content before writing. Use connect for writing, not as a read-only existence check.
 
-## Native preview presentation (worktree implementation)
+Keep ownership of the session ID until cleanup. After successful replace/patch, explicitly finish the owned session; on workflow failure or abandonment, cancel it. Stream EOF finishes automatically. Finish/cancel stop future writes but do not roll back accepted edits. Never finish or cancel sessions created by another workflow. Process exit alone does not establish session closure or persistence.
 
-Source text acceptance and saving are immediate and independent of preview presentation. The preview may reveal identified pure insertions after acceptance; targeted corrections are immediate. The current bounded 250,000-cell diff conservatively skips reveal for ambiguous or oversized rewrites, so arbitrary edits are not guaranteed to animate. A saved result or finished session can precede a drained visual reveal; stream EOF does not force all content visible. This is presentation behavior, not a CLI/API contract: there is no per-command animation flag, and agents should not insert word/byte chunks or sleeps to pace it.
+### Append input
 
-This feature is implemented in the current worktree but is not yet in the installed CLI/app package. Native source-level checks are not GUI proof; follow-up validation should compare one whole replacement with streamed chunks, test targeted corrections, preview remounts and reduced-motion behavior, and inspect saved source separately from reveal completion. Evidence currently available is partial; do not claim GUI acceptance.
+`stream` forwards UTF-8 stdin in order as append operations; EOF finishes automatically. It supports live append workflows and stdin backpressure. It is not a reveal API: do not pace words, bytes, or chunks to control preview animation.
+
+Append acknowledgements indicate live-editor acceptance, not disk persistence. Check status and read back with `inspect` after completion. Accepted content is not rolled back by cancellation or disconnect; cancellation does not terminate an external agent. On error, inspect the evidence rather than automatically reconnecting or replaying content.
+
+### Guarded edits
 
 `replace` consumes the full replacement content from stdin. `patch` consumes a JSON array such as:
 
@@ -33,23 +50,38 @@ This feature is implemented in the current worktree but is not yet in the instal
 [{ "find": "old unique text", "replace": "new text" }]
 ```
 
-Patch finds must be non-empty, present exactly once, and non-overlapping. Both commands require the current live `documentVersion` from connect or status (or open-note inspect), never `diskRevision`. `--dry-run` returns a preview without mutation. Without it, apply waits for a saved response, verifying the resulting content/version; a conflicting human edit during save is rejected rather than acknowledged as saved. If apply fails due to a concurrent edit/save issue, inspect current content and reconcile; do not blindly retry. A stable `--operation-id ID` permits replay of the same request; reusing it with different payload fails. Apply deduplication is bounded to 256 remembered operations in memory, not durable across app restarts.
+Patch finds must be non-empty, present exactly once, and non-overlapping. Both commands require the current live `documentVersion` from connect or status (or open-note inspect), never `diskRevision`. `--dry-run` returns a preview without mutation. Without it, apply waits for a saved response, verifying the resulting content/version; a conflicting human edit during save is rejected rather than acknowledged as saved. If apply fails due to a concurrent edit/save issue, inspect current content and reconcile; do not blindly retry.
 
-Example:
+A stable `--operation-id ID` permits replay of the identical request; reusing it with different payload fails. Apply deduplication is bounded to 256 remembered operations in memory, not durable across app restarts.
+
+Example workflow for a prepared draft:
 
 ```sh
-bun scripts/storm.ts inspect "/absolute/vault/plan.md" --json
-bun scripts/storm.ts connect "/absolute/vault/plan.md" --json
-# Take session.sessionId and session.documentVersion from connect JSON.
-bun scripts/storm.ts replace SESSION_ID --expected-version 4 --stdin --dry-run < draft.md
-bun scripts/storm.ts replace SESSION_ID --expected-version 4 --stdin --operation-id draft-v1 < draft.md
-bun scripts/storm.ts status SESSION_ID --json
+storm connect "/absolute/vault/plan.md" --json
+# Review content. Substitute SESSION_ID and LIVE_VERSION from the connect response.
+storm replace SESSION_ID --expected-version LIVE_VERSION --stdin --dry-run < draft.md
+# If the live version changes, inspect and reconcile before applying.
+storm replace SESSION_ID --expected-version LIVE_VERSION --stdin --operation-id draft-v1 < draft.md
+# On successful apply, finish the session this workflow owns.
+storm finish SESSION_ID
+storm status SESSION_ID --json
+storm inspect "/absolute/vault/plan.md" --json
 ```
 
-No direct filesystem writes are used for note mutations; edits go through the coordinated live editor/save path. No parent directories are implicitly created. Stream and edit input provide no byte/chunk/pacing workaround or durable operation journal. Help should accurately describe these semantics. The official installed CLI help may lag the worktree until the app/CLI is rebuilt and installed.
+If apply fails or the workflow is abandoned, cancel its session instead of treating it as successfully finished. For a read-only review of an existing note, use `inspect` without connecting.
+
+## Native preview presentation
+
+Source acceptance and saving are independent of preview presentation. A complete draft can be submitted in one operation: Storm schedules the eligible new text for reveal in the preview. Agents do not need chunking, sleeps, delayed EOF, or repeated appends to make this happen.
+
+The preview reveals confidently identified pure insertions; corrections are immediate. The bounded 250,000-cell diff conservatively skips reveal for ambiguous or oversized rewrites, so arbitrary edits are not guaranteed to animate. Reduced-motion preferences disable the reveal animation.
+
+A saved result or backend `finished` session can precede the last visual reveal. While the active, mounted preview still has pending reveal work, the agent status bar displays **Revealing…**, then **Finished** when the matching final preview drains. A hidden preview does not hold the status bar in Revealing, and cancelled/failed/disconnected states are not masked. Stream EOF does not force all content visible, and preview animation does not delay saving or CLI completion.
+
+This is app presentation behavior, not a timing guarantee or a per-command animation flag. Regression checks must distinguish saved source from visual completion. The packaged macOS arm64 app and bundled CLI have been exercised with a single complete append followed by EOF, exact content readback, and the Revealing → Finished transition. That verification does not establish every edit pattern or platform; ongoing release checks are described in [Contributing](../CONTRIBUTING.md#release-verification-and-documentation).
 
 ## Scope and workflow boundaries
 
-This CLI provides inspect, append, full replacement, and exact-text patching. Broader folder creation, restart-durable journals, automatic rebasing, and general concurrent-text merging are not implemented. GUI behavior (including locking/overlay/preview/tab lifecycle) remains subject to hands-on validation; source-level implementation is not GUI acceptance.
+All note mutations use Storm's coordinated live editor/save path; the CLI never writes note files directly. The supported operations are inspection, append, full replacement, and exact-text patching. Parent-folder creation, restart-durable operation journals, automatic rebasing, and general concurrent-text merging are outside the current command set. These are supported-scope boundaries, not promised future features.
 
 For reference-note preparation, inspect instructor sources and coverage before drafting; distinguish confirmed scope, exclusions, unknowns, learner notes, and supplemental material. Assemble one complete draft and use one coordinated writer. This is reference preparation, not teaching, completion, or mastery. Preserve existing notes and provenance.
