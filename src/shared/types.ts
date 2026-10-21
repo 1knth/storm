@@ -156,6 +156,7 @@ declare global {
       saveTabLayout: (vaultId: string, layout: SavedTabLayout) => Promise<void>;
       getTabLayout: (vaultId: string) => Promise<SavedTabLayout | null>;
       onRestoreTabs: (callback: () => void) => () => void;
+      onReopenClosedTab: (callback: () => void) => () => void;
       onVaultChanged: (
         listener: (event: VaultChangeEvent) => void,
       ) => () => void;
