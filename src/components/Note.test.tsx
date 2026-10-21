@@ -15,6 +15,7 @@ function render(entry: VaultEntry, appearance = DEFAULT_APPEARANCE) {
         selectedId={entry.path}
         onNoteClick={() => assert.fail('SSR must not select a note')}
         onImageClick={() => assert.fail('SSR must not open the viewer')}
+        onPdfClick={() => assert.fail('SSR must not open the PDF')}
         vaultId="vault-1"
         appearance={appearance}
       />
@@ -61,10 +62,27 @@ test('image entries use the existing compact file-row layout without a note peek
 
   assert.match(markup, /data-entry-kind="image"/);
   assert.match(markup, /aria-label="Preview image photo\.png"/);
+  assert.match(markup, /aria-pressed="true"/);
+  assert.match(markup, /bg-\[#027DFF\]\/60/);
   assert.match(markup, /file-tree-label[^>]*>photo\.png<\/span>/);
   assert.match(markup, /photo\.png/);
   assert.doesNotMatch(markup, />IMG</);
   assert.doesNotMatch(markup, /must not render as a note peek/);
+});
+
+test('PDF entries render as openable file rows without a note peek', () => {
+  const markup = render({
+    path: 'docs/manual.PDF',
+    name: 'manual.PDF',
+    kind: 'pdf',
+    isDirectory: false,
+    peek: '',
+  });
+  assert.match(markup, /data-entry-kind="pdf"/);
+  assert.match(markup, /aria-label="Open PDF manual\.PDF"/);
+  assert.match(markup, /aria-pressed="true"/);
+  assert.match(markup, /bg-\[#027DFF\]\/60/);
+  assert.doesNotMatch(markup, /file-tree-peek/);
 });
 
 test('Markdown entries retain their note selection and peek rendering', () => {

@@ -1,0 +1,184 @@
+.pdf-viewer {
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  color: inherit;
+  font:
+    13px system-ui,
+    sans-serif;
+}
+.pdf-toolbar {
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  background: transparent;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+.pdf-toolbar button,
+.pdf-thumbnails button {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pdf-toolbar button {
+  font-size: 18px;
+  min-width: 28px;
+  height: 30px;
+}
+.pdf-toolbar button:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.pdf-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.pdf-page-input {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.pdf-page-input input {
+  box-sizing: content-box;
+  min-width: 2ch;
+  padding: 4px;
+  text-align: center;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 3px;
+}
+.pdf-toolbar-spacer {
+  flex: 1;
+}
+.pdf-zoom {
+  min-width: 42px;
+  text-align: center;
+}
+.pdf-search {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 12px;
+}
+.pdf-search input {
+  width: 150px;
+  padding: 6px 8px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 4px;
+}
+.pdf-search span {
+  min-width: 62px;
+  opacity: 0.7;
+  font-size: 11px;
+}
+.pdf-search button {
+  font-size: 14px;
+}
+.pdf-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.pdf-thumbnails {
+  width: 112px;
+  flex: none;
+  overflow: auto;
+  padding: 10px 8px;
+  background: transparent;
+  border-right: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.pdf-thumbnails button {
+  padding: 5px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.8;
+}
+.pdf-thumbnails button.selected {
+  outline: 2px solid #8ab4f8;
+  color: #8ab4f8;
+}
+.pdf-thumbnails canvas {
+  display: block;
+  max-width: 80px;
+  height: auto;
+  background: white;
+  box-shadow: 0 1px 5px #0008;
+}
+.pdf-page-scroll {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.pdf-page-list {
+  position: relative;
+  width: 100%;
+  flex: none;
+}
+.pdf-page-wrap {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  flex: none;
+  background: white;
+  box-shadow: 0 2px 14px #0008;
+}
+.pdf-page-wrap canvas {
+  display: block;
+}
+.pdf-page-wrap .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.25;
+  line-height: 1;
+  transform-origin: 0 0;
+  user-select: text;
+}
+.pdf-page-wrap .textLayer span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  transform-origin: 0 0;
+  cursor: text;
+}
+.pdf-page-wrap .textLayer ::highlight(pdf-search) {
+  background: #ffdf58aa;
+}
+.pdf-page-wrap .textLayer ::highlight(pdf-search-current) {
+  background: #ff8c42cc;
+}
+.pdf-page-wrap .textLayer ::selection {
+  background: #7daeff66;
+}
+.pdf-status {
+  margin: auto;
+  padding: 24px;
+  opacity: 0.7;
+  text-align: center;
+}
+.pdf-error {
+  color: #ffb4ab;
+}

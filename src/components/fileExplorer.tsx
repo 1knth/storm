@@ -76,6 +76,7 @@ function ShortcutHint({
 type FileExplorerProps = {
   onNoteSelect: (path: string, focusEditor?: boolean) => void;
   onImageSelect: (path: string) => void;
+  onPdfSelect: (path: string) => void;
   vaultId: string | null;
   onCreate: (kind: 'note' | 'folder', parentPath: string) => void;
   onCreateNote: () => void;
@@ -110,6 +111,7 @@ type FileExplorerProps = {
 export default function FileExplorer({
   onNoteSelect,
   onImageSelect,
+  onPdfSelect,
   vaultId,
   onCreate,
   onDeleteEntry,
@@ -428,6 +430,7 @@ export default function FileExplorer({
                 selectedId={selectedPath}
                 onNoteClick={onNoteSelect}
                 onImageClick={onImageSelect}
+                onPdfClick={onPdfSelect}
                 vaultId={vaultId}
                 appearance={appearance}
               />

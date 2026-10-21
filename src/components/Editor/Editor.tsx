@@ -28,6 +28,7 @@ import type { Appearance } from '../../appearance';
 import { rgbaColor } from '../../appearance';
 import MarkdownPreview from './MarkdownPreview';
 import AssetPreviewPane from '../AssetPreviewDialog';
+import PdfViewer from './PdfViewer';
 import { taskMarkerChange, taskToggleMatchesBinding } from './markdownTasks';
 import type { TaskTogglePayload } from './markdownTasks';
 import { formatMarkdownSelection } from './markdownFormatting';
@@ -99,8 +100,18 @@ export type ImageTabSnapshot = {
   path: string;
   filename: string;
 };
+export type PdfTabSnapshot = {
+  kind: 'pdf';
+  vaultId: string;
+  relativePath: string;
+  fileName: string;
+};
 export type EmptyTabSnapshot = { kind: 'empty'; id: string };
-export type TabSnapshot = NoteTabSnapshot | ImageTabSnapshot | EmptyTabSnapshot;
+export type TabSnapshot =
+  | NoteTabSnapshot
+  | ImageTabSnapshot
+  | PdfTabSnapshot
+  | EmptyTabSnapshot;
 export type EditorHandle = {
   flush: () => Promise<boolean>;
   snapshot: () => TabSnapshot | null;
@@ -130,6 +141,7 @@ type EditorProps = {
   commandHeld?: boolean;
   appearance: Appearance;
   imageAsset?: { vaultId: string; path: string; filename: string } | null;
+  pdfAsset?: PdfTabSnapshot | null;
   agentDocument?: AgentEditorAdapter | null;
   agentStatus?: AgentSessionStatus;
   agentWriting?: boolean;
@@ -151,6 +163,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     appearance,
     tabsVisible,
     imageAsset = null,
+    pdfAsset = null,
     agentDocument = null,
     agentStatus,
     agentWriting = false,
@@ -1039,7 +1052,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         scrollTop: 0,
       }),
     focus: () => {
-      if (imageAsset) {
+      if (imageAsset || pdfAsset) {
         host.current
           ?.closest('[data-pane="editor"]')
           ?.querySelector<HTMLElement>('[data-image-viewer="true"]')
@@ -1621,9 +1634,15 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 relativePath={imageAsset.path}
                 filename={imageAsset.filename}
               />
+            ) : pdfAsset ? (
+              <PdfViewer
+                vaultId={pdfAsset.vaultId}
+                relativePath={pdfAsset.relativePath}
+                fileName={pdfAsset.fileName}
+              />
             ) : null}
             <div
-              className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${!hasActiveNote || imageAsset ? 'hidden' : ''}`}
+              className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${!hasActiveNote || imageAsset || pdfAsset ? 'hidden' : ''}`}
             >
               <div
                 ref={host}
@@ -1709,7 +1728,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 revealRegistry={revealSession.current?.registry}
                 onRevealProgress={onRevealProgress}
               />
-            ) : !hasActiveNote && !imageAsset ? (
+            ) : !hasActiveNote && !imageAsset && !pdfAsset ? (
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 select-none">
                 <div className="empty-editor-wordmark text-2xl font-medium tracking-wide text-white/50">
                   storm

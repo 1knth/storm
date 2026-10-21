@@ -10,9 +10,9 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { VaultRegistry } from '../vault/vaultRegistry';
 import { VaultWriteBarrier } from '../vault/writeBarrier';
 import { registerVaultRegistryIpc } from './registerVaultRegistryIpc';
-import type { VaultRegistry } from '../vault/vaultRegistry';
 import type { VaultService } from '../vault/vaultService';
 
 const event = {};
@@ -261,6 +261,56 @@ test('forwards a registered group-member vault root drop through sidebar IPC', a
   };
   assert.equal(await invoke(handlers, 'vault:sidebar-move', request), true);
   assert.deepEqual(calls, [['moveSidebarItem', request]]);
+});
+
+test('persists renderer-serialized image and PDF layouts through the tab-layout IPC handler', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'storm-tab-layout-ipc-'));
+  try {
+    const vaultPath = path.join(temp, 'vault');
+    await mkdir(vaultPath);
+    const registry = new VaultRegistry(temp);
+    const { vault } = await registry.add(vaultPath);
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    registerVaultRegistryIpc(
+      { handle: (name, listener) => handlers.set(name, listener) },
+      {
+        registry,
+        service: {
+          getSelectedVaultPath: () => vaultPath,
+        } as unknown as VaultService,
+        writeBarrier: new VaultWriteBarrier(),
+        watchSelectedVault: async () => vault.id,
+        stopWatcher: () => {},
+        clearWatchedVaultId: () => {},
+        openPath: async () => '',
+        showItemInFolder: () => {},
+      },
+    );
+
+    for (const [kind, relativePath] of [
+      ['image', 'assets/photo.png'],
+      ['pdf', 'docs/guide.pdf'],
+    ] as const) {
+      const tabId = JSON.stringify([vault.id, relativePath]);
+      const payload = JSON.parse(
+        JSON.stringify({
+          version: 1,
+          tabs: [
+            kind === 'image'
+              ? { kind, path: relativePath }
+              : { kind, relativePath },
+          ],
+          activeTab: tabId,
+          groups: [],
+          assignments: {},
+        }),
+      );
+      await invoke(handlers, 'vault:tab-layout-save', vault.id, payload);
+      assert.deepEqual(await registry.getTabLayout(vault.id), payload);
+    }
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
 test('preserves validation errors for invalid payloads', async () => {

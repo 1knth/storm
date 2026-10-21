@@ -507,6 +507,42 @@ function App() {
   const pickerSelectionFocus = useRef(false);
   const [query, setQuery] = useState('');
   const [notes, setNotes] = useState<VaultEntry[]>([]);
+  const openPdf = async (path: string) => {
+    const vaultId = activeVaultIdRef.current;
+    if (!vaultId || navigationBusy.current || vaultTransition.current) return;
+    const entry = notes.find(
+      (item) => item.path === path && item.kind === 'pdf',
+    );
+    if (!entry || activeVaultIdRef.current !== vaultId) return;
+    navigationBusy.current = true;
+    try {
+      if (!(await editorRef.current?.flush())) return;
+      const outgoing = editorRef.current?.snapshot();
+      if (outgoing)
+        setTabs((old) =>
+          old.map((tab) =>
+            tab.kind === 'note' && tab.note.path === outgoing.note.path
+              ? outgoing
+              : tab,
+          ),
+        );
+      const pdf: TabSnapshot = {
+        kind: 'pdf',
+        vaultId,
+        relativePath: entry.path,
+        fileName: entry.name,
+      };
+      const pdfId = getTabId(pdf);
+      const existing = tabsRef.current.find((tab) => getTabId(tab) === pdfId);
+      const activePdf = existing ?? pdf;
+      if (!existing) setTabs((old) => [...old, pdf]);
+      editorRef.current?.activate(activePdf);
+      setActiveId(pdfId);
+      setActivePath(entry.path);
+    } finally {
+      navigationBusy.current = false;
+    }
+  };
   const openImagePreview = async (path: string) => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId || navigationBusy.current || vaultTransition.current) return;
@@ -538,7 +574,7 @@ function App() {
       if (!existing) setTabs((old) => [...old, image]);
       editorRef.current?.activate(activeImage);
       setActiveId(imageId);
-      setActivePath(null);
+      setActivePath(entry.path);
     } finally {
       navigationBusy.current = false;
     }
@@ -942,6 +978,8 @@ function App() {
               if (active) {
                 if (active.kind === 'note') setActivePath(active.note.path);
                 else if (active.kind === 'image') setActivePath(active.path);
+                else if (active.kind === 'pdf')
+                  setActivePath(active.relativePath);
                 editorRef.current?.activate(active);
               }
             }
@@ -1276,6 +1314,16 @@ function App() {
           });
           continue;
         }
+        if (item.kind === 'pdf') {
+          restored.push({
+            kind: 'pdf',
+            vaultId,
+            relativePath: item.relativePath,
+            fileName:
+              item.relativePath.split(/[\\/]/).at(-1) || item.relativePath,
+          });
+          continue;
+        }
         try {
           const note = await window.vault.readNote(item.path);
           if (
@@ -1305,7 +1353,10 @@ function App() {
       if (
         !restored.length &&
         layout.tabs.some(
-          (item) => item.kind === 'note' || item.kind === 'image',
+          (item) =>
+            item.kind === 'note' ||
+            item.kind === 'image' ||
+            item.kind === 'pdf',
         )
       ) {
         setVaultError(STARTUP_VAULT_ERROR);
@@ -1339,7 +1390,15 @@ function App() {
       if (selected) {
         editorRef.current?.activate(selected);
         setActiveId(getTabId(selected));
-        setActivePath(selected.kind === 'note' ? selected.note.path : null);
+        setActivePath(
+          selected.kind === 'note'
+            ? selected.note.path
+            : selected.kind === 'image'
+              ? selected.path
+              : selected.kind === 'pdf'
+                ? selected.relativePath
+                : null,
+        );
       } else {
         editorRef.current?.clear();
         setActiveId(null);
@@ -1539,7 +1598,15 @@ function App() {
       assignmentsRef.current = nextAssignments;
       setTabs(remaining);
       setActiveId(activeIdRef.current);
-      setActivePath(nextActive?.kind === 'note' ? nextActive.note.path : null);
+      setActivePath(
+        nextActive?.kind === 'note'
+          ? nextActive.note.path
+          : nextActive?.kind === 'image'
+            ? nextActive.path
+            : nextActive?.kind === 'pdf'
+              ? nextActive.relativePath
+              : null,
+      );
       setTabGroups(groups);
       setTabGroupAssignments(nextAssignments);
       visitedVaults.current.add(vaultId);
@@ -1704,7 +1771,15 @@ function App() {
       );
     editorRef.current?.activate(tab);
     setActiveId(getTabId(tab));
-    setActivePath(tab.kind === 'note' ? tab.note.path : null);
+    setActivePath(
+      tab.kind === 'note'
+        ? tab.note.path
+        : tab.kind === 'image'
+          ? tab.path
+          : tab.kind === 'pdf'
+            ? tab.relativePath
+            : null,
+    );
   };
   const createEmptyTab = async () => {
     if (navigationBusy.current || vaultTransition.current) return;
@@ -1970,7 +2045,15 @@ function App() {
       setTabGroups(normalizedSession.groups);
       setTabGroupAssignments(normalizedSession.assignments);
       setActiveId(restoredId);
-      setActivePath(activeTab?.kind === 'note' ? activeTab.note.path : null);
+      setActivePath(
+        activeTab?.kind === 'note'
+          ? activeTab.note.path
+          : activeTab?.kind === 'image'
+            ? activeTab.path
+            : activeTab?.kind === 'pdf'
+              ? activeTab.relativePath
+              : null,
+      );
       setActiveVaultId(id);
       activeVaultIdRef.current = id;
       setVaultPath(activated.path);
@@ -2472,6 +2555,7 @@ function App() {
             onPathCopied={notifySuccess}
             onNoteSelect={selectNote}
             onImageSelect={(path) => void openImagePreview(path)}
+            onPdfSelect={(path) => void openPdf(path)}
             vaultId={activeVaultId}
             onDeleteEntry={(path) => void handleDeleteEntry(path)}
             onRenameEntry={renameEntry}
@@ -2500,6 +2584,12 @@ function App() {
         </div>
         <Editor
           ref={editorRef}
+          pdfAsset={(() => {
+            const tab = tabs.find((item) => getTabId(item) === activeId);
+            return tab?.kind === 'pdf' && tab.vaultId === activeVaultId
+              ? tab
+              : null;
+          })()}
           imageAsset={(() => {
             const tab = tabs.find((item) => getTabId(item) === activeId);
             return tab?.kind === 'image' && tab.vaultId === activeVaultId

@@ -26,6 +26,12 @@ const image: TabSnapshot = {
   path: 'a.png',
   filename: 'a.png',
 };
+const pdf: TabSnapshot = {
+  kind: 'pdf',
+  vaultId: 'v1',
+  relativePath: 'docs/guide.pdf',
+  fileName: 'guide.pdf',
+};
 const group = {
   id: 'g',
   name: 'Keep',
@@ -82,6 +88,30 @@ test('restores after last group member cleanup and preserves metadata and order'
   assert.equal(restored.groups[0].collapsed, true);
   assert.deepEqual(restored.assignments, { [getTabId(tab)]: 'g' });
   assert.equal(restored.activeID, getTabId(tab));
+});
+
+test('captures and restores PDF tabs and verifies the file still exists', async () => {
+  const record = captureClosedTab([pdf], [], {}, getTabId(pdf), 'v1');
+  assert.ok(record);
+  const prepared = await prepareClosedTabForReopen(record, {
+    readNote: async () => null,
+    createEditorState: (content) => EditorState.create({ doc: content }),
+    exists: async (_vaultId, path) => path === 'docs/guide.pdf',
+  });
+  const restored = restoreClosedTab(
+    { tabs: [], groups: [], assignments: {}, activeID: null },
+    prepared,
+    'v1',
+  );
+  assert.deepEqual(restored.tabs, [pdf]);
+  await assert.rejects(
+    prepareClosedTabForReopen(record, {
+      readNote: async () => null,
+      createEditorState: (content) => EditorState.create({ doc: content }),
+      exists: async () => false,
+    }),
+    /Closed PDF no longer exists/,
+  );
 });
 
 test('restores image tabs, avoids duplicates, and rejects another vault', () => {
@@ -180,7 +210,9 @@ test('reopened tab layout serializes back with original order and group metadata
         ? item.path
         : item.kind === 'image'
           ? item.path
-          : item.id,
+          : item.kind === 'pdf'
+            ? item.relativePath
+            : item.id,
     ),
     ['a.png', 'n.md'],
   );

@@ -14,6 +14,7 @@ export interface VaultImageResult {
 }
 
 const MAX_BYTES = 10 * 1024 * 1024;
+export const MAX_PDF_BYTES = 100 * 1024 * 1024;
 const MAX_SCAN_ENTRIES = 5000;
 const MIME_BY_EXTENSION: Record<string, string> = {
   '.png': 'image/png',
@@ -23,6 +24,42 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.webp': 'image/webp',
   '.avif': 'image/avif',
 };
+
+export async function readVaultPdf(
+  rootPath: string,
+  relativePath: unknown,
+): Promise<Uint8Array> {
+  const root = await realpath(rootPath);
+  if (
+    typeof relativePath !== 'string' ||
+    !relativePath ||
+    relativePath.length > 2048 ||
+    path.isAbsolute(relativePath)
+  )
+    throw new Error('Invalid PDF path');
+  const segments = relativePath.split(/[\\/]+/);
+  if (
+    segments.some((segment) => !segment || segment === '.' || segment === '..')
+  )
+    throw new Error('Invalid PDF path');
+  const target = path.resolve(root, ...segments);
+  if (!inside(root, target)) throw new Error('PDF path is outside the vault');
+  if (path.extname(target).toLowerCase() !== '.pdf')
+    throw new Error('Unsupported PDF type');
+  const info = await lstat(target);
+  if (!info.isFile() || info.isSymbolicLink())
+    throw new Error('PDF is not a regular file');
+  if (!inside(root, await realpath(target)))
+    throw new Error('PDF path is outside the vault');
+  if (info.size > MAX_PDF_BYTES)
+    throw new Error('PDF exceeds the 100 MB size limit');
+  const content = await readFile(target);
+  if (content.length > MAX_PDF_BYTES)
+    throw new Error('PDF exceeds the 100 MB size limit');
+  if (content.subarray(0, 5).toString('ascii') !== '%PDF-')
+    throw new Error('Invalid PDF file');
+  return new Uint8Array(content);
+}
 
 export function isSupportedVaultImagePath(filePath: string): boolean {
   return Object.hasOwn(MIME_BY_EXTENSION, path.extname(filePath).toLowerCase());
