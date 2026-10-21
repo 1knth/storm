@@ -370,7 +370,7 @@ export default function VaultSidebar({
         onClick={() => onActivate(vault.id)}
         aria-current={vault.id === activeVaultId ? 'true' : undefined}
         title={`${vault.name}\n${vault.path}`}
-        className={`relative min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs ${commandHeld && index < 9 ? 'pr-20' : 'pr-8'} ${vault.id === activeVaultId ? 'bg-white/10 text-white' : 'sidebar-hover-tint text-white/65 hover:bg-white/5 hover:text-white focus-visible:bg-white/5 focus-visible:text-white'}`}
+        className={`relative min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs ${commandHeld && index < 9 ? 'pr-20' : 'pr-8'} ${vault.id === activeVaultId ? 'bg-white/10 text-white' : 'text-white/65 focus-visible:bg-white/5 focus-visible:text-white'}`}
       >
         <span className="block min-w-0 truncate">{vault.name}</span>
         {vault.pinned && (
