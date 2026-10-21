@@ -13,6 +13,7 @@ type NoteProps = {
   selectedId: string | null;
   onNoteClick: (id: string) => void;
   onImageClick: (path: string) => void;
+  onPdfClick: (path: string) => void;
   vaultId: string | null;
   appearance: Appearance;
 };
@@ -24,6 +25,7 @@ export default function Note({
   selectedId,
   onNoteClick,
   onImageClick,
+  onPdfClick,
   vaultId,
   appearance,
 }: NoteProps) {
@@ -44,7 +46,9 @@ export default function Note({
   useEffect(() => {
     if (containsSelection) setExpanded(true);
   }, [containsSelection]);
-  const isSelected = entry.kind === 'note' && selectedId === entry.path;
+  const isSelected =
+    (entry.kind === 'note' || entry.kind === 'image' || entry.kind === 'pdf') &&
+    selectedPath === normalizedPath;
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const thumbnailRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
@@ -120,6 +124,7 @@ export default function Note({
                   selectedId={selectedId}
                   onNoteClick={onNoteClick}
                   onImageClick={onImageClick}
+                  onPdfClick={onPdfClick}
                   vaultId={vaultId}
                   appearance={appearance}
                 />
@@ -132,10 +137,10 @@ export default function Note({
           type="button"
           id={`note-${encodeURIComponent(entry.path)}`}
           aria-label={`Preview image ${entry.name}`}
-          aria-pressed={false}
+          aria-pressed={isSelected}
           onClick={() => onImageClick(entry.path)}
           style={{ paddingLeft: `${16 + depth * 16}px` }}
-          className="flex min-h-10 w-full flex-col justify-center p-1.5 text-left rounded-none focus-visible:rounded-md focus-visible:bg-white/5"
+          className={`flex min-h-10 w-full flex-col justify-center p-1.5 text-left ${isSelected ? 'rounded-md bg-[#027DFF]/60' : 'rounded-none focus-visible:rounded-md focus-visible:bg-white/5'}`}
         >
           <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-medium leading-4 text-white/90">
             <span
@@ -159,8 +164,15 @@ export default function Note({
         <button
           type="button"
           id={`note-${encodeURIComponent(entry.path)}`}
+          aria-label={
+            entry.kind === 'pdf' ? `Open PDF ${entry.name}` : undefined
+          }
           aria-pressed={isSelected}
-          onClick={() => onNoteClick(entry.path)}
+          onClick={() =>
+            entry.kind === 'pdf'
+              ? onPdfClick(entry.path)
+              : onNoteClick(entry.path)
+          }
           style={{ paddingLeft: `${16 + depth * 16}px` }}
           className={`flex min-h-10 w-full flex-col justify-center p-1.5 text-left ${isSelected ? 'rounded-md bg-[#027DFF]/60' : 'rounded-none focus-visible:rounded-md focus-visible:bg-white/5'}`}
         >

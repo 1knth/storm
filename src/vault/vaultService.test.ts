@@ -122,6 +122,7 @@ test('lists images as lightweight entries while preserving notes and excluding S
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
   await mkdir(path.join(root, '.git'));
   await writeFile(path.join(root, 'Photo.PNG'), signature);
+  await writeFile(path.join(root, 'Manual.PDF'), '%PDF-1.7');
   await writeFile(path.join(root, 'vector.svg'), '<svg/>');
   await symlink(path.join(root, 'Photo.PNG'), path.join(root, 'linked.png'));
   const entries = await service.listNotes();
@@ -144,6 +145,16 @@ test('lists images as lightweight entries while preserving notes and excluding S
       isDirectory: false,
       peek: '',
       mimeType: 'image/png',
+    },
+  );
+  assert.deepEqual(
+    entries.find((entry) => entry.name === 'Manual.PDF'),
+    {
+      path: 'Manual.PDF',
+      name: 'Manual.PDF',
+      kind: 'pdf',
+      isDirectory: false,
+      peek: '',
     },
   );
   assert.equal(

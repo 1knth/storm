@@ -302,6 +302,8 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.invoke('vault:read-image', request),
   readAsset: (request: VaultAssetRequest): Promise<VaultAssetResult> =>
     ipcRenderer.invoke('vault:read-asset', request),
+  readPdf: (vaultId: string, relativePath: string): Promise<Uint8Array> =>
+    ipcRenderer.invoke('vault:read-pdf', { vaultId, relativePath }),
   pasteImage: (request: PasteImageRequest): Promise<PasteImageResult> =>
     ipcRenderer.invoke('vault:paste-image', request),
   resolveNoteLink: (

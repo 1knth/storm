@@ -47,11 +47,12 @@ interface Settings extends Record<string, unknown> {
 
 const MAX_GROUP_NAME_LENGTH = 80;
 
-function isSavedTabLayout(
+function savedTabLayoutRejectionReason(
   value: unknown,
   vaultId: string,
-): value is SavedTabLayout {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return 'layout must be an object';
   const layout = value as SavedTabLayout;
   if (
     layout.version !== 1 ||
@@ -63,7 +64,7 @@ function isSavedTabLayout(
     typeof layout.assignments !== 'object' ||
     Array.isArray(layout.assignments)
   )
-    return false;
+    return 'unsupported version or invalid tabs, groups, or assignments shape';
   const ids = new Set<string>();
   for (const tab of layout.tabs) {
     if (tab.kind === 'empty') {
@@ -73,7 +74,7 @@ function isSavedTabLayout(
         tab.id.length > 100 ||
         ids.has(tab.id)
       )
-        return false;
+        return 'invalid or duplicate empty-tab identity';
       ids.add(tab.id);
     } else if (tab.kind === 'image') {
       if (
@@ -84,8 +85,19 @@ function isSavedTabLayout(
         tab.path.split(/[\\/]/).includes('..') ||
         ids.has(JSON.stringify([vaultId, tab.path]))
       )
-        return false;
+        return 'invalid or duplicate image-tab path';
       ids.add(JSON.stringify([vaultId, tab.path]));
+    } else if (tab.kind === 'pdf') {
+      if (
+        typeof tab.relativePath !== 'string' ||
+        !tab.relativePath ||
+        tab.relativePath.length > 1000 ||
+        tab.relativePath.startsWith('/') ||
+        tab.relativePath.split(/[\\/]/).includes('..') ||
+        ids.has(JSON.stringify([vaultId, tab.relativePath]))
+      )
+        return 'invalid or duplicate PDF-tab path';
+      ids.add(JSON.stringify([vaultId, tab.relativePath]));
     } else if (tab.kind === 'note') {
       if (
         typeof tab.path !== 'string' ||
@@ -102,9 +114,9 @@ function isSavedTabLayout(
         tab.scrollTop > 10_000_000 ||
         ids.has(tab.path)
       )
-        return false;
+        return 'invalid note-tab fields or duplicate identity';
       ids.add(tab.path);
-    } else return false;
+    } else return 'unsupported tab kind';
   }
   const groupIds = new Set<string>();
   for (const group of layout.groups) {
@@ -118,17 +130,20 @@ function isSavedTabLayout(
       typeof group.collapsed !== 'boolean' ||
       (group.color !== undefined && !isGroupColor(group.color))
     )
-      return false;
+      return 'invalid group fields';
     groupIds.add(group.id);
   }
   if (layout.activeTab !== null && typeof layout.activeTab !== 'string')
-    return false;
-  return (
-    Object.entries(layout.assignments).length <= 200 &&
-    Object.entries(layout.assignments).every(
+    return 'activeTab must be a tab identity or null';
+  if (Object.entries(layout.assignments).length > 200)
+    return 'too many group assignments';
+  if (
+    !Object.entries(layout.assignments).every(
       ([tabId, groupId]) => ids.has(tabId) && groupIds.has(groupId),
     )
-  );
+  )
+    return 'assignment references an unknown tab or group';
+  return null;
 }
 
 function validateGroupName(name: string): string {
@@ -503,8 +518,9 @@ export class VaultRegistry {
       await this.load();
       if (!(this.settings.vaults ?? []).some((vault) => vault.id === vaultId))
         throw new Error('Unknown vault');
-      if (!isSavedTabLayout(layout, vaultId))
-        throw new Error('Invalid saved tab layout');
+      const rejectionReason = savedTabLayoutRejectionReason(layout, vaultId);
+      if (rejectionReason)
+        throw new Error(`Invalid saved tab layout: ${rejectionReason}`);
       const layouts = {
         ...this.settings.savedTabLayouts,
         [vaultId]: layout,

@@ -335,7 +335,7 @@ test('persists image tab layouts and rejects unsafe or duplicate image paths', a
         ...layout,
         tabs: [{ kind: 'image', path: '../outside.png' }],
       }),
-      /Invalid saved tab layout/,
+      /Invalid saved tab layout: invalid or duplicate image-tab path/,
     );
     await assert.rejects(
       registry.saveTabLayout(vault.id, {
@@ -344,6 +344,45 @@ test('persists image tab layouts and rejects unsafe or duplicate image paths', a
           { kind: 'image', path: 'assets/photo.png' },
           { kind: 'image', path: 'assets/photo.png' },
         ],
+      }),
+      /Invalid saved tab layout/,
+    );
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('persists PDF tab layouts and rejects unsafe or duplicate PDF paths', async () => {
+  const temp = await temporaryDirectory();
+  try {
+    const vaultPath = path.join(temp, 'vault');
+    await mkdir(vaultPath);
+    const registry = new VaultRegistry(temp);
+    const { vault } = await registry.add(vaultPath);
+    const pdfId = JSON.stringify([vault.id, 'docs/guide.pdf']);
+    const layout = {
+      version: 1 as const,
+      tabs: [{ kind: 'pdf' as const, relativePath: 'docs/guide.pdf' }],
+      activeTab: pdfId,
+      groups: [],
+      assignments: {},
+    };
+    await registry.saveTabLayout(vault.id, layout);
+    assert.deepEqual(
+      await new VaultRegistry(temp).getTabLayout(vault.id),
+      layout,
+    );
+    await assert.rejects(
+      registry.saveTabLayout(vault.id, {
+        ...layout,
+        tabs: [{ kind: 'pdf', relativePath: '../outside.pdf' }],
+      }),
+      /Invalid saved tab layout/,
+    );
+    await assert.rejects(
+      registry.saveTabLayout(vault.id, {
+        ...layout,
+        tabs: [layout.tabs[0], layout.tabs[0]],
       }),
       /Invalid saved tab layout/,
     );

@@ -87,6 +87,17 @@ export class VaultService {
             peek: '',
             mimeType: imageMimeType(entry.name)!,
           });
+        } else if (
+          entry.isFile() &&
+          path.extname(entry.name).toLowerCase() === '.pdf'
+        ) {
+          notes.push({
+            path: relativePath,
+            name: entry.name,
+            kind: 'pdf',
+            isDirectory: false,
+            peek: '',
+          });
         }
       }
     }

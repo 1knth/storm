@@ -9,6 +9,7 @@ function renderExplorer() {
     <FileExplorer
       onNoteSelect={() => {}}
       onImageSelect={() => {}}
+      onPdfSelect={() => {}}
       vaultId="vault-1"
       onCreate={() => {}}
       onCreateNote={() => {}}

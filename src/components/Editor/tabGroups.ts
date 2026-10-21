@@ -18,7 +18,9 @@ export const getTabId = (tab: TabSnapshot) =>
     ? tab.note.path
     : tab.kind === 'image'
       ? JSON.stringify([tab.vaultId, tab.path])
-      : tab.id;
+      : tab.kind === 'pdf'
+        ? JSON.stringify([tab.vaultId, tab.relativePath])
+        : tab.id;
 
 export const hasOpenTabs = (tabs: TabSnapshot[]) => tabs.length > 0;
 

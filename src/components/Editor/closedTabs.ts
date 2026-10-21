@@ -27,7 +27,10 @@ export function captureClosedTab(
   const index = tabs.findIndex((tab) => getTabId(tab) === tabID);
   if (index < 0) return null;
   const tab = tabs[index];
-  if ((tab.kind !== 'note' && tab.kind !== 'image') || tab.vaultId !== vaultID)
+  if (
+    (tab.kind !== 'note' && tab.kind !== 'image' && tab.kind !== 'pdf') ||
+    tab.vaultId !== vaultID
+  )
     return null;
   const groupId = assignments[tabID];
   const groupIndex = groups.findIndex((group) => group.id === groupId);
@@ -83,7 +86,14 @@ export async function prepareClosedTabForReopen(
       throw new Error(`Closed image no longer exists: ${record.tab.path}`);
     return record;
   }
-  throw new Error('Only note and image tabs can be reopened');
+  if (record.tab.kind === 'pdf') {
+    if (!(await deps.exists(record.vaultId, record.tab.relativePath)))
+      throw new Error(
+        `Closed PDF no longer exists: ${record.tab.relativePath}`,
+      );
+    return record;
+  }
+  throw new Error('Only note, image, and PDF tabs can be reopened');
 }
 
 export function restoreClosedTab(
@@ -93,7 +103,9 @@ export function restoreClosedTab(
 ): ClosedTabState {
   if (
     vaultID !== record.vaultId ||
-    (record.tab.kind !== 'note' && record.tab.kind !== 'image') ||
+    (record.tab.kind !== 'note' &&
+      record.tab.kind !== 'image' &&
+      record.tab.kind !== 'pdf') ||
     record.tab.vaultId !== record.vaultId
   )
     return current;

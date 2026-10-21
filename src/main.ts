@@ -25,7 +25,11 @@ app.setName('Storm');
 if (!app.commandLine.hasSwitch('user-data-dir')) {
   app.setPath('userData', path.join(app.getPath('appData'), 'storm'));
 }
-import { readVaultAsset, readVaultImage } from './vault/vaultAssets';
+import {
+  readVaultAsset,
+  readVaultImage,
+  readVaultPdf,
+} from './vault/vaultAssets';
 import { savePastedImage } from './vault/pasteImage';
 import { VaultWriteBarrier } from './vault/writeBarrier';
 import { resolveVaultNote } from './vault/vaultNoteResolver';
@@ -486,6 +490,17 @@ ipcMain.handle('vault:read-asset', async (_event, request: unknown) => {
         : 'unavailable';
     return { ok: false, reason };
   }
+});
+
+ipcMain.handle('vault:read-pdf', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object' || Array.isArray(request))
+    throw new Error('Invalid PDF request');
+  const { vaultId, relativePath } = request as Record<string, unknown>;
+  if (typeof vaultId !== 'string' || typeof relativePath !== 'string')
+    throw new Error('Invalid PDF request');
+  const vault = await vaultRegistry.getById(vaultId);
+  if (!vault) throw new Error('Unknown vault');
+  return readVaultPdf(vault.path, relativePath);
 });
 
 ipcMain.handle('vault:read-image', async (_event, request: unknown) => {

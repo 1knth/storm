@@ -427,7 +427,9 @@ export default function TabBar({
         ? tab.note.path.split('/').at(-1)
         : tab.kind === 'image'
           ? tab.filename
-          : 'New tab';
+          : tab.kind === 'pdf'
+            ? tab.fileName
+            : 'New tab';
     return (
       <div
         ref={(element) => {
