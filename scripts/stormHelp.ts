@@ -36,10 +36,11 @@ Options:
   --endpoint PATH     Use explicit Storm endpoint metadata (overrides --profile)
   --profile NAME      Use ~/.storm/NAME/storm-agent.json
 
-Without either endpoint option the CLI uses ~/.storm/storm-agent.json. Typical macOS
-app metadata is at ~/Library/Application Support/storm/storm-agent.json; pass it with
---endpoint if Storm is using that location. This development CLI is invoked with Bun;
-there is not yet an installed storm executable.
+Without an endpoint override the CLI discovers metadata in the platform's app-data
+location (on macOS: ~/Library/Application Support/storm or Application Support/Storm)
+or the legacy ~/.storm location. If multiple profiles are found, choose one with
+--endpoint PATH or --profile NAME. The packaged launcher includes its own Bun runtime;
+source development requires a local Bun installation.
 
 Errors: invalid commands/options/arguments print usage and exit 2. A missing endpoint,
 closed app, vault/path rejection, or session/protocol error prints a concise error (JSON

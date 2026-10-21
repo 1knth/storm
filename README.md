@@ -1,11 +1,16 @@
 # Storm
 
-Storm is an Electron application for working with a vault of notes.
+Storm is a desktop Markdown app for working with local note vaults, rendered previews, and PDF documents. Its packaged app includes a local CLI for coordinated agent edits.
 
-- [Contributing conventions](CONTRIBUTING.md): where code belongs, ownership rules, and checks to run.
-- [Architecture map](ARCHITECTURE.md): current process boundaries, data flows, and refactor notes.
+This documentation describes the shipped app and the current `main` branch. Storm is actively maintained: features, fixes, tests, and documentation evolve together. Source-development instructions are separate from installed-app usage; use your installed CLI's `--help` for its available commands and options.
 
-## Development
+- [CLI contract](docs/CLI-DESIGN.md): installed commands, safe edit workflows, and preview/status behavior.
+- [Editor guide](src/components/Editor/README.md): editing, navigation, preview Find, and PDF viewing.
+- [macOS packaging and folder access](docs/macos-packaging-and-folder-access.md): signature checks and vault permissions.
+- [Contributing conventions](CONTRIBUTING.md): code ownership, checks, and release verification.
+- [Architecture map](ARCHITECTURE.md): current process boundaries and data flows.
+
+## Developing Storm
 
 Use the pinned pnpm version from `package.json`. Run `pnpm start` to launch the app, `pnpm test` for the Bun test suite, `pnpm typecheck` for TypeScript, and `pnpm lint` for Oxlint and formatting checks. Bun is required for tests.
 
@@ -26,9 +31,14 @@ storm connect --help
 A project-local Pi-compatible agent skill is at [`.pi/skills/storm/SKILL.md`](.pi/skills/storm/SKILL.md); Pi discovers it as a project skill when this repository is open. The standalone CLI discovers endpoint metadata created by the running app in the macOS user-data locations `~/Library/Application Support/storm` or `~/Library/Application Support/Storm` (and the legacy `~/.storm` location). If multiple profiles are present, select one explicitly with `--endpoint PATH` or `--profile NAME`; `STORM_ENDPOINT` can override default discovery. The development CLI entrypoint runs directly with Bun. On macOS:
 
 ```sh
-storm connect /absolute/path/to/note.md --json
-storm status --json
-storm stream SESSION --stdin < draft.md
+storm inspect "/absolute/path/to/note.md" --json  # read an existing note without opening it
+storm connect "/absolute/path/to/note.md" --json  # open/create; review returned content
+# Substitute session.sessionId from connect. Stream appends and EOF finishes automatically.
+storm stream SESSION_ID --stdin < draft.md
+storm status SESSION_ID --json
+storm inspect "/absolute/path/to/note.md" --json  # verify the saved result
 ```
+
+Use guarded `replace` for a complete draft or `patch` for unique exact-text changes; both require the current live `documentVersion`. See the [CLI contract](docs/CLI-DESIGN.md) for examples and cleanup rules. Submit complete drafts without artificial pacing: the app manages preview reveal independently. The status bar shows **Revealing…** while the finished session's active preview drains, then **Finished**. CLI completion does not wait for that animation.
 
 `finish` and `cancel` accept the same endpoint option. The endpoint only exists while Storm is running. Storm does not modify shell configuration; if you decline setup, invoke the packaged binary by full path or add its containing directory to `PATH` yourself.

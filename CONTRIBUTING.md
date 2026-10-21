@@ -1,6 +1,6 @@
 # Contributing to Storm
 
-Storm is an Electron + React app. Keep changes behavior-focused and follow the existing process boundaries below. See [Architecture](ARCHITECTURE.md) for the current ownership map; these conventions describe how new and refactored code should fit it, not a claim that every existing file already does.
+Storm is a maintained Electron + React desktop app. Keep changes behavior-focused and follow the process boundaries below. See [Architecture](ARCHITECTURE.md) for the current ownership map. Update user documentation and contributor guidance alongside behavior changes so they describe the app that ships, not a temporary branch or worktree.
 
 ## Where code belongs
 
@@ -24,6 +24,15 @@ Storm is an Electron + React app. Keep changes behavior-focused and follow the e
 - Add or update a focused test for bug fixes and extracted pure decisions; keep it beside its module (for example, `tabTransitions.test.ts`). Cover relevant boundary and asynchronous cases when changing persistence or navigation.
 - Before submitting, run `pnpm test` (requires Bun), `pnpm typecheck`, and `pnpm lint` when relevant. Do not claim interactive GUI behavior was tested unless it was actually exercised.
 - Keep pull requests small and behavior-preserving where possible. Explain user-visible behavior changes and any known gaps; do not combine broad cleanup with an unrelated feature.
+
+## Release verification and documentation
+
+- Document shipped behavior in the present tense. Keep proposed work in issues/PRs rather than describing delivered features as worktree-only or experimental. Retain real limits and distinguish supported behavior from promised future work.
+- Update command help, `docs/CLI-DESIGN.md`, and `.pi/skills/storm/SKILL.md` together when CLI behavior changes. Keep `README.md`, the editor guide, and the architecture map aligned with user-visible and ownership changes.
+- Run source tests, typecheck, and lint. For app/CLI changes, also build with `pnpm package` and exercise the packaged executable with its bundled CLI; a development run does not verify the installed artifact. Follow the [macOS signature checks](docs/macos-packaging-and-folder-access.md) where applicable.
+- Use fresh notes and preferably an isolated profile/vault for release checks. Preserve drafts, exact commands, exit codes, final status, and expected-versus-readback UTF-8 byte counts/hashes. Never retry or repair a mismatched note before investigating the evidence.
+- For reveal changes, check a complete unpaced append followed immediately by EOF, guarded edits, corrections, split/reading previews, tab changes/remounts, and reduced motion as relevant. Confirm source saving independently of animation, and check Revealing → Finished using actual completion signals. Keep the preview visible for foreground animation checks; record visibility/focus conditions rather than confusing background throttling with a failed save.
+- State which build, platform, and workflows were actually checked. Unit tests are not GUI acceptance, and one packaged smoke test is not proof of every supported workflow. Keep verification notes specific without leaving obsolete blanket “not verified” warnings attached to shipped features.
 
 ## Commands
 
