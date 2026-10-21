@@ -23,6 +23,10 @@ import { remarkSoftBreaks } from './markdownSoftBreaks';
 import { remarkListContinuations } from './markdownListContinuations';
 import { remarkBlankLines } from './markdownBlankLines';
 import type { TaskTogglePayload } from './markdownTasks';
+import {
+  findPreviewTextMatchesInBlocks,
+  nextPreviewFindIndex,
+} from './previewFind';
 import type { Appearance } from '../../appearance';
 import {
   createRevealScheduleRegistry,
@@ -218,6 +222,7 @@ type Props = {
   onToggleTask?: (payload: TaskTogglePayload) => void;
   onOpenNote?: (target: string) => void;
   compact?: boolean;
+  findEnabled?: boolean;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   onScroll?: () => void;
   onUserScroll?: () => void;
@@ -748,6 +753,7 @@ function MarkdownPreview({
   onToggleTask,
   onOpenNote,
   compact = false,
+  findEnabled = false,
   scrollRef,
   onScroll,
   onUserScroll,
@@ -850,6 +856,121 @@ function MarkdownPreview({
     };
   }
   const diagnosticsRoot = useRef<HTMLElement>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findIndex, setFindIndex] = useState(0);
+  const [findCount, setFindCount] = useState(0);
+  const findInput = useRef<HTMLInputElement>(null);
+  const findMatches = useRef<Range[]>([]);
+  useEffect(() => {
+    if (findOpen) findInput.current?.focus();
+  }, [findOpen]);
+  useEffect(() => {
+    if (!findEnabled) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'f')
+        return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('input, textarea, [contenteditable="true"], .cm-editor')
+      )
+        return;
+      event.preventDefault();
+      setFindOpen(true);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [findEnabled]);
+  useEffect(() => {
+    const root = diagnosticsRoot.current;
+    const highlights = window.CSS as typeof CSS & {
+      highlights?: Map<string, unknown>;
+    };
+    if (!root || !highlights?.highlights) return;
+    const name = 'storm-note-find';
+    let style = document.getElementById('storm-note-find-style');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'storm-note-find-style';
+      style.textContent =
+        '::highlight(storm-note-find) { background: #b7791f; color: white; }';
+      document.head.append(style);
+    }
+    highlights.highlights.delete(name);
+    findMatches.current = [];
+    if (findQuery) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const nodes: { node: Node; start: number; end: number }[] = [];
+      const blocks: { key: Element | null; text: string }[] = [];
+      let text = '';
+      let currentBlock: Element | null = null;
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        if (
+          node.parentElement?.closest(
+            'button, input, script, style, [role="search"], .preview-heading',
+          )
+        )
+          continue;
+        const block =
+          node.parentElement?.closest(
+            'p, li, blockquote, pre, table, h1, h2, h3, h4, h5, h6, section, div',
+          ) ?? null;
+        if (blocks.length && block !== currentBlock) text += '\u0000';
+        currentBlock = block;
+        const value = node.textContent ?? '';
+        nodes.push({
+          node,
+          start: text.length,
+          end: text.length + value.length,
+        });
+        text += value;
+        const previous = blocks[blocks.length - 1];
+        if (previous?.key === block) previous.text += value;
+        else blocks.push({ key: block, text: value });
+      }
+      for (const match of findPreviewTextMatchesInBlocks(
+        blocks.map(({ text: blockText }) => blockText),
+        findQuery,
+      )) {
+        const startNode = nodes.find(
+          (item) => match.start >= item.start && match.start < item.end,
+        );
+        const endNode = nodes.find(
+          (item) => match.end > item.start && match.end <= item.end,
+        );
+        if (!startNode || !endNode) continue;
+        const range = document.createRange();
+        range.setStart(startNode.node, match.start - startNode.start);
+        range.setEnd(endNode.node, match.end - endNode.start);
+        findMatches.current.push(range);
+      }
+      if (findMatches.current.length) {
+        const HighlightConstructor = (
+          window as Window & { Highlight?: new (...ranges: Range[]) => unknown }
+        ).Highlight;
+        if (HighlightConstructor)
+          highlights.highlights.set(
+            name,
+            new HighlightConstructor(...findMatches.current),
+          );
+      }
+    }
+    setFindCount(findMatches.current.length);
+    setFindIndex((index) =>
+      Math.min(index, Math.max(0, findMatches.current.length - 1)),
+    );
+  }, [findQuery, markdown]);
+  const navigateFind = (direction: number) => {
+    const matches = findMatches.current;
+    if (!matches.length) return;
+    const next = nextPreviewFindIndex(findIndex, direction, matches.length);
+    setFindIndex(next);
+    const range = matches[next];
+    const element = range.startContainer.parentElement;
+    element?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
   const [, setRevealTimelineRevision] = useState(0);
   useLayoutEffect(() => {
     if (commitRevealTimeline(registryRef.current!.registry, Date.now()))
@@ -1005,9 +1126,85 @@ function MarkdownPreview({
       className={`flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${compact ? '' : 'border-l border-white/10'}`}
     >
       {!compact && (
-        <h2 className="preview-heading shrink-0 px-4 py-3 text-xs font-medium text-white/50">
-          Preview
-        </h2>
+        <div className="flex shrink-0 items-center justify-between px-4 py-3">
+          <h2 className="preview-heading text-xs font-medium text-white/50">
+            Preview
+          </h2>
+          <button
+            type="button"
+            className="text-xs text-white/50 hover:text-white"
+            aria-label="Find in preview"
+            onClick={() => setFindOpen(true)}
+          >
+            Find
+          </button>
+        </div>
+      )}
+      {findOpen && (
+        <div
+          className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-2"
+          role="search"
+          aria-label="Find in note preview"
+        >
+          <input
+            ref={findInput}
+            type="search"
+            value={findQuery}
+            onChange={(event) => {
+              setFindQuery(event.target.value);
+              setFindIndex(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                navigateFind(event.shiftKey ? -1 : 1);
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setFindOpen(false);
+                setFindQuery('');
+              }
+            }}
+            aria-label="Find in preview"
+            placeholder="Find in preview"
+            className="min-w-0 flex-1 rounded bg-white/10 px-2 py-1 text-sm text-white outline-none focus:ring-1 focus:ring-sky-400"
+          />
+          <span
+            className="whitespace-nowrap text-xs text-white/60"
+            aria-live="polite"
+          >
+            {findQuery
+              ? `${findCount ? findIndex + 1 : 0} of ${findCount}`
+              : '0 of 0'}
+          </span>
+          <button
+            type="button"
+            aria-label="Previous match"
+            onClick={() => navigateFind(-1)}
+            className="text-white/70"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            aria-label="Next match"
+            onClick={() => navigateFind(1)}
+            className="text-white/70"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            aria-label="Close find"
+            onClick={() => {
+              setFindOpen(false);
+              setFindQuery('');
+            }}
+            className="text-white/70"
+          >
+            ×
+          </button>
+        </div>
       )}
       <AppearanceContext.Provider value={appearance}>
         <RevealRegistryContext.Provider value={registryRef.current.registry}>

@@ -1664,6 +1664,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     onReadingKeyDown={onReadingKeyDown}
                     appearance={appearance}
                     compact
+                    findEnabled
                     previewRevision={preview?.previewRevision}
                     revealStartLine={
                       activeReveal?.documentKey === documentKey
@@ -1702,6 +1703,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 markdown={preview.markdown}
                 vaultId={preview.vaultId}
                 notePath={preview.notePath}
+                findEnabled
                 onToggleTask={onToggleTask}
                 onOpenNote={onOpenNote}
                 scrollRef={previewScrollRef}
