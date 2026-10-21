@@ -19,7 +19,13 @@ In this worktree use `bun scripts/storm.ts`; help is also available with `bun sc
 
 `inspect` is read-only, requires an existing `.md` file, and neither opens a tab nor creates a session/file. For an open editor note, it returns live `content`, `documentVersion`, `diskRevision`, and `saveState`; otherwise it returns disk `content` and `diskRevision`, with no live version. `connect` opens an existing note or creates an empty missing `.md` file only if its parent exists; it does not replace existing content. Its JSON contains `session.sessionId`, session `documentVersion` / `diskRevision`, and content. Use connect for writing and retain one writer session; finish or cancel it when done.
 
-`stream` forwards UTF-8 stdin in order as append operations; EOF finishes automatically. Append acknowledgements indicate live-editor acceptance, not disk persistence. Check `saveState` / status. Accepted content is not rolled back by cancellation or disconnect; cancellation does not terminate an external agent.
+`stream` forwards UTF-8 stdin in order as append operations; EOF finishes automatically. It remains useful for append workflows and stdin backpressure, but is not a reveal API and must not be paced to control preview animation. Append acknowledgements indicate live-editor acceptance, not disk persistence. Check `saveState` / status. Accepted content is not rolled back by cancellation or disconnect; cancellation does not terminate an external agent.
+
+## Native preview presentation (worktree implementation)
+
+Source text acceptance and saving are immediate and independent of preview presentation. The preview may reveal identified pure insertions after acceptance; targeted corrections are immediate. The current bounded 250,000-cell diff conservatively skips reveal for ambiguous or oversized rewrites, so arbitrary edits are not guaranteed to animate. A saved result or finished session can precede a drained visual reveal; stream EOF does not force all content visible. This is presentation behavior, not a CLI/API contract: there is no per-command animation flag, and agents should not insert word/byte chunks or sleeps to pace it.
+
+This feature is implemented in the current worktree but is not yet in the installed CLI/app package. Native source-level checks are not GUI proof; follow-up validation should compare one whole replacement with streamed chunks, test targeted corrections, preview remounts and reduced-motion behavior, and inspect saved source separately from reveal completion. Evidence currently available is partial; do not claim GUI acceptance.
 
 `replace` consumes the full replacement content from stdin. `patch` consumes a JSON array such as:
 
@@ -40,7 +46,7 @@ bun scripts/storm.ts replace SESSION_ID --expected-version 4 --stdin --operation
 bun scripts/storm.ts status SESSION_ID --json
 ```
 
-No direct filesystem writes are used for note mutations; edits go through the coordinated live editor/save path. No parent directories are implicitly created. Stream and edit input provide no byte/chunk/pacing workaround or durable operation journal. Help should accurately describe these semantics.
+No direct filesystem writes are used for note mutations; edits go through the coordinated live editor/save path. No parent directories are implicitly created. Stream and edit input provide no byte/chunk/pacing workaround or durable operation journal. Help should accurately describe these semantics. The official installed CLI help may lag the worktree until the app/CLI is rebuilt and installed.
 
 ## Scope and workflow boundaries
 

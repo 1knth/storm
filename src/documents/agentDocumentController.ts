@@ -15,6 +15,12 @@ export type AgentEditPlan =
       replacements: Array<{ find: string; replace: string }>;
     };
 export type AgentEditPreview = { content: string; changed: boolean };
+/** UTF-16 source ranges accepted as new agent text; corrections are intentionally absent. */
+export type AgentRevealMetadata = {
+  generation: number;
+  documentVersion: number;
+  ranges: Array<{ from: number; to: number }>;
+};
 export type AgentDocument = {
   key: string;
   vaultId?: string;
@@ -35,6 +41,7 @@ export type AgentDocument = {
   conflict: boolean;
   saveError?: unknown;
   persistedContent?: string;
+  reveal: AgentRevealMetadata;
 };
 
 /** Renderer-side per-document owner. Persistence is injected; no view or global selection is owned here. */
@@ -91,6 +98,7 @@ export class AgentDocumentController {
       generation: 0,
       conflict: false,
       persistedContent: state.doc.toString(),
+      reveal: { generation: 0, documentVersion: 0, ranges: [] },
     };
     this.documents.set(key, document);
     this.notify(document);
@@ -102,6 +110,11 @@ export class AgentDocumentController {
     if (!document || document.closed) return;
     document.state = state;
     document.acceptedVersion++;
+    document.reveal = {
+      ...document.reveal,
+      documentVersion: document.acceptedVersion,
+      ranges: [],
+    };
     document.generation++;
     document.dirty = true;
     this.notify(document);
@@ -206,6 +219,8 @@ export class AgentDocumentController {
     )
       throw new Error('Agent session is closed');
     if (preview.changed) {
+      const before = document.state.doc.toString();
+      const insertions = classifyEditInsertions(before, preview.content);
       document.state = document.state.update({
         changes: {
           from: 0,
@@ -216,6 +231,11 @@ export class AgentDocumentController {
       }).state;
       document.acceptedVersion++;
       document.generation++;
+      document.reveal = {
+        generation: document.reveal.generation + 1,
+        documentVersion: document.acceptedVersion,
+        ranges: insertions,
+      };
       document.dirty = true;
       this.notify(document);
       this.scheduleSave(document);
@@ -268,6 +288,14 @@ export class AgentDocumentController {
       }).state;
       document.acceptedVersion++;
       document.generation++;
+      const from = document.state.doc.length - text.length;
+      document.reveal = {
+        generation: document.reveal.generation || 1,
+        documentVersion: document.acceptedVersion,
+        ranges: text.length
+          ? [...document.reveal.ranges, { from, to: from + text.length }]
+          : document.reveal.ranges,
+      };
       document.dirty = true;
       this.notify(document);
       resolveResult({ version: document.acceptedVersion });
@@ -351,4 +379,177 @@ export class AgentDocumentController {
   getDocument(key: string): AgentDocument | undefined {
     return this.get(key);
   }
+}
+
+/** Legacy focused helper: returns a range only for a single exact insertion. */
+export function classifySingleInsertion(
+  before: string,
+  after: string,
+): { from: number; to: number } | null {
+  if (before === after) return null;
+  const prefix = commonPrefixLength(before, after);
+  const suffix = commonSuffixLength(before, after, prefix);
+  return before.length === prefix + suffix
+    ? { from: prefix, to: after.length - suffix }
+    : null;
+}
+
+/** Maximum DP cells used by the token diff; larger edits safely reveal nothing. */
+const MAX_DIFF_CELLS = 250_000;
+
+/** Classifies pure inserted token runs; replacement hunks (delete + insert) stay immediate. */
+export function classifyEditInsertions(
+  before: string,
+  after: string,
+): Array<{ from: number; to: number }> {
+  if (before === after) return [];
+  const prefix = commonPrefixLength(before, after);
+  if (prefix === before.length) return [{ from: prefix, to: after.length }];
+  if (prefix === after.length) return [];
+  const suffix = commonSuffixLength(before, after, prefix);
+  if (suffix === before.length - prefix) {
+    return [{ from: prefix, to: after.length - suffix }];
+  }
+  if (suffix === after.length - prefix) return [];
+
+  const oldTokens = tokenize(before);
+  const newTokens = tokenize(after);
+  // Large pure insertions are common in streamed notes. A linear exact
+  // subsequence check handles them without allocating the bounded LCS table.
+  const insertionOnly = classifySubsequenceInsertions(
+    after,
+    oldTokens,
+    newTokens,
+  );
+  if (insertionOnly !== null) return insertionOnly;
+
+  const columns = newTokens.length + 1;
+  const cells = (oldTokens.length + 1) * columns;
+  if (!Number.isSafeInteger(cells) || cells > MAX_DIFF_CELLS) return [];
+
+  // A bounded LCS table makes work and memory predictable; tied alignments are
+  // resolved conservatively below so repeated unchanged text is never replayed.
+  const lcs = new Uint32Array(cells);
+  for (let i = oldTokens.length - 1; i >= 0; i--) {
+    for (let j = newTokens.length - 1; j >= 0; j--) {
+      const index = i * columns + j;
+      lcs[index] =
+        oldTokens[i].text === newTokens[j].text
+          ? lcs[(i + 1) * columns + j + 1] + 1
+          : Math.max(lcs[(i + 1) * columns + j], lcs[index + 1]);
+    }
+  }
+  const ranges: Array<{ from: number; to: number }> = [];
+  let i = 0;
+  let j = 0;
+  let insertionStart: number | null = null;
+  let deletedInHunk = false;
+  while (i < oldTokens.length || j < newTokens.length) {
+    if (
+      i < oldTokens.length &&
+      j < newTokens.length &&
+      oldTokens[i].text === newTokens[j].text
+    ) {
+      if (insertionStart !== null) {
+        if (
+          !deletedInHunk &&
+          isTokenBoundary(after, insertionStart) &&
+          isTokenBoundary(after, newTokens[j].from)
+        )
+          ranges.push({ from: insertionStart, to: newTokens[j].from });
+        insertionStart = null;
+      }
+      deletedInHunk = false;
+      i++;
+      j++;
+    } else if (
+      j < newTokens.length &&
+      (i === oldTokens.length ||
+        lcs[i * columns + j + 1] > lcs[(i + 1) * columns + j])
+    ) {
+      if (insertionStart === null) insertionStart = newTokens[j].from;
+      j++;
+    } else {
+      // Prefer consuming old text on ties: this keeps ambiguous repeated content
+      // from being mislabeled as new, while independent later additions survive.
+      deletedInHunk = true;
+      i++;
+    }
+  }
+  if (
+    insertionStart !== null &&
+    !deletedInHunk &&
+    isTokenBoundary(after, insertionStart)
+  )
+    ranges.push({ from: insertionStart, to: after.length });
+  return ranges.filter(({ from, to }) => to > from);
+}
+
+function classifySubsequenceInsertions(
+  after: string,
+  oldTokens: TextToken[],
+  newTokens: TextToken[],
+): Array<{ from: number; to: number }> | null {
+  const matched: number[] = [];
+  let next = 0;
+  for (const oldToken of oldTokens) {
+    while (next < newTokens.length && newTokens[next].text !== oldToken.text)
+      next++;
+    if (next === newTokens.length) return null;
+    matched.push(next++);
+  }
+
+  const ranges: Array<{ from: number; to: number }> = [];
+  let previousNew = -1;
+  for (const index of matched) {
+    if (index > previousNew + 1) {
+      const from = previousNew < 0 ? 0 : newTokens[previousNew + 1].from;
+      const to = newTokens[index].from;
+      if (!isTokenBoundary(after, from) || !isTokenBoundary(after, to))
+        return null;
+      ranges.push({ from, to });
+    }
+    previousNew = index;
+  }
+  if (previousNew + 1 < newTokens.length) {
+    const from = newTokens[previousNew + 1].from;
+    if (!isTokenBoundary(after, from)) return null;
+    ranges.push({ from, to: after.length });
+  }
+  return ranges;
+}
+
+type TextToken = { text: string; from: number };
+function tokenize(text: string): TextToken[] {
+  const tokens: TextToken[] = [];
+  const pattern = /\s+|[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]/gu;
+  for (const match of text.matchAll(pattern))
+    tokens.push({ text: match[0], from: match.index });
+  return tokens;
+}
+
+function isTokenBoundary(text: string, offset: number): boolean {
+  const word = /[\p{L}\p{N}_]/u;
+  return !(
+    offset > 0 &&
+    offset < text.length &&
+    word.test(text[offset - 1]) &&
+    word.test(text[offset])
+  );
+}
+
+function commonPrefixLength(a: string, b: string): number {
+  let index = 0;
+  while (index < a.length && index < b.length && a[index] === b[index]) index++;
+  return index;
+}
+function commonSuffixLength(a: string, b: string, prefix: number): number {
+  let length = 0;
+  while (
+    length < a.length - prefix &&
+    length < b.length - prefix &&
+    a[a.length - length - 1] === b[b.length - length - 1]
+  )
+    length++;
+  return length;
 }

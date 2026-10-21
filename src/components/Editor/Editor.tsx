@@ -224,6 +224,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           markdown: string;
           startLine: number;
           id: string;
+          ranges?: readonly { from: number; to: number }[];
         }
       >(),
   );
@@ -336,8 +337,26 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   >(() => new Set());
   const seenAgentSessionsByNote = useRef(new Map<string, Set<string>>());
   const activeNoteKey = documentKey;
-  const currentRevealIdentity = appendReveal
-    ? JSON.stringify([appendReveal.documentKey, appendReveal.id])
+  const explicitReveal = agentDocument?.reveal;
+  const explicitRanges = explicitReveal?.ranges ?? [];
+  const explicitRevealIdentity =
+    explicitReveal && explicitRanges.length > 0
+      ? JSON.stringify([
+          documentKey,
+          explicitReveal.generation,
+          explicitReveal.documentVersion,
+        ])
+      : undefined;
+  const activeReveal = explicitRevealIdentity
+    ? {
+        documentKey: documentKey!,
+        id: explicitRevealIdentity,
+        startLine: 1,
+        ranges: explicitRanges,
+      }
+    : appendReveal;
+  const currentRevealIdentity = activeReveal
+    ? JSON.stringify([activeReveal.documentKey, activeReveal.id])
     : undefined;
   const currentRevealIdentityRef = useRef(currentRevealIdentity);
   currentRevealIdentityRef.current = currentRevealIdentity;
@@ -1620,8 +1639,13 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     compact
                     previewRevision={preview?.previewRevision}
                     revealStartLine={
-                      appendReveal?.documentKey === documentKey
-                        ? appendReveal.startLine
+                      activeReveal?.documentKey === documentKey
+                        ? activeReveal.startLine
+                        : undefined
+                    }
+                    revealRanges={
+                      activeReveal?.documentKey === documentKey
+                        ? activeReveal.ranges
                         : undefined
                     }
                     revealId={
@@ -1660,8 +1684,13 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 appearance={appearance}
                 previewRevision={preview?.previewRevision}
                 revealStartLine={
-                  appendReveal?.documentKey === documentKey
-                    ? appendReveal.startLine
+                  activeReveal?.documentKey === documentKey
+                    ? activeReveal.startLine
+                    : undefined
+                }
+                revealRanges={
+                  activeReveal?.documentKey === documentKey
+                    ? activeReveal.ranges
                     : undefined
                 }
                 revealId={

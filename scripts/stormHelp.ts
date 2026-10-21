@@ -29,7 +29,7 @@ mutation. Obtain live documentVersion from connect/status/inspect and pass it as
 --expected-version (not diskRevision). Apply waits for the app's saved response. Patch
 stdin is a JSON array of {"find":"...","replace":"..."} edits. The official CLI
 requires the running Storm app and never writes note files directly. Stdin EOF finishes
-stream automatically; do not call finish again.
+stream automatically; do not call finish again. Stream is append input, not a reveal API. Source acceptance/save is independent of preview animation; there is no chunk pacing or per-command reveal flag.
 
 Options:
   -h, --help          Show this guide or command-specific help (works offline)
@@ -68,19 +68,21 @@ Example:
   replace: `Usage: bun scripts/storm.ts [endpoint options] replace SESSION --expected-version N --stdin [--dry-run] [--json]
 
 Replace the live note from stdin. --dry-run previews; otherwise applies and waits for
-saved confirmation. Use live documentVersion from connect/status (or open-note inspect),
+saved confirmation. Source text saves independently of preview presentation; the current
+preview can reveal identified pure insertions, but ambiguous/oversized rewrites may skip reveal. Use live documentVersion from connect/status (or open-note inspect),
 not diskRevision. --operation-id enables bounded in-memory replay of an identical request.`,
   patch: `Usage: bun scripts/storm.ts [endpoint options] patch SESSION --expected-version N --stdin [--dry-run] [--json]
 
 Stdin is a JSON array of exact-text edits: [{"find":"old","replace":"new"}].
---dry-run previews; otherwise applies and waits for saved confirmation. Use live
+--dry-run previews; otherwise applies and waits for saved confirmation. Corrections are
+immediate; source saving is independent of preview presentation, which may skip reveal for ambiguous/oversized rewrites. Use live
 documentVersion from connect/status (or open-note inspect), not diskRevision.
 --operation-id enables bounded in-memory replay of an identical request.`,
   stream: `Usage: bun scripts/storm.ts [endpoint options] stream SESSION --stdin
 
 Append UTF-8 Markdown from stdin in order. EOF automatically finishes the session.
 Accepted text is not rolled back on cancellation or disconnect; a cancelled/error
-session must not be resumed by sending more data.
+session must not be resumed by sending more data. Stream is useful for live append workflows, not preview reveal control; do not pace chunks, bytes, or words to animate text.
 
 Example:
   bun scripts/storm.ts stream SESSION_ID --stdin < draft.md`,

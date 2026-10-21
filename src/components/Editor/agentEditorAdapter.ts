@@ -1,12 +1,15 @@
 import { EditorState } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import type { AgentRevealMetadata } from '../../documents/agentDocumentController';
 
 /** Owner-provided document binding. Identity uses vault identity plus vault-relative path. */
 export type AgentEditorAdapter = {
   vaultId: string;
   path: string;
   writing: boolean;
+  /** Accepted agent source ranges, versioned independently from React status transitions. */
+  reveal?: AgentRevealMetadata;
   onStateChange: (state: EditorState) => void;
   flush: () => Promise<boolean>;
   /** Optional owner revision; informational and does not replace editor state. */

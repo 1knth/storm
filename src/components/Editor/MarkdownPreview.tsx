@@ -3,6 +3,7 @@ import React, {
   memo,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -29,6 +30,9 @@ import {
   planRevealUnits,
   getRevealTiming,
   isRevealComplete,
+  completeRevealUnit,
+  commitRevealTimeline,
+  markRevealStarted,
   wordSegments,
 } from './managedPreviewBatch';
 
@@ -50,10 +54,12 @@ function sourcePositions() {
 function rehypeRevealUnits({
   registry,
   startOffset,
+  revealRanges,
   markdown,
 }: {
   registry: ReturnType<typeof createRevealScheduleRegistry>;
   startOffset: number;
+  revealRanges?: readonly { from: number; to: number }[];
   markdown: string;
 }) {
   return (tree: any) => {
@@ -134,7 +140,16 @@ function rehypeRevealUnits({
             const eligibilityOffset =
               position === undefined ? paragraphStart : base;
             const segments = wordSegments(text, base, startOffset);
-            if (position === undefined) {
+            if (revealRanges) {
+              for (const segment of segments) {
+                const segmentEnd = segment.offset + segment.text.length;
+                segment.animate =
+                  !/^\s+$/.test(segment.text) &&
+                  revealRanges.some(
+                    ({ from, to }) => segment.offset < to && segmentEnd > from,
+                  );
+              }
+            } else if (position === undefined) {
               for (const segment of segments)
                 segment.animate =
                   !/^\s+$/.test(segment.text) &&
@@ -210,6 +225,7 @@ type Props = {
   onReadingKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
   appearance: Appearance;
   revealStartLine?: number;
+  revealRanges?: readonly { from: number; to: number }[];
   revealId?: string;
   previewRevision?: number;
   revealRegistry?: ReturnType<typeof createRevealScheduleRegistry>;
@@ -640,16 +656,15 @@ function RevealBlock({ sourceProps, children }: any) {
   const schedule = registry?.words.get(
     String(sourceProps?.['data-reveal-key']),
   );
-  const timing = useRef<{ delay: number; complete: boolean } | null>(null);
-  if (timing.current === null && schedule && registry) {
-    const key = String(sourceProps?.['data-reveal-key']);
-    const now = Date.now();
-    timing.current = {
-      delay: getRevealTiming(registry, key, now),
-      complete: isRevealComplete(registry, key, now),
-    };
-  }
-  const delay = timing.current?.delay ?? 0;
+  const key = String(sourceProps?.['data-reveal-key']);
+  const timing =
+    registry && schedule
+      ? {
+          delay: getRevealTiming(registry, key, Date.now()),
+          complete: isRevealComplete(registry, key, Date.now()),
+        }
+      : null;
+  const delay = timing?.delay ?? 0;
   if (
     !context ||
     !registry ||
@@ -664,7 +679,7 @@ function RevealBlock({ sourceProps, children }: any) {
       data-preview-reveal-block=""
       className="markdown-block-reveal"
       style={
-        timing.current?.complete
+        timing?.complete
           ? { animation: 'none', opacity: 1 }
           : { animationDelay: `${delay}ms` }
       }
@@ -677,17 +692,16 @@ function RevealBlock({ sourceProps, children }: any) {
 export function AnimatedRevealWord({ children, ...props }: any) {
   const registry = useContext(RevealRegistryContext);
   const key = props['data-reveal-key'];
-  const timing = useRef<{ delay: number; complete: boolean } | null>(null);
-  if (timing.current === null && registry && typeof key === 'string') {
-    const now = Date.now();
-    timing.current = {
-      delay: getRevealTiming(registry, key, now),
-      complete: isRevealComplete(registry, key, now),
-    };
-  }
-  const style = timing.current?.complete
+  const timing =
+    registry && typeof key === 'string'
+      ? {
+          delay: getRevealTiming(registry, key, Date.now()),
+          complete: isRevealComplete(registry, key, Date.now()),
+        }
+      : null;
+  const style = timing?.complete
     ? { animation: 'none', opacity: 1 }
-    : { animationDelay: `${timing.current?.delay ?? 0}ms` };
+    : { animationDelay: `${timing?.delay ?? 0}ms` };
   return (
     <span {...props} style={style}>
       {children}
@@ -741,6 +755,7 @@ function MarkdownPreview({
   onReadingKeyDown,
   appearance,
   revealStartLine,
+  revealRanges,
   revealId,
   previewRevision,
   revealRegistry,
@@ -781,6 +796,8 @@ function MarkdownPreview({
       )
         return;
       const word = event.target as HTMLElement;
+      const key = word.dataset.revealKey;
+      if (key) markRevealStarted(registryRef.current!.registry, key);
       cancelAnimationFrame(state.frame);
       state.frame = requestAnimationFrame(() => {
         state.frame = 0;
@@ -833,6 +850,11 @@ function MarkdownPreview({
     };
   }
   const diagnosticsRoot = useRef<HTMLElement>(null);
+  const [, setRevealTimelineRevision] = useState(0);
+  useLayoutEffect(() => {
+    if (commitRevealTimeline(registryRef.current!.registry, Date.now()))
+      setRevealTimelineRevision((revision) => revision + 1);
+  });
   const revealProgressCallback = useRef(onRevealProgress);
   const previewVersion = useRef(0);
   useEffect(() => {
@@ -882,6 +904,7 @@ function MarkdownPreview({
       if (event.animationName !== 'markdown-word-reveal') return;
       const key = event.target.dataset.revealKey;
       if (!key || !pending.delete(key)) return;
+      completeRevealUnit(registryRef.current!.registry, key);
       notify(pending.size > 0);
     };
     root.addEventListener('animationend', onAnimationFinished, true);
@@ -1054,6 +1077,7 @@ function MarkdownPreview({
                                   .slice(0, revealStartLine - 1)
                                   .join('\n').length +
                                 (revealStartLine > 1 ? 1 : 0),
+                          revealRanges,
                           markdown,
                         },
                       ],
