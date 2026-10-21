@@ -1,3 +1,24 @@
+import { Transaction } from '@codemirror/state';
+
+export function isUserSelectionChange(
+  selectionSet: boolean,
+  transactions: readonly Transaction[],
+): boolean {
+  return (
+    selectionSet &&
+    transactions.some((transaction) => {
+      const userEvent = transaction.annotation(Transaction.userEvent);
+      return (
+        userEvent === 'select' ||
+        userEvent?.startsWith('select.') ||
+        userEvent?.startsWith('move.') ||
+        userEvent?.startsWith('input.') ||
+        userEvent === 'input'
+      );
+    })
+  );
+}
+
 export type PreviewAnchor = {
   start: number;
   end: number;
