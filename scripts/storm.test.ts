@@ -749,9 +749,9 @@ test('status accepts the documented session plus --json spelling', async () => {
   }
 });
 
-test('project-local Storm skill has portable frontmatter and resolves the CLI relatively', async () => {
+test('tool-neutral Storm skill has portable frontmatter and resolves the CLI relatively', async () => {
   const { readFile } = await import('node:fs/promises');
-  const skillPath = new URL('../.pi/skills/storm/SKILL.md', import.meta.url);
+  const skillPath = new URL('../skills/storm/SKILL.md', import.meta.url);
   const content = await readFile(skillPath, 'utf8');
   assert.match(content, /^---\nname: storm\ndescription: .+\n---/);
   assert.match(content, /Read `storm --help`/);
@@ -760,7 +760,7 @@ test('project-local Storm skill has portable frontmatter and resolves the CLI re
     content,
     /for source development with the development app, use `bun scripts\/storm\.ts`/,
   );
-  assert.ok(existsSync(new URL('../../../scripts/storm.ts', skillPath)));
+  assert.ok(existsSync(new URL('../../scripts/storm.ts', skillPath)));
 });
 
 test('CLI stream forwards a small chunk before stdin EOF', async () => {

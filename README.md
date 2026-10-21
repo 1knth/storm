@@ -28,7 +28,7 @@ bun scripts/storm.ts --help  # development fallback
 storm connect --help
 ```
 
-A project-local Pi-compatible agent skill is at [`.pi/skills/storm/SKILL.md`](.pi/skills/storm/SKILL.md); Pi discovers it as a project skill when this repository is open. The standalone CLI discovers endpoint metadata created by the running app in the macOS user-data locations `~/Library/Application Support/storm` or `~/Library/Application Support/Storm` (and the legacy `~/.storm` location). If multiple profiles are present, select one explicitly with `--endpoint PATH` or `--profile NAME`; `STORM_ENDPOINT` can override default discovery. The development CLI entrypoint runs directly with Bun. On macOS:
+The tool-neutral agent skill is at [`skills/storm/SKILL.md`](skills/storm/SKILL.md). Point your agent at that file or load it through your tool's skill mechanism; it does not require Pi. The standalone CLI discovers endpoint metadata created by the running app in the macOS user-data locations `~/Library/Application Support/storm` or `~/Library/Application Support/Storm` (and the legacy `~/.storm` location). If multiple profiles are present, select one explicitly with `--endpoint PATH` or `--profile NAME`; `STORM_ENDPOINT` can override default discovery. The development CLI entrypoint runs directly with Bun. On macOS:
 
 ```sh
 storm inspect "/absolute/path/to/note.md" --json  # read an existing note without opening it

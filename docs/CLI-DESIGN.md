@@ -1,6 +1,6 @@
 # Storm CLI live-note contract
 
-This document describes the CLI and preview behavior shipped with Storm. The CLI is part of the maintained desktop app, not a separate experimental workflow. Update this contract, command help, and the [agent skill](../.pi/skills/storm/SKILL.md) together when behavior changes. Development builds may contain changes beyond an installed release; use the help bundled with the executable you are running for its available commands and options.
+This document describes the CLI and preview behavior shipped with Storm. The CLI is part of the maintained desktop app, not a separate experimental workflow. Update this contract, command help, and the [agent skill](../skills/storm/SKILL.md) together when behavior changes. Development builds may contain changes beyond an installed release; use the help bundled with the executable you are running for its available commands and options.
 
 ## Running the CLI
 
