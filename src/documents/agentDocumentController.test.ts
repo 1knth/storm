@@ -1,7 +1,126 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EditorState } from '@codemirror/state';
-import { AgentDocumentController } from './agentDocumentController';
+import {
+  AgentDocumentController,
+  classifyEditInsertions,
+  classifySingleInsertion,
+} from './agentDocumentController';
+
+describe('agent reveal classification', () => {
+  it('classifies exact insertion ranges in UTF-16 coordinates and rejects corrections', () => {
+    assert.deepEqual(classifySingleInsertion('A🙂B', 'A🙂newB'), {
+      from: 3,
+      to: 6,
+    });
+    assert.deepEqual(classifySingleInsertion('abc', 'abc\n'), {
+      from: 3,
+      to: 4,
+    });
+    assert.equal(classifySingleInsertion('abc', 'axc'), null);
+    assert.equal(classifySingleInsertion('abc', 'ac'), null);
+    assert.equal(classifySingleInsertion('abc', 'aXbYc'), null);
+    assert.equal(classifySingleInsertion('same', 'same'), null);
+  });
+
+  it('handles large pure insertion runs linearly and anchors repeated content', () => {
+    const old = Array.from({ length: 5000 }, (_, i) => `line${i}`).join('\n');
+    const lastStart = old.lastIndexOf('\n') + 1;
+    const after = `intro\n${old.slice(0, lastStart)}\nadded\n${old.slice(lastStart)}\nend`;
+    assert.deepEqual(classifyEditInsertions(old, after), [
+      { from: 0, to: 6 },
+      {
+        from: old.slice(0, lastStart).length + 5,
+        to: old.slice(0, lastStart).length + 12,
+      },
+      { from: after.length - 4, to: after.length },
+    ]);
+    assert.deepEqual(classifyEditInsertions('same same', 'same new same'), [
+      { from: 5, to: 9 },
+    ]);
+  });
+
+  it('classifies multiple inserted runs while leaving correction hunks immediate', () => {
+    assert.deepEqual(
+      classifyEditInsertions(
+        'alpha middle omega',
+        'NEW alpha middle omega PLUS',
+      ),
+      [
+        { from: 0, to: 4 },
+        { from: 22, to: 27 },
+      ],
+    );
+    assert.deepEqual(
+      classifyEditInsertions('teh end', 'the end\nnew paragraph'),
+      [{ from: 7, to: 21 }],
+    );
+    assert.deepEqual(
+      classifyEditInsertions('alpha old omega', 'alpha new omega'),
+      [],
+    );
+    assert.deepEqual(classifyEditInsertions('a\r\nb', 'a\r\nnew\r\nb'), [
+      { from: 3, to: 8 },
+    ]);
+    assert.deepEqual(classifyEditInsertions('A🙂B', 'A🙂newB'), [
+      { from: 3, to: 6 },
+    ]);
+    assert.deepEqual(classifyEditInsertions('same same', 'same new same'), [
+      { from: 5, to: 9 },
+    ]);
+    assert.deepEqual(classifyEditInsertions('same', 'same'), []);
+  });
+
+  it('uses bounded work and fast-paths complete draft insertion', () => {
+    const draft = 'word '.repeat(4_600);
+    assert.deepEqual(classifyEditInsertions('', draft), [
+      { from: 0, to: draft.length },
+    ]);
+    const started = performance.now();
+    assert.deepEqual(
+      classifyEditInsertions('a '.repeat(600), 'b '.repeat(600)),
+      [],
+    );
+    assert.ok(performance.now() - started < 1_000);
+  });
+
+  it('keeps accepted append ranges through finish until the preview consumes them', async () => {
+    const controller = new AgentDocumentController();
+    const document = controller.attach(
+      'finish',
+      '/vault/finish.md',
+      EditorState.create({ doc: '' }),
+    );
+    await controller.append(document, 'done');
+    const acceptedReveal = document.reveal;
+    controller.finish(document);
+    assert.equal(document.status, 'finished');
+    assert.equal(document.reveal, acceptedReveal);
+    assert.deepEqual(document.reveal.ranges, [{ from: 0, to: 4 }]);
+  });
+
+  it('publishes versioned inserted ranges for appends; human updates settle them', async () => {
+    const controller = new AgentDocumentController();
+    const document = controller.attach(
+      'one',
+      '/vault/one.md',
+      EditorState.create({ doc: 'A🙂' }),
+    );
+    await controller.append(document, '\nnew');
+    assert.deepEqual(document.reveal, {
+      generation: 1,
+      documentVersion: 1,
+      ranges: [{ from: 3, to: 7 }],
+    });
+    await controller.append(document, ' text');
+    assert.deepEqual(document.reveal.ranges, [
+      { from: 3, to: 7 },
+      { from: 7, to: 12 },
+    ]);
+    controller.updateFromEditor('one', EditorState.create({ doc: 'human' }));
+    assert.deepEqual(document.reveal.ranges, []);
+  });
+});
 
 describe('AgentDocumentController', () => {
   it('previews exact original-snapshot replacements, rejects invalid plans, and applies atomically', async () => {
@@ -51,8 +170,56 @@ describe('AgentDocumentController', () => {
       content: '',
     });
     assert.equal(result.content, '');
+    assert.deepEqual(document.reveal.ranges, []);
     assert.deepEqual(saved, ['']);
     assert.equal(document.acceptedVersion, 1);
+  });
+
+  it('marks independent pure insertions from a matched edit as separate ranges', async () => {
+    const controller = new AgentDocumentController(async () => ({
+      revision: 'r2',
+    }));
+    const document = controller.attach(
+      'doc',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'A B' }),
+      'r1',
+    );
+    await controller.applyEdit(document, 0, {
+      type: 'replaceText',
+      replacements: [
+        { find: 'A', replace: 'new A' },
+        { find: 'B', replace: 'B more' },
+      ],
+    });
+    assert.deepEqual(document.reveal.ranges, [
+      { from: 0, to: 4 },
+      { from: 7, to: 12 },
+    ]);
+  });
+
+  it('marks pure middle insertion from a full replace as revealable, not a correction', async () => {
+    const controller = new AgentDocumentController(async () => ({
+      revision: 'r2',
+    }));
+    const document = controller.attach(
+      'doc',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'left right' }),
+      'r1',
+    );
+    await controller.applyEdit(document, 0, {
+      type: 'replace',
+      content: 'left NEW right',
+    });
+    assert.deepEqual(document.reveal.ranges, [{ from: 5, to: 9 }]);
+    await controller.applyEdit(document, 1, {
+      type: 'replace',
+      content: 'left fixed right',
+    });
+    assert.deepEqual(document.reveal.ranges, []);
   });
 
   it('acknowledges a clean no-op against the attached revision and content', async () => {

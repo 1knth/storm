@@ -272,6 +272,7 @@ function App() {
           path: document.path,
           writing: document.status === 'writing',
           revision: document.revision,
+          reveal: document.reveal,
           onStateChange: (state: import('@codemirror/state').EditorState) =>
             host.controller.updateFromEditor(document.key, state),
           flush: () => host.controller.flush(document),

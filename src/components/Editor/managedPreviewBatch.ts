@@ -108,7 +108,7 @@ export function completeRevealProgressUnit(
 }
 
 export const PREVIEW_SCROLL_INTENT_MS = 450;
-export const PREVIEW_REVEAL_CADENCE_MS = 150;
+export const PREVIEW_REVEAL_CADENCE_MS = 50;
 export const PREVIEW_REVEAL_FRAME_PADDING_MS = 16;
 
 export function revealDelayFromCommit(
@@ -129,6 +129,8 @@ export type RevealSchedule = {
   ordinal: number;
   scheduledAt: number;
   mounted?: boolean;
+  committed?: boolean;
+  started?: boolean;
 };
 export type RevealUnitDescriptor = {
   key: string;
@@ -165,6 +167,7 @@ export type RevealScheduleRegistry = {
   tailParagraphKey: string | null;
   tailParagraphEndAt: number | null;
   words: Map<string, RevealSchedule>;
+  completed: Set<string>;
 };
 
 export function createRevealScheduleRegistry(): RevealScheduleRegistry {
@@ -175,6 +178,7 @@ export function createRevealScheduleRegistry(): RevealScheduleRegistry {
     tailParagraphKey: null,
     tailParagraphEndAt: null,
     words: new Map(),
+    completed: new Set(),
   };
 }
 
@@ -275,6 +279,50 @@ export function scheduleRevealBlock(
   return scheduleRevealWords(registry, [key], now, cadence)[0];
 }
 
+/** Rebase only never-started slots after the preview's first DOM commit. */
+export function commitRevealTimeline(
+  registry: RevealScheduleRegistry,
+  now: number,
+  cadence = PREVIEW_REVEAL_CADENCE_MS,
+): boolean {
+  const pending = [...registry.words.entries()]
+    .filter(
+      ([key, schedule]) =>
+        !registry.completed.has(key) &&
+        !schedule.started &&
+        !schedule.committed,
+    )
+    .sort((a, b) => a[1].ordinal - b[1].ordinal);
+  let previous = now - cadence;
+  // Keep future assignments where possible; move elapsed, unpainted slots into
+  // fresh ordered slots so a delayed first commit cannot launch the queue at once.
+  let changed = false;
+  for (const [, schedule] of pending) {
+    schedule.committed = true;
+    if (schedule.scheduledAt <= now) {
+      const next = Math.max(
+        now + PREVIEW_REVEAL_FRAME_PADDING_MS,
+        previous + cadence,
+      );
+      schedule.scheduledAt = next;
+      changed = true;
+    } else if (previous !== null && schedule.scheduledAt < previous + cadence) {
+      schedule.scheduledAt = previous + cadence;
+      changed = true;
+    }
+    previous = schedule.scheduledAt;
+  }
+  return changed;
+}
+
+export function markRevealStarted(
+  registry: RevealScheduleRegistry,
+  key: string,
+): void {
+  const schedule = registry.words.get(key);
+  if (schedule) schedule.started = true;
+}
+
 /** Resolve a unit's CSS delay against its shared absolute schedule. */
 export function getRevealTiming(
   registry: RevealScheduleRegistry,
@@ -287,9 +335,10 @@ export function getRevealTiming(
   // remaining tail on remount: doing so changes the generation's schedule and
   // can make the preview appear to restart or reveal out of order.
   schedule.mounted = true;
-  const elapsed = now - schedule.scheduledAt;
-  if (elapsed >= 100) return 0;
-  return -elapsed;
+  // Registration can happen during Markdown render long before React commits the
+  // unit. Never treat elapsed wall time as proof that an animation was painted.
+  // Overdue slots start at commit instead of being silently settled.
+  return Math.max(0, schedule.scheduledAt - now);
 }
 
 export function isRevealComplete(
@@ -298,8 +347,16 @@ export function isRevealComplete(
   now: number,
   duration = 100,
 ): boolean {
-  const schedule = registry.words.get(key);
-  return schedule !== undefined && now >= schedule.scheduledAt + duration;
+  void now;
+  void duration;
+  return registry.completed.has(key);
+}
+
+export function completeRevealUnit(
+  registry: RevealScheduleRegistry,
+  key: string,
+): void {
+  if (registry.words.has(key)) registry.completed.add(key);
 }
 
 /** Whether a source-positioned word begins in newly appended content. */

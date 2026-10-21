@@ -13,6 +13,7 @@ import {
   getRevealTiming,
   isRevealComplete,
   planRevealUnits,
+  commitRevealTimeline,
   hasRecentPreviewScrollIntent,
   PREVIEW_SCROLL_INTENT_MS,
   shouldFinalizeReveal,
@@ -293,12 +294,14 @@ describe('generation-wide word reveal schedule', () => {
     const start = registry.words.get('unit')!.scheduledAt;
 
     assert.equal(getRevealTiming(registry, 'unit', start - 20), 20);
-    assert.equal(getRevealTiming(registry, 'unit', start + 40), -40);
-    assert.equal(isRevealComplete(registry, 'unit', start + 100), true);
+    assert.equal(getRevealTiming(registry, 'unit', start + 40), 0);
+    assert.equal(isRevealComplete(registry, 'unit', start + 100), false);
     assert.equal(getRevealTiming(registry, 'unit', start + 100), 0);
     assert.equal(registry.words.get('unit')!.scheduledAt, start);
+    registry.completed.add('unit');
+    assert.equal(isRevealComplete(registry, 'unit', start + 100), true);
   });
-  it('uses the single 150ms cadence and keeps assignments fixed across rapid appends', () => {
+  it('uses the default 50ms word cadence and keeps assignments fixed across rapid appends', () => {
     const registry = createRevealScheduleRegistry();
     const baseline = scheduleRevealWords(registry, ['p1:first'], 1000);
     const append = scheduleRevealWords(
@@ -306,11 +309,11 @@ describe('generation-wide word reveal schedule', () => {
       ['p1:first', 'p1:partial-tail'],
       1025,
     );
-    assert.equal(PREVIEW_REVEAL_CADENCE_MS, 150);
+    assert.equal(PREVIEW_REVEAL_CADENCE_MS, 50);
     assert.deepEqual(baseline, [{ ordinal: 0, scheduledAt: 1016 }]);
     assert.deepEqual(append, [
       { ordinal: 0, scheduledAt: 1016 },
-      { ordinal: 1, scheduledAt: 1166 },
+      { ordinal: 1, scheduledAt: 1066 },
     ]);
   });
 
@@ -325,15 +328,15 @@ describe('generation-wide word reveal schedule', () => {
     const third = scheduleRevealWords(registry, ['p3:a'], 1200);
     assert.deepEqual(
       first.map((item) => item.scheduledAt),
-      [1016, 1166],
+      [1016, 1066],
     );
     assert.deepEqual(
       second.map((item) => item.scheduledAt),
-      [1016, 1166, 1316],
+      [1016, 1066, 1116],
     );
     assert.deepEqual(
       third.map((item) => item.scheduledAt),
-      [1466],
+      [1216],
     );
     assert.equal(registry.nextOrdinal, 4);
   });
@@ -360,8 +363,8 @@ describe('generation-wide word reveal schedule', () => {
     assert.ok(
       secondParagraphFirst.scheduledAt >= firstParagraphLast.scheduledAt + 200,
     );
-    assert.equal(firstParagraphLast.scheduledAt, 2366);
-    assert.equal(secondParagraphFirst.scheduledAt, 2566);
+    assert.equal(firstParagraphLast.scheduledAt, 1466);
+    assert.equal(secondParagraphFirst.scheduledAt, 1666);
   });
 
   it('keeps staggered paragraph arrivals ordered across actual mount delays', () => {
@@ -397,12 +400,12 @@ describe('generation-wide word reveal schedule', () => {
 
     assert.ok(
       p1.starts.every(
-        (start, index) => index === 0 || start - p1.starts[index - 1] === 150,
+        (start, index) => index === 0 || start - p1.starts[index - 1] === 50,
       ),
     );
     assert.ok(
       p2.starts.every(
-        (start, index) => index === 0 || start - p2.starts[index - 1] === 150,
+        (start, index) => index === 0 || start - p2.starts[index - 1] === 50,
       ),
     );
     assert.ok(p2.starts[0] >= p1.starts.at(-1)! + 200);
@@ -448,7 +451,7 @@ describe('generation-wide word reveal schedule', () => {
       ],
       400,
     );
-    assert.equal(emphasized[1].scheduledAt - emphasized[0].scheduledAt, 150);
+    assert.equal(emphasized[1].scheduledAt - emphasized[0].scheduledAt, 50);
   });
 
   it('plans mixed units in source order, with a block occupying one slot', () => {
@@ -470,8 +473,8 @@ describe('generation-wide word reveal schedule', () => {
       })),
       [
         { key: 'prose-1', ordinal: 0, scheduledAt: 1016 },
-        { key: 'block', ordinal: 1, scheduledAt: 1166 },
-        { key: 'prose-2', ordinal: 2, scheduledAt: 1316 },
+        { key: 'block', ordinal: 1, scheduledAt: 1066 },
+        { key: 'prose-2', ordinal: 2, scheduledAt: 1116 },
       ],
     );
     assert.equal(registry.nextOrdinal, 3);
@@ -503,7 +506,7 @@ describe('generation-wide word reveal schedule', () => {
     );
   });
 
-  it('keeps absolute schedules unchanged when a preview remounts after tab switching', () => {
+  it('does not expire unpainted registrations before mount and retains completed receipts across remounts', () => {
     const registry = createRevealScheduleRegistry();
     const plans = planRevealUnits(
       registry,
@@ -517,10 +520,9 @@ describe('generation-wide word reveal schedule', () => {
     const delays = plans.map(({ key }) => getRevealTiming(registry, key, 2000));
     assert.deepEqual(
       delays,
-      plans.map(({ scheduledAt }) =>
-        2000 - scheduledAt >= 100 ? 0 : scheduledAt - 2000,
-      ),
+      plans.map(({ scheduledAt }) => Math.max(0, scheduledAt - 2000)),
     );
+    assert.equal(isRevealComplete(registry, 'word-0', 2000), false);
     const retained = registry.words.get('word-0')!.scheduledAt;
     planRevealUnits(
       registry,
@@ -530,6 +532,8 @@ describe('generation-wide word reveal schedule', () => {
       ],
       3000,
     );
+    registry.completed.add('word-0');
+    assert.equal(isRevealComplete(registry, 'word-0', 3000), true);
     assert.equal(getRevealTiming(registry, 'word-0', 3000), 0);
     assert.equal(registry.words.get('word-0')!.scheduledAt, retained);
     assert.equal(getRevealTiming(registry, 'late', 3000), 16);
@@ -538,6 +542,61 @@ describe('generation-wide word reveal schedule', () => {
       plans.map(({ key }) => registry.words.get(key)!.scheduledAt),
       plans.map(({ scheduledAt }) => scheduledAt),
     );
+  });
+
+  it('starts the shared timeline at commit, staggering overdue and late units without replaying completed units', () => {
+    const registry = createRevealScheduleRegistry();
+    const initial = planRevealUnits(
+      registry,
+      [
+        { key: 'a', sourceOffset: 0, kind: 'word' },
+        { key: 'b', sourceOffset: 1, kind: 'word' },
+      ],
+      1000,
+    );
+    assert.equal(commitRevealTimeline(registry, 2000), true);
+    assert.deepEqual(
+      initial.map(({ key }) => registry.words.get(key)!.scheduledAt),
+      [2016, 2066],
+    );
+    assert.equal(commitRevealTimeline(registry, 2000), false);
+    const committedTimes = initial.map(
+      ({ key }) => registry.words.get(key)!.scheduledAt,
+    );
+    // Simulate React rerenders before CSS animationstart has marked either unit.
+    for (const now of [2016, 2066, 10_000])
+      assert.equal(commitRevealTimeline(registry, now), false);
+    assert.deepEqual(
+      initial.map(({ key }) => registry.words.get(key)!.scheduledAt),
+      committedTimes,
+    );
+
+    registry.words.get('a')!.started = true;
+    registry.words.get('b')!.started = true;
+    const late = planRevealUnits(
+      registry,
+      [{ key: 'c', sourceOffset: 2, kind: 'word' }],
+      3000,
+    );
+    assert.equal(commitRevealTimeline(registry, 5000), true);
+    assert.equal(registry.words.get('c')!.scheduledAt, 5016);
+    registry.completed.add('a');
+    const completedStart = registry.words.get('a')!.scheduledAt;
+    assert.equal(commitRevealTimeline(registry, 5000), false);
+    assert.equal(registry.words.get('a')!.scheduledAt, completedStart);
+    assert.equal(late[0].key, 'c');
+
+    // A correction/re-render that registers a genuinely new unit receives one
+    // commit, while existing committed slots remain untouched.
+    const corrected = planRevealUnits(
+      registry,
+      [{ key: 'correction-tail', sourceOffset: 3, kind: 'word' }],
+      6000,
+    );
+    assert.equal(commitRevealTimeline(registry, 10_000), true);
+    assert.equal(registry.words.get('correction-tail')!.scheduledAt, 10_016);
+    assert.equal(commitRevealTimeline(registry, 20_000), false);
+    assert.equal(corrected[0].key, 'correction-tail');
   });
 
   it('resets on cancellation/document generation reset', () => {
@@ -557,7 +616,7 @@ describe('word reveal segments', () => {
     const late = scheduleRevealWords(registry, ['late-a', 'late-b'], 5000);
     assert.deepEqual(late, [
       { ordinal: 1, scheduledAt: 5016 },
-      { ordinal: 2, scheduledAt: 5166 },
+      { ordinal: 2, scheduledAt: 5066 },
     ]);
   });
 

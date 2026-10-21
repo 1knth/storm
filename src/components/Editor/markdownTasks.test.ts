@@ -80,6 +80,28 @@ describe('Markdown task preview', () => {
       3,
     );
   });
+  it('reveals only source words intersecting accepted UTF-16 ranges', () => {
+    const source = 'Old 🙂 text, new words.';
+    const html = renderToStaticMarkup(
+      React.createElement(MarkdownPreview, {
+        markdown: source,
+        vaultId: 'vault-a',
+        notePath: 'native-reveal.md',
+        appearance: DEFAULT_APPEARANCE,
+        revealRanges: [{ from: 13, to: 22 }],
+        revealId: 'native-reveal-regression',
+      }),
+    );
+    const revealed = [
+      ...html.matchAll(/data-preview-reveal-word[^>]*>(.*?)<\/span>/g),
+    ]
+      .map((match) => match[1])
+      .filter((text) => text.trim().length > 0);
+    assert.deepEqual(revealed, ['new', 'words.']);
+    assert.match(html, /Old 🙂 text,/);
+    assert.match(html, />new<\/span> <span[^>]*>words\.<\/span>/);
+    assert.doesNotMatch(html, /data-preview-reveal-word[^>]*> <\/span>/);
+  });
   it('renders appended words with per-unit scheduled delays, not ordinal multiplication', () => {
     const originalNow = Date.now;
     Date.now = () => 1_000;
@@ -101,7 +123,7 @@ describe('Markdown task preview', () => {
       assert.equal(delays.length, 4);
       assert.deepEqual(
         delays.slice(1).map((delay, index) => delay - delays[index]),
-        [150, 150, 150],
+        [50, 50, 50],
       );
     } finally {
       Date.now = originalNow;
