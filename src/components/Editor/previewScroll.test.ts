@@ -8,7 +8,9 @@ const expect = (actual: unknown) => ({
     assert.equal(actual, null);
   },
 });
+import { EditorState, Transaction } from '@codemirror/state';
 import {
+  isUserSelectionChange,
   previewScrollTopForCursor,
   smoothScrollTo,
   previewTopAtSourceLine,
@@ -88,6 +90,49 @@ describe('smooth programmatic scrolling', () => {
         value: originalWindow,
       });
     }
+  });
+});
+
+describe('selection-driven preview following', () => {
+  const state = EditorState.create({ doc: 'first\\nsecond\\nthird' });
+
+  it('recognizes pointer, keyboard, and text-input selection transactions', () => {
+    const pointer = state.update({
+      selection: { anchor: 2 },
+      userEvent: 'select.pointer',
+    });
+    const keyboard = state.update({
+      selection: { anchor: 8 },
+      userEvent: 'move.character',
+    });
+    const vimLineMove = state.update({
+      selection: { anchor: 12 },
+      userEvent: 'move.line',
+    });
+    const input = state.update({
+      selection: { anchor: 5 },
+      userEvent: 'input.type',
+    });
+    for (const transaction of [pointer, keyboard, vimLineMove, input])
+      assert.equal(isUserSelectionChange(true, [transaction]), true);
+  });
+
+  it('ignores programmatic restores, unannotated transactions, document-only changes, and viewport scrolling', () => {
+    const restore = state.update({ selection: { anchor: 8 } });
+    const managedRestore = state.update({
+      selection: { anchor: 8 },
+      annotations: Transaction.addToHistory.of(false),
+    });
+    const documentChange = state.update({ changes: { from: 0, insert: 'x' } });
+    assert.equal(isUserSelectionChange(true, [restore]), false);
+    assert.equal(isUserSelectionChange(true, [managedRestore]), false);
+    assert.equal(
+      isUserSelectionChange(false, [
+        state.update({ userEvent: 'select.pointer' }),
+      ]),
+      false,
+    );
+    assert.equal(isUserSelectionChange(false, [documentChange]), false);
   });
 });
 

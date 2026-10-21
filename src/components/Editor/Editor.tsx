@@ -37,6 +37,7 @@ import {
   type ImagePasteAnchor,
 } from './imagePasteAnchor';
 import {
+  isUserSelectionChange,
   previewScrollTopForCursor,
   smoothScrollTo,
   previewTopAtSourceLine as mapPreviewTopAtSourceLine,
@@ -325,6 +326,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const expectedEditorScroll = useRef<number | null>(null);
   const previewAnimation = useRef({ active: false, cancel: () => {} });
   const editorAnimation = useRef({ active: false, cancel: () => {} });
+  const pendingCursorFollow = useRef<number | null>(null);
   const cancelScrollAnimations = useCallback(() => {
     previewAnimation.current.cancel();
     editorAnimation.current.cancel();
@@ -678,28 +680,6 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       },
     );
   }, []);
-  const syncFromEditor = () => {
-    const pane = previewScrollRef.current;
-    const view = viewRef.current;
-    if (!pane || !view) return;
-    const lineBlock = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
-    const line = view.state.doc.lineAt(lineBlock.from).number;
-    const top = previewTopAtSourceLine(line);
-    if (top === null) return;
-    expectedPreviewScroll.current = Math.max(
-      0,
-      Math.min(pane.scrollHeight - pane.clientHeight, top),
-    );
-    smoothScrollTo(
-      pane,
-      expectedPreviewScroll.current,
-      previewAnimation.current,
-      140,
-      (appliedTop) => {
-        expectedPreviewScroll.current = appliedTop;
-      },
-    );
-  };
   const followCursor = () => {
     const pane = previewScrollRef.current;
     const view = viewRef.current;
@@ -1359,9 +1339,19 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           installed.generation !== generation.current
         )
           return;
-        if (update.selectionSet || update.docChanged) {
+        const userSelectionChange = isUserSelectionChange(
+          update.selectionSet,
+          update.transactions,
+        );
+        if (update.selectionSet || update.docChanged)
           onLayoutChangeRef.current?.();
-          requestAnimationFrame(followCursor);
+        if (userSelectionChange) {
+          if (pendingCursorFollow.current !== null)
+            cancelAnimationFrame(pendingCursorFollow.current);
+          pendingCursorFollow.current = requestAnimationFrame(() => {
+            pendingCursorFollow.current = null;
+            followCursor();
+          });
         }
         if (!update.docChanged) return;
         if (active) {
@@ -1428,12 +1418,13 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         return;
       }
       expectedEditorScroll.current = null;
-      if (current.current) {
-        syncFromEditor();
-        onLayoutChangeRef.current?.();
-      }
+      if (current.current) onLayoutChangeRef.current?.();
     };
     const cancelOnUserInput = () => {
+      if (pendingCursorFollow.current !== null) {
+        cancelAnimationFrame(pendingCursorFollow.current);
+        pendingCursorFollow.current = null;
+      }
       cancelScrollAnimations();
     };
     view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
@@ -1446,13 +1437,30 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     view.scrollDOM.addEventListener('touchstart', cancelOnUserInput, {
       passive: true,
     });
+    const previewPane = previewScrollRef.current;
+    previewPane?.addEventListener('wheel', cancelOnUserInput, {
+      passive: true,
+    });
+    previewPane?.addEventListener('pointerdown', cancelOnUserInput, {
+      passive: true,
+    });
+    previewPane?.addEventListener('touchstart', cancelOnUserInput, {
+      passive: true,
+    });
     return () => {
       view.scrollDOM.removeEventListener('scroll', onScroll);
       view.scrollDOM.removeEventListener('wheel', cancelOnUserInput);
       view.scrollDOM.removeEventListener('pointerdown', cancelOnUserInput);
       view.scrollDOM.removeEventListener('touchstart', cancelOnUserInput);
+      previewPane?.removeEventListener('wheel', cancelOnUserInput);
+      previewPane?.removeEventListener('pointerdown', cancelOnUserInput);
+      previewPane?.removeEventListener('touchstart', cancelOnUserInput);
       previewAnimation.current.cancel();
       editorAnimation.current.cancel();
+      if (pendingCursorFollow.current !== null) {
+        cancelAnimationFrame(pendingCursorFollow.current);
+        pendingCursorFollow.current = null;
+      }
       if (timer.current) clearTimeout(timer.current);
       managedPreviewBatch.current.dispose();
       pendingImagePastes.current = [];
