@@ -38,6 +38,11 @@ test('renderer dispatch accepts only trusted main-frame responses and cancellati
     vaultId: 'v',
     vaultRoot: '/vault',
   };
+  const event: AgentIpcEvent = {
+    sender: window.webContents,
+    senderFrame: { url: 'http://localhost:5173/' },
+  };
+  handlers.get('agent:renderer-ready')!(event);
   const result = transport.dispatch(request);
   const response = {
     ok: true,
@@ -107,6 +112,116 @@ test('renderer dispatch accepts only trusted main-frame responses and cancellati
     () => undefined,
   );
   assert.equal((await unavailable.dispatch(request)).ok, false);
+});
+
+test('renderer lifecycle fences navigation, crashes, destruction, and untrusted readiness', async () => {
+  const ipcHandlers = new Map<string, (...args: any[]) => void>();
+  const lifecycle = new Map<string, (...args: any[]) => void>();
+  const removedLifecycle: string[] = [];
+  const sent: string[] = [];
+  const webContents = {
+    id: 11,
+    isDestroyed: () => false,
+    send: (channel: string) => sent.push(channel),
+    on: (name: string, listener: (...args: any[]) => void) =>
+      lifecycle.set(name, listener),
+    removeListener: (name: string) => removedLifecycle.push(name),
+  };
+  const window = { isDestroyed: () => false, webContents };
+  const states: boolean[] = [];
+  const ipc = {
+    on: (channel: string, listener: (...args: any[]) => void) =>
+      ipcHandlers.set(channel, listener),
+    removeListener: (channel: string) => ipcHandlers.delete(channel),
+    handle: () => undefined,
+    removeHandler: () => undefined,
+  };
+  const transport = registerAgentIpc(
+    ipc,
+    () => window,
+    () => undefined,
+    () => 'http://localhost:5173/',
+    (ready) => states.push(ready),
+  );
+  const request: AgentRendererRequest = {
+    type: 'snapshot',
+    requestId: 'reload',
+    sessionId: 's',
+    absolutePath: '/vault/a.md',
+    vaultId: 'v',
+    vaultRoot: '/vault',
+  };
+  const ready = (
+    senderFrame: AgentIpcEvent['senderFrame'] = {
+      url: 'http://localhost:5173/',
+    },
+  ) =>
+    ipcHandlers.get('agent:renderer-ready')!({
+      sender: webContents,
+      senderFrame,
+    });
+
+  ready({ url: 'http://localhost:5173/', parent: {} });
+  ready({ url: 'http://evil/' });
+  ipcHandlers.get('agent:renderer-ready')!({
+    sender: { ...webContents, id: 12 },
+    senderFrame: { url: 'http://localhost:5173/' },
+  });
+  assert.deepEqual(states, []);
+  assert.equal((await transport.dispatch(request)).ok, false);
+
+  ready();
+  assert.deepEqual(states, [true]);
+  const navigationRequest = transport.dispatch({
+    ...request,
+    requestId: 'navigation',
+  });
+  lifecycle.get('did-start-navigation')!(
+    {},
+    'http://localhost:5173/',
+    true,
+    true,
+  );
+  const navigationResult = await navigationRequest;
+  assert.equal(navigationResult.ok, false);
+  if (!navigationResult.ok)
+    assert.equal(navigationResult.code, 'RENDERER_UNAVAILABLE');
+  assert.deepEqual(states, [true, false]);
+  assert.equal(sent.length, 1);
+  // Same-document navigation does not tear down the renderer; process loss does.
+  ready();
+  lifecycle.get('did-start-navigation')!(
+    {},
+    'http://localhost:5173/#section',
+    true,
+    false,
+  );
+  assert.deepEqual(states, [true, false, true]);
+  const crashRequest = transport.dispatch({ ...request, requestId: 'crash' });
+  lifecycle.get('render-process-gone')!();
+  const crashResult = await crashRequest;
+  assert.equal(crashResult.ok, false);
+  if (!crashResult.ok) assert.equal(crashResult.code, 'RENDERER_UNAVAILABLE');
+  assert.deepEqual(states, [true, false, true, false]);
+
+  ready();
+  const destroyedRequest = transport.dispatch({
+    ...request,
+    requestId: 'destroyed',
+  });
+  lifecycle.get('destroyed')!();
+  const destroyedResult = await destroyedRequest;
+  assert.equal(destroyedResult.ok, false);
+  if (!destroyedResult.ok)
+    assert.equal(destroyedResult.code, 'RENDERER_UNAVAILABLE');
+  assert.deepEqual(states, [true, false, true, false, true, false]);
+  transport.dispose?.();
+  assert.deepEqual(removedLifecycle, [
+    'did-start-navigation',
+    'render-process-gone',
+    'destroyed',
+  ]);
+  assert.equal(ipcHandlers.size, 0);
 });
 
 test('broker invoke rejects foreign and stale-window senders', async () => {

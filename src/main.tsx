@@ -32,7 +32,10 @@ import {
   restoreClosedTab,
 } from './components/Editor/closedTabs';
 import type { ClosedTabRecord } from './components/Editor/closedTabs';
-import { serializeTabLayout } from './components/Editor/savedTabLayout';
+import {
+  restoreTabGroupState,
+  serializeTabLayout,
+} from './components/Editor/savedTabLayout';
 import { checkpointErrorMessage } from './components/Editor/checkpointError';
 import { ToastProvider, useToast } from './components/Toast';
 import { loadAppearance, saveAppearance } from './appearance';
@@ -1419,16 +1422,12 @@ function App() {
       const savedGroups = layout.groups.map(
         (group) => ({ ...group }) as TabGroup,
       );
-      const ids = restored.map(getTabId);
-      const savedAssignments = cleanTabAssignments(
-        layout.assignments,
-        ids,
-        savedGroups,
-      );
-      const normalized = normalizeTabGroupState(
+      // Wait until every saved tab and group has been rehydrated before
+      // validating membership; early empty React state must never replace it.
+      const normalized = restoreTabGroupState(
         restored,
         savedGroups,
-        savedAssignments,
+        layout.assignments,
       );
       const { groups, assignments } = normalized;
       const selected =

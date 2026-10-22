@@ -120,6 +120,8 @@ export class AgentBroker {
   private readonly sessions = new Map<string, Session>();
   private readonly maintenanceVaults = new Set<string>();
   private resolvingConnects = 0;
+  private rendererIsReady = true;
+  private rendererGeneration = 0;
   private readonly editOperations = new Map<
     string,
     { fingerprint: string; result: Promise<AgentResponse> }
@@ -133,6 +135,24 @@ export class AgentBroker {
       }
     });
   }
+  /** Fence sessions owned by a renderer being torn down. Call rendererReady after its replacement is initialized. */
+  rendererUnavailable(): void {
+    this.rendererIsReady = false;
+    this.rendererGeneration++;
+    for (const session of this.sessions.values()) {
+      if (session.state === 'connected' || session.state === 'writing') {
+        session.state = 'disconnected';
+        session.activity = undefined;
+        if (session.pending > 0) session.outcomeUncertain = true;
+        for (const reject of session.cancelWaiters) reject();
+      }
+    }
+  }
+
+  rendererReady(): void {
+    this.rendererIsReady = true;
+  }
+
   acquireMaintenanceLease(vaultId: string): (() => void) | null {
     if (
       this.maintenanceVaults.has(vaultId) ||
@@ -218,6 +238,8 @@ export class AgentBroker {
         };
       }
       if (request.type === 'connect') {
+        if (!this.rendererIsReady)
+          return fail('SESSION_CLOSED', 'Renderer is unavailable', true);
         this.resolvingConnects++;
         try {
           const target = await this.options.resolveTarget(request.absolutePath);
@@ -253,6 +275,7 @@ export class AgentBroker {
               cancelWaiters: new Set(),
               outcomeUncertain: false,
             };
+            const generation = this.rendererGeneration;
             const snapshot = await this.options.renderer.dispatch({
               type: 'snapshot',
               requestId: request.requestId,
@@ -261,6 +284,12 @@ export class AgentBroker {
               vaultId: target.vaultId,
               vaultRoot: target.vaultRoot,
             });
+            if (generation !== this.rendererGeneration || !this.rendererIsReady)
+              return fail(
+                'SESSION_CLOSED',
+                'Renderer was replaced during connect',
+                true,
+              );
             if (!snapshot.ok) return fail(snapshot.code, snapshot.message);
             if ('inspected' in snapshot)
               return fail(
@@ -350,6 +379,7 @@ export class AgentBroker {
         // Invoke in request order, but do not put telemetry on the strict write
         // queue or make the CLI wait for renderer delivery. Rejections are
         // intentionally non-fatal: activity must never block a document write.
+        const generation = this.rendererGeneration;
         try {
           void this.options.renderer
             .dispatch({
@@ -359,6 +389,13 @@ export class AgentBroker {
               activity: request.activity,
               activitySequence,
               documentVersion,
+            })
+            .then((result) => {
+              if (generation !== this.rendererGeneration) return;
+              if (!result.ok && result.code === 'SESSION_CLOSED') {
+                session.state = 'failed';
+                session.activity = undefined;
+              }
             })
             .catch(() => {});
         } catch {
@@ -408,6 +445,7 @@ export class AgentBroker {
           if (request.sequence !== session.sequence + 1)
             throw new Error('sequence');
           session.outcomeUncertain = true;
+          const generation = this.rendererGeneration;
           const result = await this.options.renderer.dispatch({
             type: 'append',
             requestId: request.requestId,
@@ -417,6 +455,12 @@ export class AgentBroker {
             sequence: request.sequence,
             text: request.text,
           });
+          if (generation !== this.rendererGeneration || !this.rendererIsReady) {
+            session.state = 'disconnected';
+            session.activity = undefined;
+            session.outcomeUncertain = true;
+            throw new Error('SESSION_CLOSED');
+          }
           if (!result.ok) {
             if (result.code === 'SESSION_CLOSED') {
               session.state = 'failed';
@@ -498,6 +542,7 @@ export class AgentBroker {
           async (): Promise<AgentResponse> => {
             if (session.state !== 'connected' && session.state !== 'writing')
               return fail('SESSION_CLOSED', 'Session is not writable');
+            const generation = this.rendererGeneration;
             const rendered = await this.options.renderer.dispatch({
               type: request.type,
               requestId: request.requestId,
@@ -505,6 +550,20 @@ export class AgentBroker {
               expectedVersion: request.expectedVersion,
               plan: request.plan,
             });
+            if (
+              generation !== this.rendererGeneration ||
+              !this.rendererIsReady
+            ) {
+              session.state = 'disconnected';
+              session.activity = undefined;
+              if (request.type === 'edit-apply')
+                session.outcomeUncertain = true;
+              return fail(
+                'SESSION_CLOSED',
+                'Renderer was replaced during edit',
+                true,
+              );
+            }
             if (!rendered.ok) return fail(rendered.code, rendered.message);
             if (
               'inspected' in rendered ||

@@ -18,6 +18,7 @@ export interface AgentIpcMain {
     listener: (event: AgentIpcEvent, ...args: unknown[]) => void,
   ): void;
   removeHandler(channel: string): void;
+  removeListener?(channel: string, listener: (...args: any[]) => void): void;
   handle(
     channel: string,
     listener: (event: AgentIpcEvent, ...args: unknown[]) => unknown,
@@ -27,6 +28,8 @@ export interface AgentWebContents {
   id: number;
   isDestroyed(): boolean;
   send(channel: string, ...args: unknown[]): void;
+  on?(event: string, listener: (...args: any[]) => void): void;
+  removeListener?(event: string, listener: (...args: any[]) => void): void;
 }
 export interface AgentWindow {
   isDestroyed(): boolean;
@@ -37,11 +40,14 @@ export interface AgentRendererTransport {
   onCancelled?(
     listener: (sessionId: string, reason: string) => void,
   ): () => void;
+  dispose?(): void;
 }
 const REQUEST_CHANNEL = 'agent:renderer-request';
 const RESPONSE_CHANNEL = 'agent:renderer-response';
 const CANCEL_CHANNEL = 'agent:renderer-cancel';
 const STATUS_CHANNEL = 'agent:status';
+const READY_CHANNEL = 'agent:renderer-ready';
+const UNAVAILABLE_CHANNEL = 'agent:renderer-unavailable';
 const TIMEOUT_MS = 15_000;
 const MAX_PENDING = 128;
 const cancellationListeners = new Set<
@@ -53,8 +59,39 @@ export function registerAgentIpc(
   getWindow: () => AgentWindow | undefined,
   onCancel: (sessionId: string, reason: string) => void,
   acceptedUrl: () => string | undefined,
+  onRendererState: (ready: boolean) => void = () => undefined,
 ): AgentRendererTransport {
   const pending = new Map<string, (result: AgentRendererResult) => void>();
+  let ready = false;
+  const teardown = () => {
+    if (!ready) return;
+    ready = false;
+    onRendererState(false);
+    for (const resolve of pending.values())
+      resolve({
+        ok: false,
+        code: 'RENDERER_UNAVAILABLE',
+        message: 'Storm renderer was torn down; write outcome may be uncertain',
+      });
+    pending.clear();
+  };
+  let lifecycleContents: AgentWebContents | undefined;
+  const didStartNavigation = (
+    _event: unknown,
+    _url: string,
+    _inPlace: boolean,
+    isMainFrame: boolean,
+  ) => {
+    if (isMainFrame) teardown();
+  };
+  const attachLifecycle = () => {
+    const contents = getWindow()?.webContents;
+    if (!contents || contents === lifecycleContents) return;
+    lifecycleContents = contents;
+    contents.on?.('did-start-navigation', didStartNavigation);
+    contents.on?.('render-process-gone', teardown);
+    contents.on?.('destroyed', teardown);
+  };
   const trusted = (event: AgentIpcEvent): boolean => {
     const window = getWindow();
     const url = acceptedUrl();
@@ -69,14 +106,36 @@ export function registerAgentIpc(
       isAcceptedUrl(event.senderFrame.url, url)
     );
   };
-  ipc.on(RESPONSE_CHANNEL, (event, requestId, payload) => {
+  const onReady = (event: AgentIpcEvent) => {
+    if (!trusted(event)) return;
+    attachLifecycle();
+    if (!ready) {
+      ready = true;
+      onRendererState(true);
+    }
+  };
+  const onUnavailable = (event: AgentIpcEvent) => {
+    if (trusted(event)) teardown();
+  };
+  ipc.on(READY_CHANNEL, onReady);
+  ipc.on(UNAVAILABLE_CHANNEL, onUnavailable);
+  const onResponse = (
+    event: AgentIpcEvent,
+    requestId: unknown,
+    payload: unknown,
+  ) => {
     if (!trusted(event) || typeof requestId !== 'string') return;
     const resolve = pending.get(requestId);
     if (!resolve || !isResult(payload)) return;
     pending.delete(requestId);
     resolve(payload);
-  });
-  ipc.on(CANCEL_CHANNEL, (event, sessionId, reason) => {
+  };
+  ipc.on(RESPONSE_CHANNEL, onResponse);
+  const onCancelEvent = (
+    event: AgentIpcEvent,
+    sessionId: unknown,
+    reason: unknown,
+  ) => {
     if (
       !trusted(event) ||
       typeof sessionId !== 'string' ||
@@ -90,11 +149,17 @@ export function registerAgentIpc(
     onCancel(sessionId, safeReason);
     for (const listener of cancellationListeners)
       listener(sessionId, safeReason);
-  });
+  };
+  ipc.on(CANCEL_CHANNEL, onCancelEvent);
   return {
     dispatch(request) {
       const window = getWindow();
-      if (!window || window.isDestroyed() || window.webContents.isDestroyed())
+      if (
+        !ready ||
+        !window ||
+        window.isDestroyed() ||
+        window.webContents.isDestroyed()
+      )
         return Promise.resolve({
           ok: false,
           code: 'RENDERER_UNAVAILABLE',
@@ -126,6 +191,22 @@ export function registerAgentIpc(
       const callback = (id: string, reason: string) => listener(id, reason);
       cancellationListeners.add(callback);
       return () => cancellationListeners.delete(callback);
+    },
+    dispose() {
+      teardown();
+      ipc.removeListener?.(READY_CHANNEL, onReady);
+      ipc.removeListener?.(UNAVAILABLE_CHANNEL, onUnavailable);
+      ipc.removeListener?.(RESPONSE_CHANNEL, onResponse);
+      ipc.removeListener?.(CANCEL_CHANNEL, onCancelEvent);
+      if (lifecycleContents) {
+        lifecycleContents.removeListener?.(
+          'did-start-navigation',
+          didStartNavigation,
+        );
+        lifecycleContents.removeListener?.('render-process-gone', teardown);
+        lifecycleContents.removeListener?.('destroyed', teardown);
+        lifecycleContents = undefined;
+      }
     },
   };
 }

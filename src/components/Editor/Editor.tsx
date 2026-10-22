@@ -1607,6 +1607,12 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 {tabs}
               </div>
             </div>
+            {tabsVisible && hasActiveNote && (
+              <span
+                aria-hidden="true"
+                className="h-4 w-px shrink-0 bg-white/10"
+              />
+            )}
             <div className="flex shrink-0 items-center justify-end gap-0.5">
               {hasActiveNote && (
                 <>
