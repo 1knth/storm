@@ -78,6 +78,12 @@ export function collectPendingRevealKeys(
   const pending = new Set<string>();
   if (reducedMotion) return pending;
   const eligible = new Set<Element>(units);
+  for (const unit of units) {
+    if (unit.getAttribute('data-reveal-gated') === 'pending') {
+      const key = unit.getAttribute('data-reveal-key');
+      if (key) pending.add(key);
+    }
+  }
   for (const animation of root.getAnimations({ subtree: true })) {
     if (animation.playState !== 'running') continue;
     if (
@@ -363,6 +369,13 @@ export function getRevealTiming(
   // unit. Never treat elapsed wall time as proof that an animation was painted.
   // Overdue slots start at commit instead of being silently settled.
   return Math.max(0, schedule.scheduledAt - now);
+}
+
+export function getReadyRevealDelay(
+  scheduledAt: number,
+  readyAt: number,
+): number {
+  return Math.max(0, scheduledAt - readyAt);
 }
 
 export function isRevealComplete(

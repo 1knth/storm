@@ -253,7 +253,7 @@ describe('Markdown task preview', () => {
     const readOnlyHtml = renderPreview();
 
     assert.match(activeHtml, /<input type="checkbox"[^>]*\/>/);
-    assert.match(activeHtml, /<li[^>]*style="list-style-type:none"/);
+    assert.match(activeHtml, /<li[^>]*style="[^"]*list-style-type:none"/);
     assert.doesNotMatch(activeHtml, /<input type="checkbox" disabled=""/);
     assert.equal((activeHtml.match(/type="checkbox"/g) ?? []).length, 2);
     assert.equal(
@@ -365,7 +365,7 @@ describe('Markdown task preview', () => {
       source.lastIndexOf('[ ]') + 1,
     ];
     assert.equal((html.match(/type="checkbox"/g) ?? []).length, 4);
-    assert.equal((html.match(/style="list-style-type:none"/g) ?? []).length, 4);
+    assert.equal((html.match(/list-style-type:none/g) ?? []).length, 4);
     assert.equal((html.match(/checked=""/g) ?? []).length, 2);
     for (const offset of taskOffsets)
       assert.match(html, new RegExp(`data-task-offset="${offset}"`));

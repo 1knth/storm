@@ -11,6 +11,7 @@ import {
   shouldAutoOpenAgentStatus,
   scheduleRevealWords,
   getRevealTiming,
+  getReadyRevealDelay,
   isRevealComplete,
   planRevealUnits,
   commitRevealTimeline,
@@ -368,6 +369,18 @@ describe('reveal progress tracking', () => {
       completeRevealProgressUnit(reduced, 'generation-a', 'word-a'),
       null,
     );
+  });
+});
+
+describe('readiness-gated block reveal', () => {
+  it('starts a full reveal after late readiness and freezes the delay at activation', () => {
+    const scheduledAt = 1_000;
+    const readyAt = 1_500;
+    const activatedDelay = getReadyRevealDelay(scheduledAt, readyAt);
+
+    assert.equal(activatedDelay, 0);
+    assert.equal(getReadyRevealDelay(scheduledAt, 2_000), 0);
+    assert.equal(getReadyRevealDelay(2_000, 1_500), 500);
   });
 });
 
