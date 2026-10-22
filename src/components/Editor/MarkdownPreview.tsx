@@ -26,7 +26,6 @@ import { remarkBlankLines } from './markdownBlankLines';
 import type { TaskTogglePayload } from './markdownTasks';
 import {
   findPreviewTextMatchesInBlocks,
-  isPreviewFindShortcut,
   nextPreviewFindIndex,
 } from './previewFind';
 import type { Appearance } from '../../appearance';
@@ -256,7 +255,8 @@ type Props = {
   onToggleTask?: (payload: TaskTogglePayload) => void;
   onOpenNote?: (target: string) => void;
   compact?: boolean;
-  findEnabled?: boolean;
+  findOpen?: boolean;
+  onCloseFind?: () => void;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   onScroll?: () => void;
   onUserScroll?: () => void;
@@ -869,7 +869,8 @@ function MarkdownPreview({
   onToggleTask,
   onOpenNote,
   compact = false,
-  findEnabled = false,
+  findOpen: controlledFindOpen,
+  onCloseFind,
   scrollRef,
   onScroll,
   onUserScroll,
@@ -972,60 +973,18 @@ function MarkdownPreview({
     };
   }
   const diagnosticsRoot = useRef<HTMLElement>(null);
-  const [findOpen, setFindOpen] = useState(false);
+  const findOpen = controlledFindOpen ?? false;
+  const closeFind = onCloseFind ?? (() => {});
   const [findQuery, setFindQuery] = useState('');
   const [findIndex, setFindIndex] = useState(0);
   const [findCount, setFindCount] = useState(0);
   const findInput = useRef<HTMLInputElement>(null);
-  const findReturnFocus = useRef<HTMLElement | null>(null);
   const findMatches = useRef<Range[]>([]);
   useEffect(() => {
     if (findOpen) {
       findInput.current?.focus();
-    } else {
-      findReturnFocus.current?.focus({ preventScroll: true });
-      findReturnFocus.current = null;
     }
   }, [findOpen]);
-  useEffect(() => {
-    if (!findEnabled) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!isPreviewFindShortcut(event)) return;
-      const target = event.target;
-      if (
-        !(target instanceof Element) ||
-        !target.closest('[data-pane="editor"]')
-      )
-        return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (findOpen) {
-        setFindOpen(false);
-        setFindQuery('');
-      } else {
-        findReturnFocus.current = target as HTMLElement;
-        setFindOpen(true);
-      }
-    };
-    const onToolbarFind = () => {
-      if (findOpen) {
-        setFindOpen(false);
-        setFindQuery('');
-      } else {
-        findReturnFocus.current =
-          document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null;
-        setFindOpen(true);
-      }
-    };
-    document.addEventListener('keydown', onKeyDown, true);
-    window.addEventListener('storm:toggle-find', onToolbarFind);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown, true);
-      window.removeEventListener('storm:toggle-find', onToolbarFind);
-    };
-  }, [findEnabled, findOpen]);
   useEffect(() => {
     const root = diagnosticsRoot.current;
     const highlights = window.CSS as typeof CSS & {
@@ -1291,7 +1250,7 @@ function MarkdownPreview({
               }
               if (event.key === 'Escape') {
                 event.preventDefault();
-                setFindOpen(false);
+                closeFind();
                 setFindQuery('');
               }
             }}
@@ -1327,7 +1286,7 @@ function MarkdownPreview({
             type="button"
             aria-label="Close find"
             onClick={() => {
-              setFindOpen(false);
+              closeFind();
               setFindQuery('');
             }}
             className="text-white/70"
@@ -1351,7 +1310,8 @@ function MarkdownPreview({
               <ImageContext.Provider value={{ vaultId, notePath }}>
                 <div
                   ref={scrollRef}
-                  tabIndex={compact ? 0 : undefined}
+                  data-preview-focus=""
+                  tabIndex={0}
                   onScroll={onScroll}
                   onKeyDownCapture={(event) => {
                     if (

@@ -46,6 +46,7 @@ import {
   type PreviewAnchor,
 } from './previewScroll';
 import { useToast } from '../Toast';
+import { isPreviewFindShortcut } from './previewFind';
 import { scrollReadingPreview } from './readingScroll';
 import {
   agentWritingLockExtensions,
@@ -347,6 +348,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     expectedEditorScroll.current = null;
   }, []);
   const [previewVisible, setPreviewVisible] = useState(true);
+  const [findOpen, setFindOpen] = useState(false);
+  const findReturnFocus = useRef<HTMLElement | null>(null);
+  const previousFindOpen = useRef(findOpen);
   const [agentStatusVisibleForNotes, setAgentStatusVisibleForNotes] = useState<
     Set<string>
   >(() => new Set());
@@ -797,6 +801,42 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       }),
     [],
   );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.repeat ||
+        !isPreviewFindShortcut(event) ||
+        !(event.target instanceof Element) ||
+        !event.target.closest('[data-pane="editor"]') ||
+        !hasActiveNote
+      )
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (findOpen) {
+        setFindOpen(false);
+      } else {
+        const target = event.target.closest('.cm-editor, [data-preview-focus]');
+        if (target instanceof HTMLElement) findReturnFocus.current = target;
+        setPreviewVisible(true);
+        setFindOpen(true);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [findOpen, hasActiveNote]);
+
+  useLayoutEffect(() => {
+    const wasOpen = previousFindOpen.current;
+    previousFindOpen.current = findOpen;
+    if (wasOpen && !findOpen) {
+      const target = findReturnFocus.current;
+      (target?.isConnected ? target : viewRef.current?.dom)?.focus({
+        preventScroll: true,
+      });
+    }
+  }, [findOpen]);
 
   const managedActive = () => {
     const active = current.current;
@@ -1560,9 +1600,15 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     type="button"
                     aria-label="Toggle note search"
                     title={`Find in note (${navigator.platform.toLowerCase().includes('mac') ? '⌘F' : 'Ctrl+F'})`}
-                    onClick={() =>
-                      window.dispatchEvent(new Event('storm:toggle-find'))
-                    }
+                    onClick={() => {
+                      if (!findOpen) {
+                        findReturnFocus.current =
+                          document.activeElement instanceof HTMLElement
+                            ? document.activeElement
+                            : null;
+                      }
+                      setFindOpen((open) => !open);
+                    }}
                     className="editor-action-button app-icon-button"
                   >
                     <IoSearch size={14} aria-hidden="true" />
@@ -1679,7 +1725,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     onReadingKeyDown={onReadingKeyDown}
                     appearance={appearance}
                     compact
-                    findEnabled
+                    findOpen={findOpen}
+                    onCloseFind={() => setFindOpen(false)}
                     previewRevision={preview?.previewRevision}
                     revealStartLine={
                       activeReveal?.documentKey === documentKey
@@ -1718,7 +1765,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 markdown={preview.markdown}
                 vaultId={preview.vaultId}
                 notePath={preview.notePath}
-                findEnabled
+                findOpen={findOpen}
+                onCloseFind={() => setFindOpen(false)}
                 onToggleTask={onToggleTask}
                 onOpenNote={onOpenNote}
                 scrollRef={previewScrollRef}
