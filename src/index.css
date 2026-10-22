@@ -227,7 +227,7 @@
 }
 
 .tab-list-scroll::-webkit-scrollbar {
-  height: 3px;
+  height: 1px;
 }
 
 .tab-list-scroll.tab-list--overflowing {
