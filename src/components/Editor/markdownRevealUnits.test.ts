@@ -135,6 +135,55 @@ describe('Markdown preview styled reveal units', () => {
     );
   });
 
+  it('keeps earlier pending table and code blocks gated across later append snapshots', () => {
+    const registry = createRevealScheduleRegistry();
+    const initial =
+      'prose before\n\n| A | B |\n| - | - |\n| x | y |\n\n```txt\nresponse body\n```';
+    const tableOffset = initial.indexOf('| A');
+    const codeOffset = initial.indexOf('```txt');
+    const render = (
+      markdown: string,
+      ranges: { from: number; to: number }[],
+    ) => {
+      const tree = unified()
+        .use(remarkParse)
+        .use(remarkGfm)
+        .use(remarkRehype)
+        .runSync(
+          unified().use(remarkParse).use(remarkGfm).parse(markdown),
+        ) as any;
+      rehypeRevealUnits({
+        registry,
+        startOffset: 0,
+        revealRanges: ranges,
+        markdown,
+      })(tree);
+      return tree;
+    };
+    const first = render(initial, [
+      { from: tableOffset, to: tableOffset + 2 },
+      { from: codeOffset, to: codeOffset + 2 },
+    ]);
+    const firstKeys = [
+      find(first, 'table')[0].properties['data-reveal-key'],
+      find(first, 'pre')[0].properties['data-reveal-key'],
+    ];
+    assert.ok(firstKeys.every((key) => key && registry.words.has(key)));
+
+    const appended = `${initial}\n\nlatest appended prose`;
+    const latestOffset = appended.indexOf('latest appended');
+    const next = render(appended, [
+      { from: latestOffset, to: appended.length },
+    ]);
+    assert.deepEqual(
+      [
+        find(next, 'table')[0].properties['data-reveal-key'],
+        find(next, 'pre')[0].properties['data-reveal-key'],
+      ],
+      firstKeys,
+    );
+  });
+
   it('only schedules tables whose source intersects the requested reveal range', () => {
     const markdown = 'old prose\n\n| A | B |\n| - | - |\n| x | y |';
     const table = markdown.indexOf('| A');

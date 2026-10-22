@@ -38,6 +38,7 @@ import { ToastProvider, useToast } from './components/Toast';
 import { loadAppearance, saveAppearance } from './appearance';
 import type { Appearance } from './appearance';
 import { createAgentDocumentHost } from './documents/agentDocumentHost';
+import { reconcileAgentTargetContent } from './documents/agentTargetReconciliation';
 import { isAgentTabProtected } from './documents/agentTabProtection';
 import {
   STARTUP_VAULT_ERROR,
@@ -197,6 +198,39 @@ function App() {
             tab.vaultId === vaultId &&
             tab.note.path === relativePath,
         );
+        if (target?.kind === 'note') {
+          // Acknowledged agent writes may move disk beyond the old tab baseline.
+          // Compare current text with fresh disk first, while retaining genuine
+          // unsaved local text and ignoring a snapshot from another document.
+          const activeTarget = editorRef.current?.snapshot();
+          const activeContent =
+            activeTarget?.vaultId === vaultId &&
+            activeTarget.note.path === relativePath
+              ? activeTarget.state.doc.toString()
+              : undefined;
+          const reconciliation = reconcileAgentTargetContent({
+            baseline: target.note.content,
+            tabContent: target.state.doc.toString(),
+            diskContent: note.content,
+            activeContent,
+          });
+          if (reconciliation === 'unsaved')
+            throw new Error('Agent target has unsaved local changes');
+          target = {
+            ...target,
+            note,
+            state: editorRef.current!.createState(note.content),
+          };
+          const refreshedTabs = tabsRef.current.map((tab) =>
+            tab.kind === 'note' &&
+            tab.vaultId === vaultId &&
+            tab.note.path === relativePath
+              ? target!
+              : tab,
+          );
+          tabsRef.current = refreshedTabs;
+          setTabs(refreshedTabs);
+        }
         if (!target || target.kind !== 'note') {
           if (!(await editorRef.current?.flush()))
             throw new Error(
@@ -299,15 +333,35 @@ function App() {
             document.state,
           );
         }
-        setTabs((current) =>
-          current.map((tab) =>
-            tab.kind === 'note' &&
-            tab.vaultId === document.vaultId &&
-            tab.note.path === document.path
-              ? { ...tab, state: document.state }
-              : tab,
-          ),
-        );
+        setTabs((current) => {
+          const next = current.map((tab) => {
+            if (
+              tab.kind !== 'note' ||
+              tab.vaultId !== document.vaultId ||
+              tab.note.path !== document.path
+            )
+              return tab;
+            const savedCleanly =
+              !document.dirty &&
+              !document.inFlight &&
+              document.persistedContent === document.state.doc.toString();
+            return {
+              ...tab,
+              state: document.state,
+              ...(savedCleanly
+                ? {
+                    note: {
+                      ...tab.note,
+                      content: document.persistedContent,
+                      revision: document.revision,
+                    },
+                  }
+                : {}),
+            };
+          });
+          tabsRef.current = next;
+          return next;
+        });
       },
       publishStatus: (event) =>
         setAgentStatuses((current) => ({

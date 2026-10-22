@@ -25,13 +25,23 @@ Quick workflow:
   bun scripts/storm.ts activity SESSION_ID drafting
   bun scripts/storm.ts activity SESSION_ID idle
 
-REQUIRED for agents using Storm's live-note workflow: after connect, report each real
-phase before doing that work: thinking before inspection/planning, drafting before
-composing note content. Report changes as they happen; direct writes need no invented
-phase. Use idle only to clear a phase while connected. Writes clear activity and show
-Writing automatically. This is agent guidance, not runtime enforcement: the protocol
+REQUIRED agent workflow guidance: report real phases as best-effort UI telemetry;
+do not block valid work waiting for an activity update. Report thinking before actual
+inspection/planning and drafting before composition when those phases occur. If an
+activity delivery fails transiently, warn that it may not be visible and continue if
+the session remains valid. Closed-session responses require reconnect/revalidation,
+not blind continuation. Document write/save and protocol errors still require stopping
+and reconciling. Writes clear activity and show Writing automatically. The protocol
 field remains optional for compatibility and non-agent clients. Never guess phases,
-use timers, or disclose private chain-of-thought; terminal session states clear activity.
+use timers, or disclose private chain-of-thought; terminal states clear activity.
+
+Choose the teaching depth, structure, examples, diagrams, and math that best clarify the
+material and learner's goal. See docs/AGENT-AUTHORING.md. For an existing note, inspect
+content and live version; use guarded patch for focused corrections or guarded replace
+for a coherent rewrite. Both are atomic and version-checked. New prose and substantial
+rewrites may reveal progressively; focused corrections may appear immediately. Never
+pace or fragment content to control presentation. Assessment-reference workflows retain
+their complete-draft, one coordinated append-only write requirement.
 
 The connect JSON response includes session.sessionId; use that as SESSION_ID. The CLI
 requires a running Storm app and a registered vault. It creates only a missing .md file
@@ -41,7 +51,7 @@ mutation. Obtain live documentVersion from connect/status/inspect and pass it as
 --expected-version (not diskRevision). Apply waits for the app's saved response. Patch
 stdin is a JSON array of {"find":"...","replace":"..."} edits. The official CLI
 requires the running Storm app and never writes note files directly. Stdin EOF finishes
-stream automatically; do not call finish again. Stream is append input, not a reveal API. Source acceptance/save is independent of preview animation; there is no chunk pacing or per-command reveal flag. Agent phase reporting is REQUIRED by the workflow guidance above; the protocol remains optional for compatibility. Appends automatically show Writing and clear the phase.
+stream automatically; do not call finish again. Stream is append input, not a reveal API. Source acceptance/save is independent of preview animation; there is no chunk pacing or per-command reveal flag. Agent phase reporting is required guidance but best-effort telemetry, not a prerequisite to writing; delivery failure does not excuse ignoring write/save errors. The protocol remains optional for compatibility. Appends automatically show Writing and clear the phase.
 
 Options:
   -h, --help          Show this guide or command-specific help (works offline)
@@ -95,7 +105,7 @@ documentVersion from connect/status (or open-note inspect), not diskRevision.
 
 Append UTF-8 Markdown from stdin in order. EOF automatically finishes the session.
 Accepted text is not rolled back on cancellation or disconnect; a cancelled/error
-session must not be resumed by sending more data. Stream is useful for live append workflows, not preview reveal control; do not pace chunks, bytes, or words to animate text.
+session must not be resumed by sending more data. Stream is useful for live append workflows, not preview reveal control; do not pace chunks, bytes, or words to animate text. Activity updates are best-effort telemetry; reconnect/revalidate on closed-session responses, and stop to reconcile write/save errors.
 
 Example:
   bun scripts/storm.ts stream SESSION_ID --stdin < draft.md`,
@@ -103,10 +113,12 @@ Example:
 
 Report a truthful operational phase for the connected session. Use thinking while inspecting/planning and drafting while composing; use idle to clear the phase. Appending content automatically switches to Writing and clears reported activity. Activity is optional, is not inferred from connection or timers, and does not disclose private chain-of-thought.
 
-REQUIRED for agents using Storm's live-note workflow: send this before the work phase
-starts and whenever it changes. Do not fabricate a phase; writing clears activity
-automatically. The protocol permits omission for compatibility/non-agent clients, so
-Storm cannot enforce agent compliance.
+For agents this is REQUIRED workflow guidance, but activity is best-effort telemetry,
+not a prerequisite that blocks work. Report before real phase changes when practical;
+transient delivery failure does not invalidate a write if the session remains valid.
+Closed-session responses require reconnect/revalidation. Write/save errors still stop
+and require reconciliation. Writing clears activity automatically. The protocol permits
+omission for compatibility/non-agent clients, so Storm cannot enforce compliance.
 
 Example:
   bun scripts/storm.ts activity SESSION_ID drafting`,

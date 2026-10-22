@@ -343,12 +343,17 @@ test('standalone CLI works from a spaced path without development tools or an in
       );
       if (args.length === 0 || args[0] === '--help') {
         assert.match(result.stdout, /Application Support\/Storm/);
-        assert.match(result.stdout, /REQUIRED for agents/);
-        assert.match(result.stdout, /not runtime enforcement/);
+        assert.match(result.stdout, /REQUIRED agent workflow guidance/);
+        assert.match(result.stdout, /best-effort UI telemetry/);
+        assert.match(result.stdout, /do not block valid work/);
       }
       if (args[0] === 'activity') {
-        assert.match(result.stdout, /REQUIRED for agents/);
-        assert.match(result.stdout, /cannot enforce agent compliance/);
+        assert.match(result.stdout, /REQUIRED workflow guidance/);
+        assert.match(result.stdout, /best-effort telemetry/);
+        assert.match(
+          result.stdout,
+          /Closed-session responses require reconnect/,
+        );
       }
     }
     for (const args of [['--unknown'], ['not-a-command']]) {
@@ -511,6 +516,11 @@ test('CLI help is available offline and invalid commands fail with usage', () =>
         /packaged launcher includes its own Bun runtime/,
       );
       assert.match(result.stdout, /Application Support\/Storm/);
+      assert.match(result.stdout, /inspect\ncontent and live version/);
+      assert.match(result.stdout, /guarded patch for focused corrections/);
+      assert.match(result.stdout, /Choose the teaching depth, structure/);
+      assert.match(result.stdout, /docs\/AGENT-AUTHORING\.md/);
+      assert.match(result.stdout, /append-only write requirement/);
     }
   }
   for (const args of [
@@ -909,12 +919,30 @@ test('tool-neutral Storm skill has portable frontmatter and resolves the CLI rel
   const content = await readFile(skillPath, 'utf8');
   assert.match(content, /^---\nname: storm\ndescription: .+\n---/);
   assert.match(content, /Read `storm --help`/);
+  assert.match(content, /agent authoring guide/);
+  assert.match(content, /Use guarded `patch` for focused corrections/);
+  assert.match(
+    content,
+    /complete source review and one coordinated append-only write/,
+  );
   assert.match(content, /Prefer the official installed `storm` CLI/);
   assert.match(
     content,
     /for source development with the development app, use `bun scripts\/storm\.ts`/,
   );
   assert.ok(existsSync(new URL('../../scripts/storm.ts', skillPath)));
+  const authoringGuide = await readFile(
+    new URL('../docs/AGENT-AUTHORING.md', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    authoringGuide,
+    /atomicity protects the write but does not prescribe its scope/,
+  );
+  assert.match(authoringGuide, /## Write for understanding/);
+  assert.match(authoringGuide, /```mermaid/);
+  assert.match(authoringGuide, /inline math or `\$\$\.\.\.\$\$` display math/);
+  assert.match(authoringGuide, /raw HTML is not rendered/);
 });
 
 test('CLI stream forwards a small chunk before stdin EOF', async () => {

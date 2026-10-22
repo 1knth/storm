@@ -82,7 +82,27 @@ export class AgentDocumentController {
     const path = typeof pathOrState === 'string' ? pathOrState : rootOrPath;
     const state = typeof pathOrState === 'string' ? stateArg! : pathOrState;
     const existing = this.documents.get(key);
-    if (existing && !existing.closed) return existing;
+    if (existing && !existing.closed) {
+      // Reconcile a clean, idle cached snapshot with the authoritative open.
+      // Never replace local edits, an in-progress save, or an active writer.
+      const incomingContent = state.doc.toString();
+      const cachedContent = existing.state.doc.toString();
+      const hasLocalChanges =
+        existing.dirty ||
+        existing.inFlight ||
+        existing.saveError !== undefined ||
+        (existing.persistedContent !== undefined &&
+          cachedContent !== existing.persistedContent);
+      const hasActiveWriter =
+        existing.status === 'writing' || existing.appendCount > 0;
+      if (!hasLocalChanges && !hasActiveWriter) {
+        existing.state = state;
+        existing.revision = revision;
+        existing.persistedContent = incomingContent;
+        this.notify(existing);
+      }
+      return existing;
+    }
     const document: AgentDocument = {
       key,
       absolutePath: path,
@@ -225,6 +245,11 @@ export class AgentDocumentController {
     if (preview.changed) {
       const before = document.state.doc.toString();
       const insertions = classifyEditInsertions(before, preview.content);
+      const revealRanges =
+        plan.type === 'replace' &&
+        isSubstantialRewrite(before, preview.content, insertions)
+          ? [{ from: 0, to: preview.content.length }]
+          : insertions;
       document.state = document.state.update({
         changes: {
           from: 0,
@@ -238,7 +263,7 @@ export class AgentDocumentController {
       document.reveal = {
         generation: document.reveal.generation + 1,
         documentVersion: document.acceptedVersion,
-        ranges: insertions,
+        ranges: revealRanges,
       };
       document.dirty = true;
       this.notify(document);
@@ -269,7 +294,6 @@ export class AgentDocumentController {
     )
       throw new Error('Agent session is closed');
     document.activity = activity ?? undefined;
-    this.notify(document);
   }
 
   append(document: AgentDocument, text: string): Promise<{ version: number }> {
@@ -418,6 +442,19 @@ export function classifySingleInsertion(
   return before.length === prefix + suffix
     ? { from: prefix, to: after.length - suffix }
     : null;
+}
+
+/** A guarded whole-note replacement can present a genuinely new draft coherently. */
+function isSubstantialRewrite(
+  before: string,
+  after: string,
+  _insertions: Array<{ from: number; to: number }>,
+): boolean {
+  if (!before || !after) return false;
+  const prefix = commonPrefixLength(before, after);
+  const suffix = commonSuffixLength(before, after, prefix);
+  const unchanged = prefix + suffix;
+  return unchanged < before.length / 2 && unchanged < after.length / 2;
 }
 
 /** Maximum DP cells used by the token diff; larger edits safely reveal nothing. */
