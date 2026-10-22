@@ -19,6 +19,75 @@ import { assertNativeTarget, buildCliBinary } from './buildCli';
 import { startAgentEndpoint } from '../src/main/agentEndpoint';
 import { AgentBroker } from '../src/main/agentBroker';
 
+test('context CLI round-trips through the endpoint and broker without a note session', async () => {
+  const scratch = await mkdtemp(path.join(os.tmpdir(), 'storm-context-cli-'));
+  const context = {
+    registeredVaults: [{ id: 'vault-1', name: 'Notes', path: '/vaults/notes' }],
+    activeVaultId: 'vault-1',
+    activeNote: {
+      vaultId: 'vault-1',
+      path: '/vaults/notes/Current.md',
+      relativePath: 'Current.md',
+    },
+    openNotes: [
+      {
+        vaultId: 'vault-1',
+        path: '/vaults/notes/Current.md',
+        relativePath: 'Current.md',
+      },
+    ],
+  };
+  const broker = new AgentBroker({
+    resolveTarget: async () => {
+      throw new Error('context must not connect');
+    },
+    renderer: {
+      dispatch: async () => ({
+        ok: false,
+        code: 'UNEXPECTED',
+        message: 'Unexpected renderer request',
+      }),
+    },
+    getContext: async () => context,
+  });
+  const endpoint = await startAgentEndpoint({
+    broker,
+    userDataPath: path.join(scratch, 'profile'),
+  });
+  const invoke = async (args: string[]) => {
+    let output = '';
+    let error = '';
+    const code = await runCli(['--endpoint', endpoint.metadataPath, ...args], {
+      home: scratch,
+      stdout: (text) => {
+        output += text;
+      },
+      stderr: (text) => {
+        error += text;
+      },
+    });
+    assert.equal(code, 0, error);
+    return output;
+  };
+  try {
+    const json = JSON.parse(await invoke(['context', '--json']));
+    assert.equal(json.type, 'context');
+    assert.deepEqual(json.context, context);
+    const text = await invoke(['context']);
+    assert.match(text, /Registered vaults:/);
+    assert.match(text, /Notes \(vault-1\): \/vaults\/notes/);
+    assert.match(text, /Active note:[\s\S]*Current.md/);
+    assert.match(
+      text,
+      /Open notes \(open tabs only; not a full vault listing\)/,
+    );
+    assert.match(text, /Current.md \[Current.md\]/);
+  } finally {
+    await endpoint.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
 test('activity CLI round-trips through the local endpoint and broker lifecycle', async () => {
   const scratch = await mkdtemp(path.join(os.tmpdir(), 'storm-activity-cli-'));
   const document = { version: 0, revision: 'r1' };
@@ -331,6 +400,7 @@ test('standalone CLI works from a spaced path without development tools or an in
       ['--help'],
       ['connect', '--help'],
       ['activity', '--help'],
+      ['context', '--help'],
     ]) {
       const result = run(args);
       assert.equal(result.status, 0, result.stderr);
@@ -346,6 +416,21 @@ test('standalone CLI works from a spaced path without development tools or an in
         assert.match(result.stdout, /REQUIRED agent workflow guidance/);
         assert.match(result.stdout, /best-effort UI telemetry/);
         assert.match(result.stdout, /do not block valid work/);
+        assert.match(result.stdout, /\[\[note\]\]/);
+        assert.match(result.stdout, /\[\[folder\/note\]\]/);
+        assert.match(result.stdout, /\[\[note\|label\]\]/);
+        assert.match(
+          result.stdout,
+          /no note-list, search, or link-resolution command/,
+        );
+        assert.match(result.stdout, /inspect ABS_PATH --json/);
+        assert.match(result.stdout, /Never use connect as an existence check/);
+        assert.match(result.stdout, /heading fragments are\s+unsupported/);
+      }
+      if (args[0] === 'context') {
+        assert.match(result.stdout, /read-only snapshot/i);
+        assert.match(result.stdout, /not a complete vault listing/i);
+        assert.match(result.stdout, /inspect ABS_PATH --json/);
       }
       if (args[0] === 'activity') {
         assert.match(result.stdout, /REQUIRED workflow guidance/);

@@ -38,6 +38,7 @@ import { ToastProvider, useToast } from './components/Toast';
 import { loadAppearance, saveAppearance } from './appearance';
 import type { Appearance } from './appearance';
 import { createAgentDocumentHost } from './documents/agentDocumentHost';
+import { createAgentContext } from './documents/agentContext';
 import { reconcileAgentTargetContent } from './documents/agentTargetReconciliation';
 import { isAgentTabProtected } from './documents/agentTabProtection';
 import {
@@ -143,6 +144,7 @@ function App() {
     ? readingModes[readingModeKey] === true
     : false;
   const activeVaultIdRef = useRef<string | null>(null);
+  const vaultsRef = useRef(vaults);
   const tabsRef = useRef(tabs);
   const activeIdRef = useRef(activeId);
   const groupsRef = useRef(tabGroups);
@@ -150,6 +152,7 @@ function App() {
   const recentlyClosedRef = useRef(new Map<string, ClosedTabRecord[]>());
   const reopenRequestRef = useRef(0);
   activeVaultIdRef.current = activeVaultId;
+  vaultsRef.current = vaults;
   tabsRef.current = tabs;
   activeIdRef.current = activeId;
   groupsRef.current = tabGroups;
@@ -371,6 +374,13 @@ function App() {
       saveNote: (request) => window.stormAgent.saveNote(request),
       getAdapterFor: (vaultId, path) =>
         agentAdaptersRef.current.get(JSON.stringify([vaultId, path])),
+      getContext: () =>
+        createAgentContext(
+          vaultsRef.current,
+          activeVaultIdRef.current,
+          tabsRef.current,
+          activeIdRef.current,
+        ),
     });
     agentHost.current = host;
     const unsubscribe = window.stormAgent.onRequest((request) => {

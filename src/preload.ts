@@ -23,6 +23,7 @@ import type {
 } from './shared/types';
 import type { GroupColor } from './shared/groupColors';
 import { isAgentEditPlan } from './shared/agentEditValidation';
+import { isAgentContext } from './shared/agentProtocol';
 import type {
   AgentBridgeRequest,
   AgentBridgeResult,
@@ -76,6 +77,7 @@ function isAgentRequest(value: unknown): value is AgentBridgeRequest {
   const item = value as Record<string, unknown>;
   if (typeof item.requestId !== 'string' || item.requestId.length > 128)
     return false;
+  if (item.type === 'context') return true;
   if (item.type === 'inspect')
     return typeof item.vaultId === 'string' && typeof item.path === 'string';
   if (item.type === 'snapshot')
@@ -117,6 +119,7 @@ function isAgentResult(value: unknown): value is AgentBridgeResult {
   const item = value as Record<string, unknown>;
   if (item.ok === false)
     return typeof item.code === 'string' && typeof item.message === 'string';
+  if (item.ok === true && isAgentContext(item.context)) return true;
   if (item.ok === true && item.preview === true)
     return (
       typeof item.content === 'string' &&

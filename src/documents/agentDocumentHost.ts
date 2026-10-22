@@ -1,4 +1,5 @@
 import type { EditorState } from '@codemirror/state';
+import type { AgentContext } from '../shared/agentProtocol';
 import type {
   AgentBridgeRequest,
   AgentBridgeResult,
@@ -39,6 +40,7 @@ export interface AgentDocumentHostOptions {
     vaultId: string,
     path: string,
   ) => AgentEditorAdapter | undefined;
+  getContext?: () => AgentContext | undefined;
 }
 
 /** Bridges transport requests to per-document ownership; it deliberately owns no UI or transport. */
@@ -77,6 +79,16 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
     request: AgentBridgeRequest & { vaultId?: string; vaultRoot?: string },
   ): Promise<AgentBridgeResult> {
     try {
+      if (request.type === 'context') {
+        const context = options.getContext?.();
+        return context
+          ? { ok: true, context }
+          : {
+              ok: false,
+              code: 'CONTEXT_UNAVAILABLE',
+              message: 'App context is unavailable',
+            };
+      }
       if (request.type === 'inspect') {
         const document = lookupDocument(request.vaultId, request.path);
         if (!document || document.closed)

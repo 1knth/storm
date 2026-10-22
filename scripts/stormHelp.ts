@@ -4,6 +4,7 @@ Usage:
   bun scripts/storm.ts [--endpoint PATH | --profile NAME] <command> [arguments]
 
 Commands:
+  context [--json]                        Show registered vault roots and open-note context (read-only)
   inspect ABS_PATH --json                 Read a note without opening or creating it
   connect ABS_PATH --json [--name NAME]  Open/create a vault note and return its session and content
   stream SESSION --stdin                 Append UTF-8 stdin; EOF finishes the session
@@ -13,6 +14,10 @@ Commands:
   activity SESSION thinking|drafting|idle Report or clear the current work phase
   finish SESSION                         Stop writing normally
   cancel SESSION                         Cancel writing; accepted edits remain
+
+Quick context check (does not require or create a note session):
+  bun scripts/storm.ts context
+  bun scripts/storm.ts context --json
 
 Quick workflow:
   bun scripts/storm.ts inspect "/absolute/vault/plan.md" --json
@@ -43,6 +48,14 @@ rewrites may reveal progressively; focused corrections may appear immediately. N
 pace or fragment content to control presentation. Assessment-reference workflows retain
 their complete-draft, one coordinated append-only write requirement.
 
+Storm preview supports in-vault wiki note links: [[note]], [[folder/note]], and
+[[note|label]]. Link only to an existing target you have identified. Start with
+context to see registered vault roots and currently open notes; openNotes is not a full
+vault listing. Use inspect ABS_PATH --json to verify an existing note without opening
+or creating it. Never use connect as an existence check: it can create a missing note.
+The CLI has no note-list, search, or link-resolution command; heading fragments are
+unsupported.
+
 The connect JSON response includes session.sessionId; use that as SESSION_ID. The CLI
 requires a running Storm app and a registered vault. It creates only a missing .md file
 whose parent already exists, and never replaces existing note contents. Stream appends
@@ -70,6 +83,22 @@ protocol errors go to stderr) and exits nonzero. Endpoint metadata contains a pr
 authentication token: do not disclose it. Use --help with any command for details.`;
 
 const commandHelp: Record<string, string> = {
+  context: `Usage: bun scripts/storm.ts [endpoint options] context [--json]
+
+Read-only snapshot of registered vault IDs, names, and absolute roots, the active vault
+and note (when available), and notes currently open in tabs. This does not require a
+session and never creates or opens notes. Open notes are not a complete vault listing.
+
+Use the returned vault roots and known open-note paths to guide safe inspection. Verify
+an existing target with inspect ABS_PATH --json before linking to it; never use connect
+as an existence check because it can create a missing note. There are no CLI note-list,
+search, or link-resolution commands.
+
+Without --json, prints a readable summary. With --json, prints the protocol response
+including type: context and its context object.
+
+Example:
+  bun scripts/storm.ts context --json`,
   inspect: `Usage: bun scripts/storm.ts [endpoint options] inspect ABS_PATH --json
 
 Read an existing .md note inside a registered Storm vault without opening a tab,

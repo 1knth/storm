@@ -5,6 +5,7 @@ import { runVaultLifecycleExclusive } from './vaultLifecycle';
 import {
   AGENT_TRANSPORT,
   AGENT_PROTOCOL_VERSION,
+  type AgentContext,
   type AgentRequest,
   type AgentResponse,
   type AgentSessionStatus,
@@ -42,6 +43,7 @@ export type AgentRendererRequest =
       sequence: number;
       text: string;
     }
+  | { type: 'context'; requestId: string }
   | { type: 'inspect'; requestId: string; vaultId: string; path: string }
   | {
       type: 'edit-preview' | 'edit-apply';
@@ -52,6 +54,7 @@ export type AgentRendererRequest =
     }
   | { type: 'finish' | 'cancel'; requestId: string; sessionId: string };
 export type AgentRendererResult =
+  | { ok: true; context: AgentContext }
   | { ok: true; inspected: true; open: false }
   | {
       ok: true;
@@ -93,6 +96,7 @@ export interface AgentBrokerOptions {
   assertTargetRegistered?(target: AgentNoteTarget): Promise<void>;
   withVaultLifecycle?<T>(root: string, operation: () => Promise<T>): Promise<T>;
   renderer: AgentRendererTransport;
+  getContext?(): Promise<AgentContext>;
 }
 type CachedOperation = {
   fingerprint: string;
@@ -262,7 +266,7 @@ export class AgentBroker {
               vaultRoot: target.vaultRoot,
             });
             if (!snapshot.ok) return fail(snapshot.code, snapshot.message);
-            if ('inspected' in snapshot)
+            if ('inspected' in snapshot || 'context' in snapshot)
               return fail(
                 'INTERNAL',
                 'Renderer returned an inspection response for snapshot',
@@ -287,6 +291,23 @@ export class AgentBroker {
           });
         } finally {
           this.resolvingConnects--;
+        }
+      }
+      if (request.type === 'context') {
+        if (!this.options.getContext)
+          return fail('CONTEXT_UNAVAILABLE', 'Context is unavailable');
+        try {
+          return {
+            protocol: AGENT_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            ok: true,
+            type: 'context',
+            context: await this.options.getContext(),
+          };
+        } catch (error) {
+          if ((error as { code?: string })?.code === 'CONTEXT_UNAVAILABLE')
+            return fail('CONTEXT_UNAVAILABLE', errorMessage(error));
+          throw error;
         }
       }
       if (request.type === 'status') {
@@ -426,10 +447,8 @@ export class AgentBroker {
               code: result.code,
             });
           }
-          if ('inspected' in result)
-            throw new Error(
-              'Renderer returned an inspection response for append',
-            );
+          if ('inspected' in result || 'context' in result)
+            throw new Error('Renderer returned an invalid response for append');
           this.observeDocument(
             session,
             result.documentVersion,
@@ -585,7 +604,11 @@ export class AgentBroker {
         });
         // Cancellation remains fenced, but its response is authoritative observation
         // of the renderer's document state (not acknowledgement of queued writes).
-        if (cancellation.ok && !('inspected' in cancellation)) {
+        if (
+          cancellation.ok &&
+          !('inspected' in cancellation) &&
+          !('context' in cancellation)
+        ) {
           this.observeDocument(
             session,
             cancellation.documentVersion,
@@ -620,10 +643,8 @@ export class AgentBroker {
               code: rendererResult.code,
             });
           }
-          if ('inspected' in rendererResult)
-            throw new Error(
-              'Renderer returned an inspection response for finish',
-            );
+          if ('inspected' in rendererResult || 'context' in rendererResult)
+            throw new Error('Renderer returned an invalid response for finish');
           if (session.state !== 'connected' && session.state !== 'writing')
             throw new Error('SESSION_CLOSED');
           session.state = 'finished';
@@ -755,6 +776,7 @@ function isRequest(v: unknown): v is AgentRequest {
       typeof r.text === 'string' &&
       Number.isSafeInteger(r.sequence)
     );
+  if (r.type === 'context') return true;
   return (
     ['finish', 'cancel', 'status', 'disconnect'].includes(String(r.type)) &&
     (r.sessionId === undefined || typeof r.sessionId === 'string')

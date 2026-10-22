@@ -147,6 +147,36 @@ export async function discoverEndpoint(
   );
 }
 
+function formatContext(
+  context: import('../src/shared/agentProtocol').AgentContext,
+): string {
+  const lines = ['Registered vaults:'];
+  if (context.registeredVaults.length) {
+    for (const vault of context.registeredVaults)
+      lines.push(`  ${vault.name} (${vault.id}): ${vault.path}`);
+  } else lines.push('  (none)');
+  const activeVault = context.registeredVaults.find(
+    (vault) => vault.id === context.activeVaultId,
+  );
+  lines.push(
+    `Active vault: ${activeVault ? `${activeVault.name} (${activeVault.id})` : '(none)'}`,
+  );
+  lines.push('Active note:');
+  lines.push(
+    context.activeNote
+      ? `  ${context.activeNote.path} [${context.activeNote.relativePath}]`
+      : '  (none)',
+  );
+  lines.push('Open notes (open tabs only; not a full vault listing):');
+  if (context.openNotes.length) {
+    for (const note of context.openNotes)
+      lines.push(
+        `  ${note.path} [${note.relativePath}] (vault ${note.vaultId})`,
+      );
+  } else lines.push('  (none)');
+  return lines.join('\n');
+}
+
 function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
     const code = character.codePointAt(0)!;
@@ -272,6 +302,11 @@ export async function runCli(
           `${command} requires SESSION --expected-version N --stdin`,
         );
     }
+    if (
+      command === 'context' &&
+      (rest.length > 2 || (rest[1] && rest[1] !== '--json'))
+    )
+      throw new CliUsageError('context accepts only optional --json');
     if (command === 'inspect' && (rest.length !== 3 || rest[2] !== '--json'))
       throw new CliUsageError('inspect requires ABS_PATH --json');
     if (command === 'connect' && (rest.length !== 3 || rest[2] !== '--json'))
@@ -323,7 +358,8 @@ export async function runCli(
       }
     };
     let result: any;
-    if (command === 'inspect' && rest[1] && rest[2] === '--json')
+    if (command === 'context') result = await request({ type: 'context' });
+    else if (command === 'inspect' && rest[1] && rest[2] === '--json')
       result = await request({ type: 'inspect', absolutePath: rest[1] });
     else if (command === 'connect' && rest[1] && rest[2] === '--json')
       result = await request({
@@ -481,7 +517,9 @@ export async function runCli(
       err(`${JSON.stringify(result)}\n`);
       return 1;
     }
-    out(`${JSON.stringify(result)}\n`);
+    if (command === 'context' && rest[1] !== '--json')
+      out(`${formatContext(result.context)}\n`);
+    else out(`${JSON.stringify(result)}\n`);
     return 0;
   } catch (error) {
     if (error instanceof CliUsageError) {
