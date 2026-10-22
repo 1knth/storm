@@ -223,11 +223,11 @@
    Applying the mask to the scroll viewport also clips tab shadows; no opaque color
    is painted over the (potentially transparent) editor chrome. */
 .tab-list-scroll {
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 
 .tab-list-scroll::-webkit-scrollbar {
-  height: 4px;
+  display: none;
 }
 
 .tab-list-scroll.tab-list--overflowing {
