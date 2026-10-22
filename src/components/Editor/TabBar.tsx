@@ -73,9 +73,18 @@ export default function TabBar({
     const updateOverflow = () =>
       setTabsOverflow(element.scrollWidth > element.clientWidth);
     updateOverflow();
-    const observer = new ResizeObserver(updateOverflow);
-    observer.observe(element);
-    return () => observer.disconnect();
+    const resizeObserver = new ResizeObserver(updateOverflow);
+    resizeObserver.observe(element);
+    const mutationObserver = new MutationObserver(updateOverflow);
+    mutationObserver.observe(element, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+    };
   }, [tabs.length, groups.length]);
   const [exitingTabs, setExitingTabs] = useState<
     Array<{ tab: TabSnapshot; rect: DOMRect }>
