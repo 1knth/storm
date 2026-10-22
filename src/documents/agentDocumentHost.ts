@@ -45,6 +45,7 @@ export interface AgentDocumentHostOptions {
 export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
   const controller = new AgentDocumentController(options.saveNote);
   const sessions = new Map<string, AgentDocument>();
+  const activitySequences = new Map<string, number>();
   const identities = new Map<string, { vaultId: string; path: string }>();
   const unsubscribe = controller.subscribe((document) => {
     options.publishDocument(document);
@@ -100,6 +101,17 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           vaultId: request.vaultId,
           vaultRoot: request.vaultRoot,
         });
+        const previous = controller.get(opened.key);
+        if (previous?.status === 'finished') {
+          if (!controller.resetFinished(opened.key))
+            throw new Error('Finished agent session is not ready to reconnect');
+          for (const [oldSessionId, owned] of sessions) {
+            if (owned !== previous) continue;
+            sessions.delete(oldSessionId);
+            activitySequences.delete(oldSessionId);
+            identities.delete(oldSessionId);
+          }
+        }
         const document = controller.attach(
           opened.key,
           opened.vaultPath,
@@ -109,6 +121,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
         );
         const sessionId = request.sessionId;
         sessions.set(sessionId, document);
+        activitySequences.set(sessionId, 0);
         document.vaultId = opened.vaultId;
         document.absolutePath = opened.absolutePath;
         options.publishDocument(document);
@@ -134,7 +147,27 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
             code: 'SESSION_CLOSED',
             message: 'Session is not open',
           };
+        const sequence = request.activitySequence;
+        const currentSequence = activitySequences.get(request.sessionId) ?? 0;
+        if (
+          (request.documentVersion !== undefined &&
+            request.documentVersion !== document.acceptedVersion) ||
+          (sequence !== undefined && sequence <= currentSequence) ||
+          document.status === 'finished' ||
+          document.status === 'stopped' ||
+          document.status === 'disconnected'
+        )
+          return {
+            ok: true,
+            documentVersion: document.acceptedVersion,
+            diskRevision: document.revision,
+          };
+        if (sequence !== undefined)
+          activitySequences.set(request.sessionId, sequence);
         controller.setActivity(document, request.activity);
+        options.publishStatus({
+          session: toSessionStatus(request.sessionId, document),
+        });
         return {
           ok: true,
           documentVersion: document.acceptedVersion,

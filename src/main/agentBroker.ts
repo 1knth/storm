@@ -30,6 +30,8 @@ export type AgentRendererRequest =
       requestId: string;
       sessionId: string;
       activity: 'thinking' | 'drafting' | null;
+      activitySequence: number;
+      documentVersion: number;
     }
   | {
       type: 'append';
@@ -104,6 +106,7 @@ type Session = {
   activity?: 'thinking' | 'drafting';
   version: number;
   sequence: number;
+  activitySequence: number;
   pending: number;
   queue: Promise<void>;
   operations: Map<string, CachedOperation>;
@@ -243,6 +246,7 @@ export class AgentBroker {
               state: 'connected',
               version: 0,
               sequence: 0,
+              activitySequence: 0,
               pending: 0,
               queue: Promise.resolve(),
               operations: new Map(),
@@ -339,45 +343,34 @@ export class AgentBroker {
       if (request.type === 'activity') {
         if (session.state !== 'connected' && session.state !== 'writing')
           return fail('SESSION_CLOSED', 'Session is not writable');
-        const result = await this.enqueue(session, async () => {
-          if (session.state !== 'connected' && session.state !== 'writing')
-            return fail('SESSION_CLOSED', 'Session is not writable');
-          const rendered = await this.options.renderer.dispatch({
-            type: 'activity',
-            requestId: request.requestId,
-            sessionId: session.id,
-            activity: request.activity,
-          });
-          if (!rendered.ok) return fail(rendered.code, rendered.message);
-          if (
-            'inspected' in rendered ||
-            'preview' in rendered ||
-            'edited' in rendered
-          )
-            return fail(
-              'INTERNAL',
-              'Renderer returned an invalid activity response',
-            );
-          this.observeDocument(
-            session,
-            rendered.documentVersion,
-            rendered.diskRevision,
-          );
-          if (session.state !== 'connected' && session.state !== 'writing')
-            return fail(
-              'SESSION_CLOSED',
-              'Session closed before activity update',
-            );
-          session.activity = request.activity ?? undefined;
-          return {
-            protocol: AGENT_PROTOCOL_VERSION,
-            requestId: request.requestId,
-            ok: true as const,
-            type: 'activity' as const,
-            session: this.status(session),
-          };
-        });
-        return { ...result, requestId: request.requestId };
+        session.activity = request.activity ?? undefined;
+        const activitySequence = ++session.activitySequence;
+        const documentVersion = session.version;
+        const status = this.status(session);
+        // Invoke in request order, but do not put telemetry on the strict write
+        // queue or make the CLI wait for renderer delivery. Rejections are
+        // intentionally non-fatal: activity must never block a document write.
+        try {
+          void this.options.renderer
+            .dispatch({
+              type: 'activity',
+              requestId: request.requestId,
+              sessionId: session.id,
+              activity: request.activity,
+              activitySequence,
+              documentVersion,
+            })
+            .catch(() => {});
+        } catch {
+          // A synchronous transport failure is also best-effort only.
+        }
+        return {
+          protocol: AGENT_PROTOCOL_VERSION,
+          requestId: request.requestId,
+          ok: true,
+          type: 'activity',
+          session: status,
+        };
       }
       if (request.type === 'append') {
         const fingerprint = JSON.stringify([request.sequence, request.text]);

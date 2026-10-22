@@ -48,6 +48,8 @@ Append acknowledgements indicate live-editor acceptance, not disk persistence. C
 
 ### Guarded edits
 
+For an existing note, prefer `patch` for focused corrections; reserve `replace` for a genuinely necessary full-document rewrite. Both are atomic operations guarded by the live version: atomic means all-or-nothing for that request, not that its edit scope should be broad. Choose the smallest safe operation that preserves unrelated content. Use append/`stream` for genuinely new content, not as a correction workaround or as a way to make separately accepted deltas one atomic write. The assessment-reference workflow is a project-specific exception: complete source coverage and the whole review first, then use one coordinated append-only write as required by the study instructions. More-specific user/project requirements take precedence.
+
 `replace` consumes the full replacement content from stdin. `patch` consumes a JSON array such as:
 
 ```json
@@ -84,8 +86,10 @@ A saved result or backend `finished` session can precede the last visual reveal.
 
 This is app presentation behavior, not a timing guarantee or a per-command animation flag. Regression checks must distinguish saved source from visual completion. The packaged macOS arm64 app and bundled CLI have been exercised with a single complete append followed by EOF, exact content readback, and the Revealing → Finished transition. That verification does not establish every edit pattern or platform; ongoing release checks are described in [Contributing](../CONTRIBUTING.md#release-verification-and-documentation).
 
+Use appropriate supported Markdown to clarify teaching explanations, connections, worked examples, procedures, or comparisons; do not add decorative structures merely to use every feature. See the [agent authoring guide](AGENT-AUTHORING.md) for examples and edit-selection guidance.
+
 ## Scope and workflow boundaries
 
 All note mutations use Storm's coordinated live editor/save path; the CLI never writes note files directly. The supported operations are inspection, append, full replacement, and exact-text patching. Parent-folder creation, restart-durable operation journals, automatic rebasing, and general concurrent-text merging are outside the current command set. These are supported-scope boundaries, not promised future features.
 
-For reference-note preparation, inspect instructor sources and coverage before drafting; distinguish confirmed scope, exclusions, unknowns, learner notes, and supplemental material. Assemble one complete draft and use one coordinated writer. This is reference preparation, not teaching, completion, or mastery. Preserve existing notes and provenance.
+For assessment-reference preparation, inspect instructor sources and coverage before drafting; distinguish confirmed scope, exclusions, unknowns, learner notes, and supplemental material. Assemble the complete review and use one coordinated append-only Storm write as required by the project study workflow. Do not interpret the general preference for targeted corrections as permission to replace or split that review. This is reference preparation, not teaching, completion, or mastery. Preserve existing notes and provenance.

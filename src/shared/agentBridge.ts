@@ -22,6 +22,8 @@ export type AgentBridgeRequest =
       requestId: string;
       sessionId: string;
       activity: AgentActivity | null;
+      activitySequence?: number;
+      documentVersion?: number;
     }
   | {
       type: 'append';

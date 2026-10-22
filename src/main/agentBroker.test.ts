@@ -103,7 +103,63 @@ function brokerWithRenderer(
 }
 
 describe('reported activity', () => {
-  it('queues validated activity updates and clears them on writes and terminal states', async () => {
+  it('acknowledges activity without waiting for telemetry and keeps writes independent of delivery failure', async () => {
+    const activityDelivery = deferred<AgentRendererResult>();
+    const calls: AgentRendererRequest[] = [];
+    const broker = brokerWithRenderer(async (request) => {
+      calls.push(request);
+      if (request.type === 'snapshot')
+        return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+      if (request.type === 'activity') return activityDelivery.promise;
+      if (request.type === 'append')
+        return { ok: true, documentVersion: 1, diskRevision: 'r1' };
+      return { ok: true, documentVersion: 1, diskRevision: 'r1' };
+    });
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/outcome/note.md' }),
+    )) as any;
+    const sessionId = connected.session.sessionId;
+
+    const activity = (await broker.handle(
+      req('activity', { sessionId, activity: 'thinking' }),
+    )) as any;
+    assert.equal(activity.ok, true);
+    assert.equal(activity.session.activity, 'thinking');
+    const activityRequest = calls.at(-1);
+    assert.equal(activityRequest?.type, 'activity');
+    if (activityRequest?.type === 'activity') {
+      assert.equal(activityRequest.activitySequence, 1);
+      assert.equal(activityRequest.documentVersion, 0);
+    }
+    assert.deepEqual(
+      calls.map((call) => call.type),
+      ['snapshot', 'activity'],
+    );
+
+    const write = (await broker.handle(
+      req('append', {
+        sessionId,
+        operationId: 'write-1',
+        sequence: 1,
+        text: 'saved content',
+      }),
+    )) as any;
+    assert.equal(write.ok, true);
+    assert.equal(write.type, 'accepted');
+    assert.equal(calls.at(-1)?.type, 'append');
+
+    activityDelivery.resolve({
+      ok: false,
+      code: 'SESSION_CLOSED',
+      message: 'Renderer unavailable',
+    });
+    await Promise.resolve();
+    const status = (await broker.handle(req('status', { sessionId }))) as any;
+    assert.equal(status.sessions[0].state, 'connected');
+    assert.equal(status.sessions[0].documentVersion, 1);
+  });
+
+  it('dispatches validated activity best-effort and clears it on writes and terminal states', async () => {
     const { broker, calls } = setup();
     const connected = (await broker.handle(
       req('connect', { absolutePath: '/vault/note.md' }),

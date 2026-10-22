@@ -30,6 +30,12 @@ import {
 } from './previewFind';
 import type { Appearance } from '../../appearance';
 import {
+  isActiveAgentPreviewReveal,
+  isNextPreviewVisualLine,
+  previewFollowTailSpace,
+  previewFollowTarget,
+} from './previewAutoFollow';
+import {
   createRevealScheduleRegistry,
   collectPendingRevealKeys,
   PREVIEW_REVEAL_CADENCE_MS,
@@ -95,11 +101,13 @@ export function rehypeRevealUnits({
           lineOffsets[(node.position?.start?.line ?? 1) - 1] ??
           fallbackOffset;
         const end = node.position?.end?.offset ?? offset;
-        const eligible = revealRanges
-          ? revealRanges.some(({ from, to }) => offset < to && end > from)
-          : offset >= startOffset;
+        const key = `block:${offset}:${path.join('.')}`;
+        const eligible =
+          registry.words.has(key) ||
+          (revealRanges
+            ? revealRanges.some(({ from, to }) => offset < to && end > from)
+            : offset >= startOffset);
         if (eligible) {
-          const key = `block:${offset}:${path.join('.')}`;
           units.push({ key, sourceOffset: offset, kind: 'block' });
           node.properties ??= {};
           node.properties['data-reveal-key'] = key;
@@ -757,13 +765,7 @@ function RevealBlock({
       };
     });
   }, [readinessKey, schedule]);
-  if (
-    !context ||
-    !registry ||
-    typeof start !== 'number' ||
-    start < context.startLine ||
-    !schedule
-  )
+  if (!context || !registry || typeof start !== 'number' || !schedule)
     return typeof children === 'function' ? children(onReady) : children;
   return (
     <div
@@ -893,70 +895,113 @@ function MarkdownPreview({
     'Reveal diagnostics enabled; waiting for preview commit.',
   );
   const followRef = useRef({
-    following: true,
-    programmatic: false,
     frame: 0,
-    initialized: false,
+    lastLineTop: Number.NEGATIVE_INFINITY,
+    lastUnit: null as HTMLElement | null,
   });
+  const followTailRef = useRef<{
+    container: HTMLElement;
+    original: string;
+    basePadding: number;
+  } | null>(null);
   const scrollElement = scrollRef;
+
+  useEffect(() => {
+    return () => {
+      const tail = followTailRef.current;
+      if (!tail) return;
+      tail.container.style.paddingBottom = tail.original;
+      followTailRef.current = null;
+    };
+  }, [notePath]);
   useEffect(() => {
     const container = scrollElement?.current;
-    if (!container) return;
+    if (!container || !isActiveAgentPreviewReveal(revealId, revealRanges))
+      return;
     const state = followRef.current;
-    if (!state.initialized) {
-      state.following =
-        container.scrollHeight - container.clientHeight - container.scrollTop <=
-        24;
-      state.initialized = true;
+    state.lastLineTop = Number.NEGATIVE_INFINITY;
+    if (
+      !followTailRef.current ||
+      followTailRef.current.container !== container
+    ) {
+      followTailRef.current = {
+        container,
+        original: container.style.paddingBottom,
+        basePadding:
+          Number.parseFloat(window.getComputedStyle(container).paddingBottom) ||
+          0,
+      };
     }
+    const updateTailSpace = () => {
+      const basePadding = followTailRef.current?.basePadding ?? 0;
+      container.style.paddingBottom = `${basePadding + previewFollowTailSpace(container.clientHeight)}px`;
+    };
+    updateTailSpace();
+    const followLine = (unit: HTMLElement) => {
+      if (!unit.isConnected) return;
+      const containerRect = container.getBoundingClientRect();
+      const visualLineTop =
+        unit.getBoundingClientRect().top -
+        containerRect.top +
+        container.scrollTop;
+      const target = previewFollowTarget({
+        visualLineTop,
+        clientHeight: container.clientHeight,
+        scrollHeight: container.scrollHeight,
+      });
+      const reducedMotion = window.matchMedia(
+        '(prefers-reduced-motion: reduce)',
+      ).matches;
+      container.scrollTo({
+        top: target,
+        behavior: reducedMotion ? 'instant' : 'smooth',
+      });
+    };
     const onAnimationStart = (event: AnimationEvent) => {
       if (
         !event.target ||
-        !(event.target instanceof Element) ||
+        !(event.target instanceof HTMLElement) ||
         !event.target.matches(
           '[data-preview-reveal-word], [data-preview-reveal-block]',
         )
       )
         return;
-      const word = event.target as HTMLElement;
-      const key = word.dataset.revealKey;
+      const unit = event.target;
+      state.lastUnit = unit;
+      const key = unit.dataset.revealKey;
       if (key) markRevealStarted(registryRef.current!.registry, key);
       cancelAnimationFrame(state.frame);
       state.frame = requestAnimationFrame(() => {
         state.frame = 0;
-        if (!state.following) return;
         const containerRect = container.getBoundingClientRect();
-        const wordRect = word.getBoundingClientRect();
-        const bottom = containerRect.bottom - 28;
-        if (wordRect.bottom > bottom) {
-          const delta = wordRect.bottom - bottom;
-          state.programmatic = true;
-          container.scrollTop = Math.max(
-            container.scrollTop,
-            container.scrollTop + delta,
-          );
-          requestAnimationFrame(() => {
-            state.programmatic = false;
-          });
-        }
+        const visualLineTop =
+          unit.getBoundingClientRect().top -
+          containerRect.top +
+          container.scrollTop;
+        if (!isNextPreviewVisualLine(visualLineTop, state.lastLineTop)) return;
+        state.lastLineTop = visualLineTop;
+        followLine(unit);
       });
     };
-    const onScroll = () => {
-      if (state.programmatic) return;
-      const atBottom =
-        container.scrollHeight - container.clientHeight - container.scrollTop <=
-        24;
-      state.following = atBottom;
+    const onResize = () => {
+      updateTailSpace();
+      if (!state.lastUnit) return;
+      cancelAnimationFrame(state.frame);
+      state.frame = requestAnimationFrame(() => {
+        state.frame = 0;
+        if (state.lastUnit) followLine(state.lastUnit);
+      });
     };
     container.addEventListener('animationstart', onAnimationStart, true);
-    container.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onResize);
     return () => {
       container.removeEventListener('animationstart', onAnimationStart, true);
-      container.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onResize);
+      state.lastUnit = null;
       cancelAnimationFrame(state.frame);
       state.frame = 0;
     };
-  }, [scrollElement]);
+  }, [scrollElement, notePath, revealId, revealRanges]);
   const registryRef = useRef<{
     id?: string;
     registry: ReturnType<typeof createRevealScheduleRegistry>;
@@ -1318,13 +1363,11 @@ function MarkdownPreview({
                         ' ',
                       ].includes(event.key)
                     ) {
-                      followRef.current.following = false;
                       onScrollIntent?.();
                     }
                     onReadingKeyDown?.(event);
                   }}
                   onWheelCapture={() => {
-                    followRef.current.following = false;
                     onScrollIntent?.();
                     onUserScroll?.();
                   }}

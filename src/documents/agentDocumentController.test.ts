@@ -8,6 +8,70 @@ import {
 } from './agentDocumentController';
 
 describe('agent reveal classification', () => {
+  it('refreshes a pristine cached document from the latest disk snapshot', () => {
+    const controller = new AgentDocumentController();
+    const stale = controller.attach(
+      'reopen',
+      '/vault/a.md',
+      'a.md',
+      EditorState.create({ doc: '' }),
+      'old',
+    );
+    const refreshed = controller.attach(
+      'reopen',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'disk content' }),
+      'new',
+    );
+    assert.equal(refreshed, stale);
+    assert.equal(refreshed.state.doc.toString(), 'disk content');
+    assert.equal(refreshed.revision, 'new');
+    assert.equal(refreshed.dirty, false);
+  });
+
+  it('preserves locally edited content and active writers during refresh', async () => {
+    const controller = new AgentDocumentController();
+    const document = controller.attach(
+      'dirty',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'saved' }),
+      'old',
+    );
+    controller.updateFromEditor(
+      'dirty',
+      EditorState.create({ doc: 'local edit' }),
+    );
+    controller.attach(
+      'dirty',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'new disk' }),
+      'new',
+    );
+    assert.equal(document.state.doc.toString(), 'local edit');
+    assert.equal(document.dirty, true);
+    assert.equal(document.revision, 'old');
+
+    const writing = controller.attach(
+      'writer',
+      '/vault',
+      'b.md',
+      EditorState.create({ doc: '' }),
+      'old',
+    );
+    await controller.append(writing, 'agent text');
+    controller.attach(
+      'writer',
+      '/vault',
+      'b.md',
+      EditorState.create({ doc: 'disk' }),
+      'new',
+    );
+    assert.equal(writing.state.doc.toString(), 'agent text');
+    assert.equal(writing.revision, 'old');
+  });
   it('classifies exact insertion ranges in UTF-16 coordinates and rejects corrections', () => {
     assert.deepEqual(classifySingleInsertion('A🙂B', 'A🙂newB'), {
       from: 3,
@@ -216,6 +280,44 @@ describe('AgentDocumentController', () => {
       { from: 0, to: 4 },
       { from: 7, to: 12 },
     ]);
+  });
+
+  it('reveals a substantial guarded full rewrite as a coherent new draft', async () => {
+    const controller = new AgentDocumentController(async () => ({
+      revision: 'saved',
+    }));
+    const before =
+      'Old explanation with several unrelated ideas and a short ending.';
+    const document = controller.attach(
+      'rewrite',
+      '/notes/rewrite.md',
+      EditorState.create({ doc: before }),
+    );
+    await controller.applyEdit(document, 0, {
+      type: 'replace',
+      content:
+        'A new explanation reorganizes the concepts into a connected lesson with a worked example and a clear conclusion.',
+    });
+    assert.deepEqual(document.reveal.ranges, [
+      { from: 0, to: document.state.doc.length },
+    ]);
+  });
+
+  it('keeps a focused whole-note correction immediate', async () => {
+    const controller = new AgentDocumentController(async () => ({
+      revision: 'saved',
+    }));
+    const before = 'Correct the typo in this otherwise stable explanation.';
+    const document = controller.attach(
+      'correction',
+      '/notes/correction.md',
+      EditorState.create({ doc: before }),
+    );
+    await controller.applyEdit(document, 0, {
+      type: 'replace',
+      content: 'Correct the typo in this otherwise stable explanation!',
+    });
+    assert.deepEqual(document.reveal.ranges, []);
   });
 
   it('marks pure middle insertion from a full replace as revealable, not a correction', async () => {
