@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { MdOutlineHideImage, MdOutlineRemoveRedEye } from 'react-icons/md';
+import { IoSearch } from 'react-icons/io5';
 import { RxLightningBolt } from 'react-icons/rx';
 import { markdown } from '@codemirror/lang-markdown';
 import { Vim, vim } from '@replit/codemirror-vim';
@@ -1555,6 +1556,17 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             <div className="flex shrink-0 items-center justify-end gap-0.5">
               {hasActiveNote && (
                 <>
+                  <button
+                    type="button"
+                    aria-label="Toggle note search"
+                    title={`Find in note (${navigator.platform.toLowerCase().includes('mac') ? '⌘F' : 'Ctrl+F'})`}
+                    onClick={() =>
+                      window.dispatchEvent(new Event('storm:toggle-find'))
+                    }
+                    className="editor-action-button app-icon-button"
+                  >
+                    <IoSearch size={14} aria-hidden="true" />
+                  </button>
                   <button
                     type="button"
                     aria-label={

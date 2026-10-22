@@ -39,7 +39,7 @@ Standard Markdown images and `![[image.png]]` wiki embeds load only raster files
 
 ### Find in preview
 
-Use **Find** in the split-preview toolbar or `Cmd+F` on macOS / `Ctrl+F` elsewhere while outside the source editor to search the rendered preview, including reading mode. The source editor retains its own Find shortcut. Preview Find shows match counts and highlights, supports previous/next navigation with wraparound, and closes with Escape. Text can match across inline formatting, but separate rendered blocks are not joined into false matches.
+Use the search icon in the editor toolbar or `Cmd+F` on macOS / `Ctrl+F` elsewhere to search the rendered preview, including from source-editor/Vim focus, preview focus, and the search field itself. The shortcut toggles Find open or closed; Escape also closes it. Preview Find shows match counts and highlights, supports previous/next navigation with wraparound. Text can match across inline formatting, but separate rendered blocks are not joined into false matches.
 
 ### Agent reveal and status
 

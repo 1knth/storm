@@ -1,5 +1,12 @@
 @import 'tailwindcss';
 
+/* Let scrolled preview text gently disappear beneath its fixed toolbar. */
+.markdown-preview-content--header-fade {
+  margin-top: -2.5rem;
+  padding-top: 2.5rem;
+  mask-image: linear-gradient(to bottom, transparent, black 2.5rem);
+}
+
 /* Keep the preview's fold affordance out of normal heading layout. */
 .preview-fold-heading {
   position: relative;
