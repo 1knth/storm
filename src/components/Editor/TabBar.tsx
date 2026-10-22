@@ -65,6 +65,18 @@ export default function TabBar({
   const [dialog, setDialog] = useState<{ id?: string; value: string } | null>(
     null,
   );
+  const [tabsOverflow, setTabsOverflow] = useState(false);
+  const tabListRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const element = tabListRef.current;
+    if (!element) return;
+    const updateOverflow = () =>
+      setTabsOverflow(element.scrollWidth > element.clientWidth);
+    updateOverflow();
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [tabs.length, groups.length]);
   const [exitingTabs, setExitingTabs] = useState<
     Array<{ tab: TabSnapshot; rect: DOMRect }>
   >([]);
@@ -503,7 +515,7 @@ export default function TabBar({
           onDragStart={(event) => startDrag(event, 'tab', id)}
           onClick={() => onSelect(tab)}
           aria-current={activeId === id ? 'page' : undefined}
-          className="flex min-w-0 flex-1 items-center gap-2 truncate py-1.5 text-[13px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/35"
+          className="flex min-w-0 flex-1 items-center gap-2 truncate py-1 text-[13px] leading-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/35"
           title={tab.kind === 'note' ? tab.note.path : label}
         >
           <FaRegFile
@@ -556,7 +568,8 @@ export default function TabBar({
             clearDrag();
           } else dropTab(event, null, null);
         }}
-        className="relative flex h-11 min-h-11 w-full min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-y-none bg-transparent select-none"
+        ref={tabListRef}
+        className={`tab-list relative flex h-11 min-h-11 w-full min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-y-none bg-transparent select-none ${tabsOverflow ? 'tab-list--overflowing' : ''}`}
       >
         {mixedTabOrder(tabs, groups, assignments).map((unit) => {
           if (unit.type === 'tab') return renderTab(unit.tab);

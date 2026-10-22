@@ -220,6 +220,18 @@
 }
 
 /* Collapse the tab strip and its reserved space together without resizing the editor itself. */
+.tab-list--overflowing::after {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 2.25rem;
+  bottom: 0;
+  width: 2rem;
+  background: linear-gradient(to right, transparent, rgb(32 32 32 / 72%));
+  content: '';
+  pointer-events: none;
+}
+
 .tab-bar-slot {
   min-height: 0;
   overflow: hidden;
