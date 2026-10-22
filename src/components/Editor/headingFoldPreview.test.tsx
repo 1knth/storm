@@ -41,6 +41,28 @@ describe('preview heading section rendering', () => {
     assert.match(html, /<blockquote[^>]*>/);
     assert.match(html, /<ul[^>]*>/);
   });
+  it('omits the redundant Preview header and header-specific fade while retaining Find', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(MarkdownPreview, {
+        markdown: '# Heading',
+        vaultId: 'test-vault',
+        notePath: 'current.md',
+        appearance: DEFAULT_APPEARANCE,
+        onToggleTask: () => {},
+        onOpenNote: () => {},
+        findOpen: true,
+        onCloseFind: () => {},
+      } as any),
+    );
+    assert.doesNotMatch(html, /<h2[^>]*>Preview<\/h2>/);
+    assert.doesNotMatch(
+      html,
+      /markdown-preview-content--(?:find-)?header-fade/,
+    );
+    assert.match(html, /aria-label="Find in note preview"/);
+    assert.match(html, /placeholder="Find in preview"/);
+  });
+
   it('keeps vault-note URLs and sanitizes dangerous schemes through production transform', () => {
     assert.equal(
       markdownPreviewUrlTransform('vault-note:KnownNote'),
