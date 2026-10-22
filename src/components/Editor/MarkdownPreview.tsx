@@ -1,5 +1,6 @@
 import React, {
   createContext,
+  useCallback,
   memo,
   useContext,
   useEffect,
@@ -34,6 +35,7 @@ import {
   PREVIEW_REVEAL_CADENCE_MS,
   planRevealUnits,
   getRevealTiming,
+  getReadyRevealDelay,
   isRevealComplete,
   completeRevealUnit,
   commitRevealTimeline,
@@ -56,7 +58,7 @@ function sourcePositions() {
   };
 }
 
-function rehypeRevealUnits({
+export function rehypeRevealUnits({
   registry,
   startOffset,
   revealRanges,
@@ -84,28 +86,36 @@ function rehypeRevealUnits({
         (node.properties?.className ?? []).some((name: string) =>
           ['katex', 'katex-display'].includes(name),
         ) ||
-        [
-          'code',
-          'math',
-          'inlineMath',
-          'image',
-          'img',
-          'table',
-          'svg',
-          'input',
-        ].includes(node.tagName);
-      if (node.tagName === 'pre' && node.position) {
+        ['math', 'inlineMath', 'image', 'img', 'svg', 'input'].includes(
+          node.tagName,
+        );
+      if (['pre', 'table'].includes(node.tagName)) {
         const offset =
-          node.position.start?.offset ??
-          lineOffsets[(node.position.start?.line ?? 1) - 1] ??
+          node.position?.start?.offset ??
+          lineOffsets[(node.position?.start?.line ?? 1) - 1] ??
           fallbackOffset;
-        const key = `block:${offset}:${path.join('.')}`;
-        units.push({ key, sourceOffset: offset, kind: 'block' });
-        node.properties ??= {};
-        node.properties['data-reveal-key'] = key;
-        node.properties['data-reveal-kind'] = 'block';
+        const end = node.position?.end?.offset ?? offset;
+        const eligible = revealRanges
+          ? revealRanges.some(({ from, to }) => offset < to && end > from)
+          : offset >= startOffset;
+        if (eligible) {
+          const key = `block:${offset}:${path.join('.')}`;
+          units.push({ key, sourceOffset: offset, kind: 'block' });
+          node.properties ??= {};
+          node.properties['data-reveal-key'] = key;
+          node.properties['data-reveal-kind'] = 'block';
+        }
       }
-      if (node.tagName === 'p' && !excluded) {
+      if (['li', 'blockquote'].includes(node.tagName)) {
+        node.properties ??= {};
+        node.properties['data-reveal-decoration'] = node.tagName;
+      }
+      if (
+        ['p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(
+          node.tagName,
+        ) &&
+        !excluded
+      ) {
         node.properties ??= {};
         const paragraphStart =
           node.position?.start?.offset ??
@@ -118,13 +128,20 @@ function rehypeRevealUnits({
           'markdown-prose-reveal',
         ];
         const wrap = (child: any, childPath: number[], blocked = false) => {
+          if (child.tagName === 'code' && !blocked) {
+            child.properties ??= {};
+            child.properties['data-reveal-decoration'] = 'code';
+          }
+          if (['li', 'blockquote'].includes(child.tagName)) {
+            child.properties ??= {};
+            child.properties['data-reveal-decoration'] = child.tagName;
+          }
           const childBlocked =
             blocked ||
             (child.properties?.className ?? []).some((name: string) =>
               ['katex', 'katex-display'].includes(name),
             ) ||
             [
-              'code',
               'math',
               'inlineMath',
               'image',
@@ -206,11 +223,26 @@ function rehypeRevealUnits({
       PREVIEW_REVEAL_CADENCE_MS,
     );
     const schedules = new Map(plans.map((plan) => [plan.key, plan]));
-    const apply = (node: any) => {
+    const apply = (node: any): number | undefined => {
       const key = node.properties?.['data-reveal-key'];
       const plan = key ? schedules.get(key) : undefined;
       if (plan) node.properties['data-reveal-at'] = plan.scheduledAt;
-      (node.children ?? []).forEach(apply);
+      const childScheduleTimes = (node.children ?? [])
+        .map(apply)
+        .filter(
+          (time: number | undefined): time is number => time !== undefined,
+        );
+      const firstReveal =
+        plan?.scheduledAt ??
+        (childScheduleTimes.length
+          ? Math.min(...childScheduleTimes)
+          : undefined);
+      if (
+        firstReveal !== undefined &&
+        node.properties?.['data-reveal-decoration']
+      )
+        node.properties['data-reveal-decoration-at'] = firstReveal;
+      return firstReveal;
     };
     apply(tree);
   };
@@ -509,9 +541,11 @@ function MarkdownHeading({ level, children, ...props }: any) {
 
 function MarkdownTable({ children, ...props }: any) {
   return (
-    <div className="my-4 max-w-full overflow-x-auto">
-      <table {...props}>{children}</table>
-    </div>
+    <RevealBlock sourceProps={props}>
+      <div className="my-4 max-w-full overflow-x-auto">
+        <table {...props}>{children}</table>
+      </div>
+    </RevealBlock>
   );
 }
 
@@ -521,11 +555,27 @@ function MarkdownTaskListItem({ children, node, ...props }: any) {
   const { markdown, vaultId, notePath, onToggleTask } = context;
   const offset = node?.properties['data-task-offset'];
   const expected = typeof offset === 'number' ? markdown[offset] : undefined;
+  const scheduledAt = Number(props['data-reveal-decoration-at']);
+  const [decorationDelay] = useState(() =>
+    Number.isFinite(scheduledAt)
+      ? `${Math.max(0, scheduledAt - Date.now())}ms`
+      : '0ms',
+  );
   if (
     typeof offset !== 'number' ||
     (expected !== ' ' && expected !== 'x' && expected !== 'X')
   )
-    return <li {...props}>{children}</li>;
+    return (
+      <li
+        {...props}
+        style={{
+          ...props.style,
+          '--markdown-decoration-delay': decorationDelay,
+        }}
+      >
+        {children}
+      </li>
+    );
   let removedTaskInput = false;
   let firstParagraph = true;
   const removeTaskInput = (element: React.ReactNode): React.ReactNode => {
@@ -557,7 +607,11 @@ function MarkdownTaskListItem({ children, node, ...props }: any) {
     <li
       {...props}
       className={`${props.className ?? ''} !list-none !pl-0`}
-      style={{ listStyleType: 'none' }}
+      style={{
+        ...props.style,
+        '--markdown-decoration-delay': decorationDelay,
+        listStyleType: 'none',
+      }}
     >
       <label className="inline-flex items-start gap-2">
         <input
@@ -637,8 +691,18 @@ function MarkdownPre({
     const source = String(props.children ?? '').replace(/\n$/, '');
     if (props.className?.split(/\s+/).includes('language-mermaid'))
       return (
-        <RevealBlock sourceProps={sourceProps}>
-          <MermaidBlock source={source} appearance={appearance} />
+        <RevealBlock
+          sourceProps={sourceProps}
+          waitForReady
+          readinessKey={source}
+        >
+          {(onReady: () => void) => (
+            <MermaidBlock
+              source={source}
+              appearance={appearance}
+              onReady={onReady}
+            />
+          )}
         </RevealBlock>
       );
     if (props.className?.split(/\s+/).includes('language-chart'))
@@ -655,7 +719,12 @@ function MarkdownPre({
   );
 }
 
-function RevealBlock({ sourceProps, children }: any) {
+function RevealBlock({
+  sourceProps,
+  children,
+  waitForReady = false,
+  readinessKey,
+}: any) {
   const context = useContext(RevealContext);
   const registry = useContext(RevealRegistryContext);
   const start = sourceProps?.['data-source-start'];
@@ -670,7 +739,23 @@ function RevealBlock({ sourceProps, children }: any) {
           complete: isRevealComplete(registry, key, Date.now()),
         }
       : null;
-  const delay = timing?.delay ?? 0;
+  const [activation, setActivation] = useState<{
+    key: string | undefined;
+    delay: number;
+  } | null>(null);
+  const ready = !waitForReady || activation?.key === readinessKey;
+  const onReady = useCallback(() => {
+    setActivation((current) => {
+      if (current?.key === readinessKey) return current;
+      return {
+        key: readinessKey,
+        delay: getReadyRevealDelay(
+          schedule?.scheduledAt ?? Date.now(),
+          Date.now(),
+        ),
+      };
+    });
+  }, [readinessKey, schedule]);
   if (
     !context ||
     !registry ||
@@ -678,19 +763,24 @@ function RevealBlock({ sourceProps, children }: any) {
     start < context.startLine ||
     !schedule
   )
-    return children;
+    return typeof children === 'function' ? children(onReady) : children;
   return (
     <div
       {...sourceProps}
       data-preview-reveal-block=""
+      data-reveal-gated={waitForReady && !ready ? 'pending' : undefined}
       className="markdown-block-reveal"
       style={
-        timing?.complete
-          ? { animation: 'none', opacity: 1 }
-          : { animationDelay: `${delay}ms` }
+        !ready
+          ? { animation: 'none', opacity: 0 }
+          : waitForReady
+            ? { animationDelay: `${activation?.delay ?? 0}ms` }
+            : timing?.complete
+              ? { animation: 'none', opacity: 1 }
+              : { animationDelay: `${Math.max(0, timing?.delay ?? 0)}ms` }
       }
     >
-      {children}
+      {typeof children === 'function' ? children(onReady) : children}
     </div>
   );
 }
@@ -705,9 +795,10 @@ export function AnimatedRevealWord({ children, ...props }: any) {
           complete: isRevealComplete(registry, key, Date.now()),
         }
       : null;
+  const [delay] = useState(() => timing?.delay ?? 0);
   const style = timing?.complete
     ? { animation: 'none', opacity: 1 }
-    : { animationDelay: `${timing?.delay ?? 0}ms` };
+    : { animationDelay: `${delay}ms` };
   return (
     <span {...props} style={style}>
       {children}
@@ -727,8 +818,28 @@ export function RevealWordAdapter({ children, node: _node, ...props }: any) {
   );
 }
 
+function RevealDecoration({ tag: Tag, children, ...props }: any) {
+  const scheduledAt = Number(props['data-reveal-decoration-at']);
+  const [revealDelay] = useState(() =>
+    Number.isFinite(scheduledAt) ? Math.max(0, scheduledAt - Date.now()) : 0,
+  );
+  return (
+    <Tag
+      {...props}
+      style={{
+        ...props.style,
+        '--markdown-decoration-delay': `${revealDelay}ms`,
+      }}
+    >
+      {children}
+    </Tag>
+  );
+}
+
 const markdownComponents = {
   'preview-section': MarkdownSection,
+  blockquote: (props: any) => <RevealDecoration tag="blockquote" {...props} />,
+  code: (props: any) => <RevealDecoration tag="code" {...props} />,
   h1: (props: any) => <MarkdownHeading {...props} level={1} />,
   h2: (props: any) => <MarkdownHeading {...props} level={2} />,
   h3: (props: any) => <MarkdownHeading {...props} level={3} />,
@@ -1016,7 +1127,11 @@ function MarkdownPreview({
         )
       )
         return;
-      if (event.animationName !== 'markdown-word-reveal') return;
+      if (
+        event.animationName !== 'markdown-word-reveal' &&
+        event.animationName !== 'markdown-block-reveal'
+      )
+        return;
       const key = event.target.dataset.revealKey;
       if (!key || !pending.delete(key)) return;
       completeRevealUnit(registryRef.current!.registry, key);

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useState } from 'react';
 import DOMPurify, { type Config } from 'dompurify';
 import mermaid from 'mermaid';
 import { sanitizeSvgReferences } from './svgReferences';
@@ -31,23 +31,33 @@ const svgSanitizerOptions: Config = {
   FORBID_ATTR: ['href', 'xlink:href', 'src'],
 };
 
-type Props = { source: string; appearance: Appearance };
+type Props = {
+  source: string;
+  appearance: Appearance;
+  onReady?: () => void;
+};
 
-export default function MermaidBlock({ source, appearance }: Props) {
+export default function MermaidBlock({ source, appearance, onReady }: Props) {
   const reactId = useId();
-  const [svg, setSvg] = useState('');
+  const [rendered, setRendered] = useState({ source: '', svg: '' });
   const [error, setError] = useState('');
   const id = `mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
 
+  // Release the reveal gate only after React has committed the rendered SVG.
+  useLayoutEffect(() => {
+    if (rendered.source === source && rendered.svg) onReady?.();
+  }, [rendered, source, onReady]);
+
   useEffect(() => {
     let cancelled = false;
-    setSvg('');
+    setRendered({ source, svg: '' });
     setError('');
 
     if (source.length > MAX_SOURCE_LENGTH) {
       setError(
         `Diagram is too large (maximum ${MAX_SOURCE_LENGTH} characters).`,
       );
+      onReady?.();
       return () => {
         cancelled = true;
       };
@@ -103,7 +113,7 @@ export default function MermaidBlock({ source, appearance }: Props) {
             ),
           );
           const cleanSvg = sanitizeSvgReferences(purifiedSvg);
-          setSvg(cleanSvg);
+          setRendered({ source, svg: cleanSvg });
         })
         .catch((renderError: unknown) => {
           if (!cancelled) {
@@ -112,6 +122,7 @@ export default function MermaidBlock({ source, appearance }: Props) {
                 ? renderError.message
                 : 'Unable to render diagram.',
             );
+            onReady?.();
           }
         });
     }, 250);
@@ -120,7 +131,7 @@ export default function MermaidBlock({ source, appearance }: Props) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [id, source, appearance]);
+  }, [id, source, appearance, onReady]);
 
   if (error)
     return (
@@ -128,7 +139,7 @@ export default function MermaidBlock({ source, appearance }: Props) {
         Diagram error: {error}
       </p>
     );
-  if (!svg)
+  if (!rendered.svg || rendered.source !== source)
     return (
       <div
         className="my-3 min-h-8"
@@ -141,7 +152,7 @@ export default function MermaidBlock({ source, appearance }: Props) {
     <div
       className="my-4 overflow-x-auto [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
       aria-label="Mermaid diagram"
-      dangerouslySetInnerHTML={{ __html: svg }}
+      dangerouslySetInnerHTML={{ __html: rendered.svg }}
     />
   );
 }

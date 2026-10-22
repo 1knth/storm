@@ -87,7 +87,78 @@
 }
 
 .markdown-block-reveal {
-  animation: markdown-word-reveal 100ms ease-out both;
+  animation: markdown-block-reveal 300ms ease-out both;
+}
+
+.markdown-preview-content [data-reveal-decoration-at]::marker {
+  color: transparent;
+  animation: markdown-marker-reveal 100ms ease-out both;
+  animation-delay: var(--markdown-decoration-delay, 0ms);
+}
+
+.markdown-preview-content
+  li[data-reveal-decoration-at]
+  > label
+  > input[type='checkbox'] {
+  animation: markdown-task-marker-reveal 100ms ease-out both;
+  animation-delay: var(--markdown-decoration-delay, 0ms);
+}
+
+.markdown-preview-content blockquote[data-reveal-decoration-at] {
+  border-left-color: transparent;
+  animation: markdown-quote-border-reveal 100ms ease-out both;
+  animation-delay: var(--markdown-decoration-delay, 0ms);
+}
+
+.markdown-preview-content code[data-reveal-decoration-at]:not(pre code) {
+  background-color: transparent;
+  animation: markdown-code-background-reveal 100ms ease-out both;
+  animation-delay: var(--markdown-decoration-delay, 0ms);
+}
+
+@keyframes markdown-marker-reveal {
+  from {
+    color: transparent;
+  }
+  to {
+    color: currentColor;
+  }
+}
+
+@keyframes markdown-task-marker-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes markdown-quote-border-reveal {
+  from {
+    border-left-color: transparent;
+  }
+  to {
+    border-left-color: rgb(255 255 255 / 20%);
+  }
+}
+
+@keyframes markdown-code-background-reveal {
+  from {
+    background-color: transparent;
+  }
+  to {
+    background-color: rgb(255 255 255 / 10%);
+  }
+}
+
+@keyframes markdown-block-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes markdown-word-reveal {
@@ -101,8 +172,27 @@
 
 @media (prefers-reduced-motion: reduce) {
   .markdown-word-reveal,
-  .markdown-block-reveal {
+  .markdown-block-reveal,
+  .markdown-preview-content [data-reveal-decoration-at]::marker,
+  .markdown-preview-content
+    li[data-reveal-decoration-at]
+    > label
+    > input[type='checkbox'],
+  .markdown-preview-content blockquote[data-reveal-decoration-at],
+  .markdown-preview-content code[data-reveal-decoration-at]:not(pre code) {
     animation: none;
+  }
+
+  .markdown-preview-content [data-reveal-decoration-at]::marker {
+    color: inherit;
+  }
+
+  .markdown-preview-content blockquote[data-reveal-decoration-at] {
+    border-left-color: rgb(255 255 255 / 20%);
+  }
+
+  .markdown-preview-content code[data-reveal-decoration-at]:not(pre code) {
+    background-color: rgb(255 255 255 / 10%);
   }
 }
 
