@@ -176,6 +176,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
 ) {
   const { notifyError, notifySuccess } = useToast();
   const host = useRef<HTMLDivElement>(null);
+  const paneRoot = useRef<HTMLElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const vimCompartment = useRef(new Compartment());
   const appearanceCompartment = useRef(new Compartment());
@@ -830,12 +831,25 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   useLayoutEffect(() => {
     const wasOpen = previousFindOpen.current;
     previousFindOpen.current = findOpen;
-    if (wasOpen && !findOpen) {
-      const target = findReturnFocus.current;
-      (target?.isConnected ? target : viewRef.current?.dom)?.focus({
-        preventScroll: true,
-      });
-    }
+    if (!wasOpen || findOpen) return;
+
+    // Let the preview's Find input unmount and finish its blur before restoring
+    // focus; otherwise its cleanup can move focus back to document.body.
+    const frame = requestAnimationFrame(() => {
+      const savedTarget = findReturnFocus.current;
+      const target =
+        savedTarget?.isConnected && typeof savedTarget.focus === 'function'
+          ? savedTarget
+          : viewRef.current?.dom;
+      target?.focus({ preventScroll: true });
+      if (
+        document.activeElement === document.body ||
+        !paneRoot.current?.contains(document.activeElement)
+      ) {
+        paneRoot.current?.focus({ preventScroll: true });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
   }, [findOpen]);
 
   const managedActive = () => {
@@ -1570,7 +1584,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
 
   return (
     <section
+      ref={paneRoot}
       data-pane="editor"
+      tabIndex={-1}
       className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-0 p-4 text-white"
     >
       <div
