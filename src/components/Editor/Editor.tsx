@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { MdOutlineHideImage, MdOutlineRemoveRedEye } from 'react-icons/md';
+import { IoSearch } from 'react-icons/io5';
 import { RxLightningBolt } from 'react-icons/rx';
 import { markdown } from '@codemirror/lang-markdown';
 import { Vim, vim } from '@replit/codemirror-vim';
@@ -45,6 +46,7 @@ import {
   type PreviewAnchor,
 } from './previewScroll';
 import { useToast } from '../Toast';
+import { isPreviewFindShortcut } from './previewFind';
 import { scrollReadingPreview } from './readingScroll';
 import {
   agentWritingLockExtensions,
@@ -174,6 +176,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
 ) {
   const { notifyError, notifySuccess } = useToast();
   const host = useRef<HTMLDivElement>(null);
+  const paneRoot = useRef<HTMLElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const vimCompartment = useRef(new Compartment());
   const appearanceCompartment = useRef(new Compartment());
@@ -346,6 +349,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     expectedEditorScroll.current = null;
   }, []);
   const [previewVisible, setPreviewVisible] = useState(true);
+  const [findOpen, setFindOpen] = useState(false);
+  const findReturnFocus = useRef<HTMLElement | null>(null);
+  const previousFindOpen = useRef(findOpen);
   const [agentStatusVisibleForNotes, setAgentStatusVisibleForNotes] = useState<
     Set<string>
   >(() => new Set());
@@ -796,6 +802,55 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       }),
     [],
   );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.repeat ||
+        !isPreviewFindShortcut(event) ||
+        !(event.target instanceof Element) ||
+        !event.target.closest('[data-pane="editor"]') ||
+        !hasActiveNote
+      )
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (findOpen) {
+        setFindOpen(false);
+      } else {
+        const target = event.target.closest('.cm-editor, [data-preview-focus]');
+        if (target instanceof HTMLElement) findReturnFocus.current = target;
+        setPreviewVisible(true);
+        setFindOpen(true);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [findOpen, hasActiveNote]);
+
+  useLayoutEffect(() => {
+    const wasOpen = previousFindOpen.current;
+    previousFindOpen.current = findOpen;
+    if (!wasOpen || findOpen) return;
+
+    // Let the preview's Find input unmount and finish its blur before restoring
+    // focus; otherwise its cleanup can move focus back to document.body.
+    const frame = requestAnimationFrame(() => {
+      const savedTarget = findReturnFocus.current;
+      const target =
+        savedTarget?.isConnected && typeof savedTarget.focus === 'function'
+          ? savedTarget
+          : viewRef.current?.dom;
+      target?.focus({ preventScroll: true });
+      if (
+        document.activeElement === document.body ||
+        !paneRoot.current?.contains(document.activeElement)
+      ) {
+        paneRoot.current?.focus({ preventScroll: true });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [findOpen]);
 
   const managedActive = () => {
     const active = current.current;
@@ -1529,7 +1584,9 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
 
   return (
     <section
+      ref={paneRoot}
       data-pane="editor"
+      tabIndex={-1}
       className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-0 p-4 text-white"
     >
       <div
@@ -1555,6 +1612,23 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             <div className="flex shrink-0 items-center justify-end gap-0.5">
               {hasActiveNote && (
                 <>
+                  <button
+                    type="button"
+                    aria-label="Toggle note search"
+                    title={`Find in note (${navigator.platform.toLowerCase().includes('mac') ? '⌘F' : 'Ctrl+F'})`}
+                    onClick={() => {
+                      if (!findOpen) {
+                        findReturnFocus.current =
+                          document.activeElement instanceof HTMLElement
+                            ? document.activeElement
+                            : null;
+                      }
+                      setFindOpen((open) => !open);
+                    }}
+                    className="editor-action-button app-icon-button"
+                  >
+                    <IoSearch size={14} aria-hidden="true" />
+                  </button>
                   <button
                     type="button"
                     aria-label={
@@ -1667,7 +1741,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     onReadingKeyDown={onReadingKeyDown}
                     appearance={appearance}
                     compact
-                    findEnabled
+                    findOpen={findOpen}
+                    onCloseFind={() => setFindOpen(false)}
                     previewRevision={preview?.previewRevision}
                     revealStartLine={
                       activeReveal?.documentKey === documentKey
@@ -1706,7 +1781,8 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 markdown={preview.markdown}
                 vaultId={preview.vaultId}
                 notePath={preview.notePath}
-                findEnabled
+                findOpen={findOpen}
+                onCloseFind={() => setFindOpen(false)}
                 onToggleTask={onToggleTask}
                 onOpenNote={onOpenNote}
                 scrollRef={previewScrollRef}

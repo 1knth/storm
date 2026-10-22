@@ -3,10 +3,30 @@ import { describe, it } from 'node:test';
 import {
   findPreviewTextMatches,
   findPreviewTextMatchesInBlocks,
+  isPreviewFindShortcut,
   nextPreviewFindIndex,
 } from './previewFind';
 
 describe('rendered preview find', () => {
+  it('recognizes Command/Control+F with either key casing only', () => {
+    assert.equal(
+      isPreviewFindShortcut({ metaKey: true, ctrlKey: false, key: 'f' }),
+      true,
+    );
+    assert.equal(
+      isPreviewFindShortcut({ metaKey: false, ctrlKey: true, key: 'F' }),
+      true,
+    );
+    assert.equal(
+      isPreviewFindShortcut({ metaKey: false, ctrlKey: false, key: 'f' }),
+      false,
+    );
+    assert.equal(
+      isPreviewFindShortcut({ metaKey: true, ctrlKey: false, key: 'p' }),
+      false,
+    );
+  });
+
   it('matches case-insensitively across adjacent rendered text nodes', () => {
     const renderedText = ['Storm ', 'NOTE', ' storm'];
     const combined = renderedText.join('');

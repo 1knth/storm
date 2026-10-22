@@ -1,5 +1,11 @@
 export type PreviewTextMatch = { start: number; end: number };
 
+export function isPreviewFindShortcut(
+  event: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'key'>,
+): boolean {
+  return (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f';
+}
+
 export function findPreviewTextMatches(
   text: string,
   query: string,

@@ -255,7 +255,8 @@ type Props = {
   onToggleTask?: (payload: TaskTogglePayload) => void;
   onOpenNote?: (target: string) => void;
   compact?: boolean;
-  findEnabled?: boolean;
+  findOpen?: boolean;
+  onCloseFind?: () => void;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   onScroll?: () => void;
   onUserScroll?: () => void;
@@ -868,7 +869,8 @@ function MarkdownPreview({
   onToggleTask,
   onOpenNote,
   compact = false,
-  findEnabled = false,
+  findOpen: controlledFindOpen,
+  onCloseFind,
   scrollRef,
   onScroll,
   onUserScroll,
@@ -971,32 +973,18 @@ function MarkdownPreview({
     };
   }
   const diagnosticsRoot = useRef<HTMLElement>(null);
-  const [findOpen, setFindOpen] = useState(false);
+  const findOpen = controlledFindOpen ?? false;
+  const closeFind = onCloseFind ?? (() => {});
   const [findQuery, setFindQuery] = useState('');
   const [findIndex, setFindIndex] = useState(0);
   const [findCount, setFindCount] = useState(0);
   const findInput = useRef<HTMLInputElement>(null);
   const findMatches = useRef<Range[]>([]);
   useEffect(() => {
-    if (findOpen) findInput.current?.focus();
+    if (findOpen) {
+      findInput.current?.focus();
+    }
   }, [findOpen]);
-  useEffect(() => {
-    if (!findEnabled) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'f')
-        return;
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest('input, textarea, [contenteditable="true"], .cm-editor')
-      )
-        return;
-      event.preventDefault();
-      setFindOpen(true);
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [findEnabled]);
   useEffect(() => {
     const root = diagnosticsRoot.current;
     const highlights = window.CSS as typeof CSS & {
@@ -1024,7 +1012,7 @@ function MarkdownPreview({
       while ((node = walker.nextNode())) {
         if (
           node.parentElement?.closest(
-            'button, input, script, style, [role="search"], .preview-heading',
+            'button, input, script, style, [role="search"]',
           )
         )
           continue;
@@ -1234,21 +1222,6 @@ function MarkdownPreview({
       aria-label={compact ? 'Reading preview' : undefined}
       className={`flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${compact ? '' : 'border-l border-white/10'}`}
     >
-      {!compact && (
-        <div className="flex shrink-0 items-center justify-between px-4 py-3">
-          <h2 className="preview-heading text-xs font-medium text-white/50">
-            Preview
-          </h2>
-          <button
-            type="button"
-            className="text-xs text-white/50 hover:text-white"
-            aria-label="Find in preview"
-            onClick={() => setFindOpen(true)}
-          >
-            Find
-          </button>
-        </div>
-      )}
       {findOpen && (
         <div
           className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-2"
@@ -1270,7 +1243,7 @@ function MarkdownPreview({
               }
               if (event.key === 'Escape') {
                 event.preventDefault();
-                setFindOpen(false);
+                closeFind();
                 setFindQuery('');
               }
             }}
@@ -1306,7 +1279,7 @@ function MarkdownPreview({
             type="button"
             aria-label="Close find"
             onClick={() => {
-              setFindOpen(false);
+              closeFind();
               setFindQuery('');
             }}
             className="text-white/70"
@@ -1330,7 +1303,8 @@ function MarkdownPreview({
               <ImageContext.Provider value={{ vaultId, notePath }}>
                 <div
                   ref={scrollRef}
-                  tabIndex={compact ? 0 : undefined}
+                  data-preview-focus=""
+                  tabIndex={0}
                   onScroll={onScroll}
                   onKeyDownCapture={(event) => {
                     if (
@@ -1355,7 +1329,7 @@ function MarkdownPreview({
                     onUserScroll?.();
                   }}
                   onTouchMoveCapture={() => onScrollIntent?.()}
-                  className="markdown-preview-content min-h-0 flex-1 overflow-auto px-5 pb-6 text-sm leading-[1.3] text-white/85 [&_.markdown-blank-line]:h-[1.3em] [&_.markdown-blank-line]:select-none [&_.katex-display]:max-w-full [&_.katex-display]:overflow-x-auto [&_.katex]:text-inherit [&_a]:text-sky-300 [&_blockquote]:border-l-2 [&_blockquote]:border-white/20 [&_blockquote]:pl-4 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-6 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/15 [&_li]:my-1 [&_li:has(>label)]:list-none [&_li:has(>label)]:pl-0 [&_ul:has(>li>label)]:!list-none [&_ul:has(>li>label)]:!pl-0 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-0.5 [&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-black/40 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-white/20 [&_th]:px-3 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-white/20 [&_td]:px-3 [&_td]:py-1 [&_ul]:list-disc [&_ul]:pl-6 [&_img]:max-w-full"
+                  className={`markdown-preview-content min-h-0 flex-1 overflow-auto px-5 pb-6 text-sm leading-[1.3] text-white/85 [&_.markdown-blank-line]:h-[1.3em] [&_.markdown-blank-line]:select-none [&_.katex-display]:max-w-full [&_.katex-display]:overflow-x-auto [&_.katex]:text-inherit [&_a]:text-sky-300 [&_blockquote]:border-l-2 [&_blockquote]:border-white/20 [&_blockquote]:pl-4 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-6 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/15 [&_li]:my-1 [&_li:has(>label)]:list-none [&_li:has(>label)]:pl-0 [&_ul:has(>li>label)]:!list-none [&_ul:has(>li>label)]:!pl-0 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-0.5 [&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-black/40 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-white/20 [&_th]:px-3 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-white/20 [&_td]:px-3 [&_td]:py-1 [&_ul]:list-disc [&_ul]:pl-6 [&_img]:max-w-full`}
                 >
                   <ReactMarkdown
                     remarkPlugins={[
