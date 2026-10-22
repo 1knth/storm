@@ -46,6 +46,8 @@ Keep ownership of the session ID until cleanup. After successful replace/patch, 
 
 Append acknowledgements indicate live-editor acceptance, not disk persistence. Check status and read back with `inspect` after completion. Accepted content is not rolled back by cancellation or disconnect; cancellation does not terminate an external agent. On error, inspect the evidence rather than automatically reconnecting or replaying content.
 
+A renderer reload or crash closes sessions owned by that renderer. A pending write may have been accepted before the renderer disappeared, so its outcome remains uncertain and the old session cannot be resumed. Stop writes, use `status` to confirm the old session state, then `inspect` the target to reconcile live/disk content before opening a fresh session. Do not blindly replay an append or edit just because its acknowledgement was lost.
+
 ### Guarded edits
 
 For an existing note, prefer `patch` for focused corrections; reserve `replace` for a genuinely necessary full-document rewrite. Both are atomic operations guarded by the live version: atomic means all-or-nothing for that request, not that its edit scope should be broad. Choose the smallest safe operation that preserves unrelated content. Use append/`stream` for genuinely new content, not as a correction workaround or as a way to make separately accepted deltas one atomic write. The assessment-reference workflow is a project-specific exception: complete source coverage and the whole review first, then use one coordinated append-only write as required by the study instructions. More-specific user/project requirements take precedence.
