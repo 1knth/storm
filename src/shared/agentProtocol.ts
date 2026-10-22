@@ -5,6 +5,7 @@ export const AGENT_PROTOCOL_VERSION = 1 as const;
 
 export type AgentSessionId = string;
 export type AgentOperationId = string;
+export type AgentActivity = 'thinking' | 'drafting';
 export type AgentEditPlan =
   | { type: 'replace'; content: string }
   | {
@@ -25,6 +26,13 @@ export type AgentRequest =
       requestId: string;
       type: 'inspect';
       absolutePath: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'activity';
+      sessionId: AgentSessionId;
+      activity: AgentActivity | null;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
@@ -86,6 +94,8 @@ export interface AgentSessionStatus {
   documentVersion: number;
   diskRevision: string;
   pendingOperations: number;
+  /** Agent-reported work phase; absent means idle/unspecified. */
+  activity?: AgentActivity;
   /** A write may have reached the document without confirmation; version/revision are last observed, not proof of the operation's outcome. */
   outcomeUncertain?: boolean;
 }
@@ -120,6 +130,13 @@ export type AgentResponse =
       type: 'connected';
       session: AgentSessionStatus;
       content: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'activity';
+      session: AgentSessionStatus;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;

@@ -45,7 +45,7 @@ Use the search icon in the editor toolbar or `Cmd+F` on macOS / `Ctrl+F` elsewhe
 
 Agents submit content through Storm's CLI; preparing and sending one complete draft is supported. The preview schedules eligible new prose for smooth reveal without requiring producer sleeps or word-sized chunks. Identified pure insertions can animate; corrections and ambiguous/oversized rewrites can appear immediately. Reduced-motion preferences disable reveal animation.
 
-Source saving and CLI/session completion do not wait for presentation. After a backend session finishes, the status bar shows **Revealing…** while the active, mounted preview has pending work, then **Finished** when its matching final reveal completes. A hidden preview does not hold that visual status open. Cancellation, disconnection, and failure retain their own labels. See the [CLI contract](../../../docs/CLI-DESIGN.md) for safe writing and readback workflows.
+Source saving and CLI/session completion do not wait for presentation. The status bar shows **Connected** without a spinner, and self-reported **Thinking** or **Drafting** and active **Writing** with a spinner. A finished session whose active preview is still catching up remains labeled **Writing** until it drains, then shows **Finished**; the UI does not expose an extra reveal phase or delay. A hidden preview does not hold that visual status open. Cancellation, disconnection, and failure retain their own labels. See the [CLI contract](../../../docs/CLI-DESIGN.md) for safe writing/readback workflows and [agent activity guidance](../../../docs/AGENT-ACTIVITY.md) for truthful phase reporting.
 
 ## PDF documents
 

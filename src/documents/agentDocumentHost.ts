@@ -126,6 +126,21 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           diskRevision: document.revision,
         };
       }
+      if (request.type === 'activity') {
+        const document = sessions.get(request.sessionId);
+        if (!document || document.closed)
+          return {
+            ok: false,
+            code: 'SESSION_CLOSED',
+            message: 'Session is not open',
+          };
+        controller.setActivity(document, request.activity);
+        return {
+          ok: true,
+          documentVersion: document.acceptedVersion,
+          diskRevision: document.revision,
+        };
+      }
       if (request.type === 'append') {
         const document = sessions.get(request.sessionId);
         const identity = identities.get(request.sessionId);
@@ -290,6 +305,7 @@ function toSessionStatus(sessionId: string, document: AgentDocument) {
               : ('connected' as const),
     documentVersion: document.acceptedVersion,
     diskRevision: document.revision,
-    pendingOperations: document.inFlight ? 1 : 0,
+    pendingOperations: document.appendCount,
+    ...(document.activity ? { activity: document.activity } : {}),
   };
 }

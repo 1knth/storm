@@ -28,6 +28,10 @@ storm finish SESSION
 storm cancel SESSION
 ```
 
+### Agent activity reporting
+
+For agents using this live-note workflow, reporting real phase changes is **required**: after connect, report `thinking` before actual inspection/planning, and `drafting` before composing note content for Storm. Report each real transition; do not fabricate phases or require a phase that did not occur. Writes automatically clear activity and show Writing; `idle` is for clearing a phase while still connected. This is mandatory agent guidance, not runtime enforcement: activity remains optional in the protocol for compatibility and non-agent clients. See the [agent activity guide](AGENT-ACTIVITY.md).
+
 ### Inspect and connect
 
 `inspect` is read-only, requires an existing `.md` file, and neither opens a tab nor creates a session/file. For an open editor note, it returns live `content`, `documentVersion`, `diskRevision`, and `saveState`; otherwise it returns disk `content` and `diskRevision`, with no live version.

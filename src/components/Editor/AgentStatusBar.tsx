@@ -1,43 +1,46 @@
 import { FiStopCircle } from 'react-icons/fi';
 import type { AgentSessionStatus } from '../../shared/agentProtocol';
 
+export function agentStatusPresentation(
+  status?: AgentSessionStatus,
+  previewPending = false,
+): { label: string; busy: boolean } {
+  if (!status) return { label: 'Not connected', busy: false };
+  if (status.state === 'failed') return { label: 'Failed', busy: false };
+  if (status.state === 'cancelled') return { label: 'Stopped', busy: false };
+  if (status.state === 'disconnected')
+    return { label: 'Disconnected', busy: false };
+  if (status.state === 'finished')
+    return previewPending
+      ? { label: 'Writing', busy: true }
+      : { label: 'Finished', busy: false };
+  if (status.state === 'writing') return { label: 'Writing', busy: true };
+  if (status.activity === 'thinking') return { label: 'Thinking', busy: true };
+  if (status.activity === 'drafting') return { label: 'Drafting', busy: true };
+  return { label: 'Connected', busy: false };
+}
+
 export type AgentStatusBarProps = {
   status?: AgentSessionStatus;
   onStop?: (sessionId: string) => void;
   visible?: boolean;
-  visualStatus?: 'Revealing…';
+  previewPending?: boolean;
 };
 
 export function AgentStatusBar({
   status,
   onStop,
   visible = true,
-  visualStatus,
+  previewPending = false,
 }: AgentStatusBarProps) {
-  const label =
-    status?.state === 'writing'
-      ? 'Writing'
-      : status?.state === 'connected'
-        ? 'Connected'
-        : status?.state === 'finished'
-          ? 'Finished'
-          : status?.state === 'cancelled'
-            ? 'Stopped'
-            : status?.state === 'disconnected'
-              ? 'Disconnected'
-              : status?.state === 'failed'
-                ? 'Failed'
-                : null;
-  const displayedLabel =
-    status?.state === 'finished' ? (visualStatus ?? label) : label;
+  const presentation = agentStatusPresentation(status, previewPending);
+  const displayedLabel = presentation.label;
   const dotColor =
     displayedLabel === 'Connected'
       ? 'bg-green-400'
-      : displayedLabel === 'Writing' || displayedLabel === 'Revealing…'
-        ? 'bg-blue-400'
-        : displayedLabel === 'Finished'
-          ? 'bg-gray-400'
-          : null;
+      : displayedLabel === 'Finished'
+        ? 'bg-gray-400'
+        : null;
   if (!visible) return null;
   return (
     <div
@@ -46,14 +49,22 @@ export function AgentStatusBar({
     >
       <span>{status?.name?.trim() || 'Agent'}</span>
       <span aria-hidden="true">|</span>
-      {dotColor && (
+      {presentation.busy ? (
         <span
           aria-hidden="true"
-          data-testid="agent-status-dot"
-          className={`size-2 rounded-full ${dotColor}`}
+          data-testid="agent-status-spinner"
+          className="size-2 animate-spin rounded-full border border-white/25 border-t-blue-400"
         />
+      ) : (
+        dotColor && (
+          <span
+            aria-hidden="true"
+            data-testid="agent-status-dot"
+            className={`size-2 rounded-full ${dotColor}`}
+          />
+        )
       )}
-      <span>{displayedLabel ?? 'Not connected'}</span>
+      <span>{displayedLabel}</span>
       {status?.state === 'writing' && onStop && (
         <button
           type="button"

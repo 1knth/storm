@@ -10,6 +10,7 @@ Commands:
   replace SESSION --expected-version N --stdin [--dry-run] [--json] [--operation-id ID]
   patch SESSION --expected-version N --stdin [--dry-run] [--json] [--operation-id ID]
   status [SESSION] [--json]              Show session state (or all sessions)
+  activity SESSION thinking|drafting|idle Report or clear the current work phase
   finish SESSION                         Stop writing normally
   cancel SESSION                         Cancel writing; accepted edits remain
 
@@ -20,6 +21,17 @@ Quick workflow:
   bun scripts/storm.ts replace SESSION_ID --expected-version 4 --stdin < new.md
   bun scripts/storm.ts patch SESSION_ID --expected-version 4 --stdin < edits.json
   bun scripts/storm.ts status SESSION_ID --json
+  bun scripts/storm.ts activity SESSION_ID thinking
+  bun scripts/storm.ts activity SESSION_ID drafting
+  bun scripts/storm.ts activity SESSION_ID idle
+
+REQUIRED for agents using Storm's live-note workflow: after connect, report each real
+phase before doing that work: thinking before inspection/planning, drafting before
+composing note content. Report changes as they happen; direct writes need no invented
+phase. Use idle only to clear a phase while connected. Writes clear activity and show
+Writing automatically. This is agent guidance, not runtime enforcement: the protocol
+field remains optional for compatibility and non-agent clients. Never guess phases,
+use timers, or disclose private chain-of-thought; terminal session states clear activity.
 
 The connect JSON response includes session.sessionId; use that as SESSION_ID. The CLI
 requires a running Storm app and a registered vault. It creates only a missing .md file
@@ -29,7 +41,7 @@ mutation. Obtain live documentVersion from connect/status/inspect and pass it as
 --expected-version (not diskRevision). Apply waits for the app's saved response. Patch
 stdin is a JSON array of {"find":"...","replace":"..."} edits. The official CLI
 requires the running Storm app and never writes note files directly. Stdin EOF finishes
-stream automatically; do not call finish again. Stream is append input, not a reveal API. Source acceptance/save is independent of preview animation; there is no chunk pacing or per-command reveal flag.
+stream automatically; do not call finish again. Stream is append input, not a reveal API. Source acceptance/save is independent of preview animation; there is no chunk pacing or per-command reveal flag. Agent phase reporting is REQUIRED by the workflow guidance above; the protocol remains optional for compatibility. Appends automatically show Writing and clear the phase.
 
 Options:
   -h, --help          Show this guide or command-specific help (works offline)
@@ -87,6 +99,17 @@ session must not be resumed by sending more data. Stream is useful for live appe
 
 Example:
   bun scripts/storm.ts stream SESSION_ID --stdin < draft.md`,
+  activity: `Usage: bun scripts/storm.ts [endpoint options] activity SESSION thinking|drafting|idle
+
+Report a truthful operational phase for the connected session. Use thinking while inspecting/planning and drafting while composing; use idle to clear the phase. Appending content automatically switches to Writing and clears reported activity. Activity is optional, is not inferred from connection or timers, and does not disclose private chain-of-thought.
+
+REQUIRED for agents using Storm's live-note workflow: send this before the work phase
+starts and whenever it changes. Do not fabricate a phase; writing clears activity
+automatically. The protocol permits omission for compatibility/non-agent clients, so
+Storm cannot enforce agent compliance.
+
+Example:
+  bun scripts/storm.ts activity SESSION_ID drafting`,
   status: `Usage: bun scripts/storm.ts [endpoint options] status [SESSION] [--json]
 
 Report one session or all sessions. States distinguish connected/writing/finished/

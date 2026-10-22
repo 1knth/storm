@@ -47,6 +47,12 @@ function setup() {
             diskRevision: 'rev',
             saveState: 'saved',
           };
+        if (request.type === 'activity')
+          return {
+            ok: true,
+            documentVersion: calls.length,
+            diskRevision: 'rev',
+          };
         if (request.type === 'append')
           return {
             ok: true,
@@ -95,6 +101,42 @@ function brokerWithRenderer(
     renderer: { dispatch },
   });
 }
+
+describe('reported activity', () => {
+  it('queues validated activity updates and clears them on writes and terminal states', async () => {
+    const { broker, calls } = setup();
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/vault/note.md' }),
+    )) as any;
+    const sessionId = connected.session.sessionId;
+    const thinking = (await broker.handle(
+      req('activity', { sessionId, activity: 'thinking' }),
+    )) as any;
+    assert.equal(thinking.session.activity, 'thinking');
+    assert.equal(calls.at(-1)?.type, 'activity');
+    const invalid = (await broker.handle(
+      req('activity', { sessionId, activity: 'guessing' }),
+    )) as any;
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.error.code, 'INVALID_REQUEST');
+    await broker.handle(req('activity', { sessionId, activity: 'drafting' }));
+    await broker.handle(
+      req('append', { sessionId, operationId: 'op', sequence: 1, text: 'hi' }),
+    );
+    const status = (await broker.handle(req('status', { sessionId }))) as any;
+    assert.equal(status.sessions[0].state, 'connected');
+    assert.equal(status.sessions[0].activity, undefined);
+    await broker.handle(req('activity', { sessionId, activity: 'thinking' }));
+    const closed = (await broker.handle(req('finish', { sessionId }))) as any;
+    assert.equal(closed.session.state, 'finished');
+    assert.equal(closed.session.activity, undefined);
+    const stale = (await broker.handle(
+      req('activity', { sessionId, activity: 'drafting' }),
+    )) as any;
+    assert.equal(stale.ok, false);
+    assert.equal(stale.error.code, 'SESSION_CLOSED');
+  });
+});
 
 describe('uncertain write outcomes', () => {
   for (const type of ['append', 'edit-apply'] as const) {
@@ -595,7 +637,7 @@ describe('AgentBroker', () => {
     }
   });
 
-  it('keeps the session writing between acknowledged chunks until finish', async () => {
+  it('returns to connected between acknowledged chunks and finishes cleanly', async () => {
     const { broker } = setup();
     const connected = (await broker.handle(
       req('connect', { absolutePath: '/private/fixture/note.md' }),
@@ -619,7 +661,7 @@ describe('AgentBroker', () => {
       const status = (await broker.handle(
         req('status', { sessionId: sid }),
       )) as any;
-      assert.equal(status.sessions[0].state, 'writing');
+      assert.equal(status.sessions[0].state, 'connected');
       assert.equal(status.sessions[0].pendingOperations, 0);
     }
 

@@ -283,6 +283,14 @@ export async function runCli(
       (rest.length > 3 || (rest[2] && rest[2] !== '--json'))
     )
       throw new CliUsageError('status accepts at most SESSION [--json]');
+    if (
+      command === 'activity' &&
+      (rest.length !== 3 ||
+        !['thinking', 'drafting', 'idle'].includes(rest[2]!))
+    )
+      throw new CliUsageError(
+        'activity requires SESSION thinking|drafting|idle',
+      );
     if ((command === 'finish' || command === 'cancel') && rest.length !== 2)
       throw new CliUsageError(`${command} requires SESSION`);
     const home = io.home ?? os.homedir();
@@ -368,7 +376,14 @@ export async function runCli(
         type: 'status',
         ...(sessionId ? { sessionId } : {}),
       });
-    } else if (command === 'finish' || command === 'cancel')
+    } else if (command === 'activity')
+      result = await request({
+        type: 'activity',
+        sessionId: rest[1]!,
+        activity:
+          rest[2] === 'idle' ? null : (rest[2] as 'thinking' | 'drafting'),
+      });
+    else if (command === 'finish' || command === 'cancel')
       result = await request({ type: command, sessionId: rest[1] });
     else if (command === 'stream' && rest[1]) {
       const sessionId = rest[1];

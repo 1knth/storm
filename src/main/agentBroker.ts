@@ -26,6 +26,12 @@ export type AgentRendererRequest =
       vaultRoot: string;
     }
   | {
+      type: 'activity';
+      requestId: string;
+      sessionId: string;
+      activity: 'thinking' | 'drafting' | null;
+    }
+  | {
       type: 'append';
       requestId: string;
       sessionId: string;
@@ -95,6 +101,7 @@ type Session = {
   target: AgentNoteTarget;
   name?: string;
   state: AgentSessionStatus['state'];
+  activity?: 'thinking' | 'drafting';
   version: number;
   sequence: number;
   pending: number;
@@ -117,7 +124,10 @@ export class AgentBroker {
   constructor(private readonly options: AgentBrokerOptions) {
     options.renderer.onCancelled?.((id) => {
       const session = this.sessions.get(id);
-      if (session && session.state !== 'finished') session.state = 'cancelled';
+      if (session && session.state !== 'finished') {
+        session.state = 'cancelled';
+        session.activity = undefined;
+      }
     });
   }
   acquireMaintenanceLease(vaultId: string): (() => void) | null {
@@ -326,6 +336,49 @@ export class AgentBroker {
           'Vault rename is in progress; retry shortly',
           true,
         );
+      if (request.type === 'activity') {
+        if (session.state !== 'connected' && session.state !== 'writing')
+          return fail('SESSION_CLOSED', 'Session is not writable');
+        const result = await this.enqueue(session, async () => {
+          if (session.state !== 'connected' && session.state !== 'writing')
+            return fail('SESSION_CLOSED', 'Session is not writable');
+          const rendered = await this.options.renderer.dispatch({
+            type: 'activity',
+            requestId: request.requestId,
+            sessionId: session.id,
+            activity: request.activity,
+          });
+          if (!rendered.ok) return fail(rendered.code, rendered.message);
+          if (
+            'inspected' in rendered ||
+            'preview' in rendered ||
+            'edited' in rendered
+          )
+            return fail(
+              'INTERNAL',
+              'Renderer returned an invalid activity response',
+            );
+          this.observeDocument(
+            session,
+            rendered.documentVersion,
+            rendered.diskRevision,
+          );
+          if (session.state !== 'connected' && session.state !== 'writing')
+            return fail(
+              'SESSION_CLOSED',
+              'Session closed before activity update',
+            );
+          session.activity = request.activity ?? undefined;
+          return {
+            protocol: AGENT_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            ok: true as const,
+            type: 'activity' as const,
+            session: this.status(session),
+          };
+        });
+        return { ...result, requestId: request.requestId };
+      }
       if (request.type === 'append') {
         const fingerprint = JSON.stringify([request.sequence, request.text]);
         const previous = session.operations.get(request.operationId);
@@ -354,6 +407,7 @@ export class AgentBroker {
         if (session.pending >= AGENT_TRANSPORT.maxPendingOperationsPerSession)
           return fail('QUEUE_FULL', 'Session queue is full', true);
         session.pending++;
+        session.activity = undefined;
         session.state = 'writing';
         const promise = this.enqueue(session, async () => {
           if (session.state !== 'connected' && session.state !== 'writing')
@@ -371,7 +425,10 @@ export class AgentBroker {
             text: request.text,
           });
           if (!result.ok) {
-            if (result.code === 'SESSION_CLOSED') session.state = 'failed';
+            if (result.code === 'SESSION_CLOSED') {
+              session.state = 'failed';
+              session.activity = undefined;
+            }
             throw Object.assign(new Error(result.message), {
               code: result.code,
             });
@@ -407,6 +464,8 @@ export class AgentBroker {
         const accepted = Promise.race([promise, cancelled]).finally(() => {
           session.cancelWaiters.delete(rejectCancelled);
           session.pending--;
+          if (session.pending === 0 && session.state === 'writing')
+            session.state = 'connected';
         });
         session.operations.set(request.operationId, {
           fingerprint,
@@ -560,8 +619,10 @@ export class AgentBroker {
             sessionId: session.id,
           });
           if (!rendererResult.ok) {
-            if (rendererResult.code === 'SESSION_CLOSED')
+            if (rendererResult.code === 'SESSION_CLOSED') {
               session.state = 'failed';
+              session.activity = undefined;
+            }
             throw Object.assign(new Error(rendererResult.message), {
               code: rendererResult.code,
             });
@@ -573,6 +634,7 @@ export class AgentBroker {
           if (session.state !== 'connected' && session.state !== 'writing')
             throw new Error('SESSION_CLOSED');
           session.state = 'finished';
+          session.activity = undefined;
           session.operations.clear();
           session.version = rendererResult.documentVersion;
           session.target.diskRevision = rendererResult.diskRevision;
@@ -602,6 +664,7 @@ export class AgentBroker {
   }
   private fenceSession(session: Session, state: 'cancelled' | 'disconnected') {
     session.state = state;
+    session.activity = undefined;
     session.operations.clear();
     for (const reject of session.cancelWaiters) reject();
   }
@@ -631,6 +694,7 @@ export class AgentBroker {
       documentVersion: s.version,
       diskRevision: s.target.diskRevision,
       pendingOperations: s.pending,
+      ...(s.activity ? { activity: s.activity } : {}),
       ...(s.outcomeUncertain ? { outcomeUncertain: true } : {}),
     };
   }
@@ -682,6 +746,13 @@ function isRequest(v: unknown): v is AgentRequest {
       Number.isSafeInteger(r.expectedVersion) &&
       Number(r.expectedVersion) >= 0 &&
       isAgentEditPlan(r.plan)
+    );
+  if (r.type === 'activity')
+    return (
+      typeof r.sessionId === 'string' &&
+      (r.activity === null ||
+        r.activity === 'thinking' ||
+        r.activity === 'drafting')
     );
   if (r.type === 'append')
     return (

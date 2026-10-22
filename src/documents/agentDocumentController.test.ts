@@ -84,6 +84,25 @@ describe('agent reveal classification', () => {
     assert.ok(performance.now() - started < 1_000);
   });
 
+  it('reports and clears explicit activity without changing session lifecycle', async () => {
+    const controller = new AgentDocumentController();
+    const document = controller.attach(
+      'activity',
+      '/vault/a.md',
+      EditorState.create(),
+    );
+    controller.setActivity(document, 'thinking');
+    assert.equal(document.status, 'connected');
+    assert.equal(document.activity, 'thinking');
+    controller.setActivity(document, 'drafting');
+    assert.equal(document.activity, 'drafting');
+    await controller.append(document, 'text');
+    assert.equal(document.status, 'connected');
+    assert.equal(document.activity, undefined);
+    controller.finish(document);
+    assert.throws(() => controller.setActivity(document, 'thinking'), /closed/);
+  });
+
   it('keeps accepted append ranges through finish until the preview consumes them', async () => {
     const controller = new AgentDocumentController();
     const document = controller.attach(
@@ -462,7 +481,8 @@ describe('AgentDocumentController', () => {
     assert.ok(observed.includes('Hbase:connected'));
     const pending = controller.append(document, '!');
     await pending;
-    assert.ok(observed.includes('Hbase!:writing'));
+    assert.ok(observed.includes('Hbase:writing'));
+    assert.ok(observed.includes('Hbase!:connected'));
     assert.equal(calls, 1);
   });
 

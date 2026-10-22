@@ -11,7 +11,7 @@ import {
   shouldShowRevealingStatus,
 } from './managedPreviewBatch';
 
-test('one full append followed by finish stays Revealing until its explicit generation drains', async () => {
+test('one full append followed by finish stays Writing until its explicit generation drains', async () => {
   const controller = new AgentDocumentController();
   const document = controller.attach(
     'note',
@@ -55,17 +55,16 @@ test('one full append followed by finish stays Revealing until its explicit gene
           diskRevision: 'saved',
           pendingOperations: 0,
         },
-        visualStatus: shouldShowRevealingStatus(
+        previewPending: shouldShowRevealingStatus(
           true,
           false,
           document.reveal.ranges.length > 0,
           drained(),
-        )
-          ? 'Revealing…'
-          : undefined,
+        ),
       }),
     );
-  assert.match(label(), />Revealing…</);
+  assert.match(label(), />Writing</);
+  assert.doesNotMatch(label(), /Revealing/);
   assert.doesNotMatch(label(), /Stop agent/);
   receipts.set(1, { generationId: generation, previewKey: 1, pending: false });
   assert.match(label(), />Finished</);
@@ -84,5 +83,6 @@ test('one full append followed by finish stays Revealing until its explicit gene
     previewKey: 1,
     pending: false,
   });
-  assert.match(label(), />Revealing…</);
+  assert.match(label(), />Writing</);
+  assert.doesNotMatch(label(), /Revealing/);
 });
