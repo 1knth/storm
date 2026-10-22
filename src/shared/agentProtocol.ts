@@ -5,6 +5,52 @@ export const AGENT_PROTOCOL_VERSION = 1 as const;
 
 export type AgentSessionId = string;
 export type AgentOperationId = string;
+
+export interface AgentContextNote {
+  vaultId: string;
+  /** Absolute filesystem path. */
+  path: string;
+  relativePath: string;
+}
+
+export interface AgentContext {
+  /** Registered vault IDs and root paths are intentional context output. */
+  registeredVaults: Array<{ id: string; name: string; path: string }>;
+  activeVaultId: string | null;
+  activeNote: AgentContextNote | null;
+  openNotes: AgentContextNote[];
+}
+
+export function isAgentContext(value: unknown): value is AgentContext {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const context = value as Record<string, unknown>;
+  const isNote = (note: unknown): note is AgentContextNote => {
+    if (!note || typeof note !== 'object' || Array.isArray(note)) return false;
+    const item = note as Record<string, unknown>;
+    return (
+      typeof item.vaultId === 'string' &&
+      typeof item.path === 'string' &&
+      typeof item.relativePath === 'string'
+    );
+  };
+  return (
+    Array.isArray(context.registeredVaults) &&
+    context.registeredVaults.every(
+      (vault) =>
+        !!vault &&
+        typeof vault === 'object' &&
+        typeof (vault as Record<string, unknown>).id === 'string' &&
+        typeof (vault as Record<string, unknown>).name === 'string' &&
+        typeof (vault as Record<string, unknown>).path === 'string',
+    ) &&
+    (context.activeVaultId === null ||
+      typeof context.activeVaultId === 'string') &&
+    (context.activeNote === null || isNote(context.activeNote)) &&
+    Array.isArray(context.openNotes) &&
+    context.openNotes.every(isNote)
+  );
+}
+
 export type AgentActivity = 'thinking' | 'drafting';
 export type AgentEditPlan =
   | { type: 'replace'; content: string }
@@ -69,6 +115,11 @@ export type AgentRequest =
       requestId: string;
       type: 'status';
       sessionId?: AgentSessionId;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'context';
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
@@ -180,6 +231,13 @@ export type AgentResponse =
       protocol: typeof AGENT_PROTOCOL_VERSION;
       requestId: string;
       ok: true;
+      type: 'context';
+      context: AgentContext;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
       type: 'closed';
       session: AgentSessionStatus;
     }
@@ -193,6 +251,7 @@ export type AgentResponse =
 export type AgentProtocolErrorCode =
   | 'UNSUPPORTED_PROTOCOL'
   | 'INVALID_REQUEST'
+  | 'CONTEXT_UNAVAILABLE'
   | 'INVALID_PATH'
   | 'PATH_OUTSIDE_VAULT'
   | 'NOTE_NOT_OPEN'

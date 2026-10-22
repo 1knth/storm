@@ -3,6 +3,7 @@ import type {
   AgentRendererRequest,
   AgentRendererResult,
 } from './agentBroker';
+import { isAgentContext } from '../shared/agentProtocol';
 import type {
   AgentBridgeResult,
   AgentBridgeStatusEvent,
@@ -276,6 +277,7 @@ function isResult(value: unknown): value is AgentBridgeResult {
     return (
       typeof result.code === 'string' && typeof result.message === 'string'
     );
+  if (result.ok === true && isAgentContext(result.context)) return true;
   if (result.ok === true && result.inspected === true)
     return (
       result.open === false ||

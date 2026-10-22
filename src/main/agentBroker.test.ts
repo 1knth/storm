@@ -102,6 +102,89 @@ function brokerWithRenderer(
   });
 }
 
+describe('agent context', () => {
+  const makeBroker = (getContext?: () => Promise<any>) =>
+    new AgentBroker({
+      resolveTarget: async () => {
+        throw new Error('not used');
+      },
+      renderer: {
+        dispatch: async () => ({ ok: true, inspected: true, open: false }),
+      },
+      ...(getContext ? { getContext } : {}),
+    });
+
+  it('returns provider context without a session or renderer dispatch', async () => {
+    const calls: AgentRendererRequest[] = [];
+    const context = {
+      registeredVaults: [
+        { id: 'fixture', name: 'Fixture', path: '/private/fixture' },
+      ],
+      activeVaultId: 'fixture',
+      activeNote: {
+        vaultId: 'fixture',
+        path: '/private/fixture/note.md',
+        relativePath: 'note.md',
+      },
+      openNotes: [
+        {
+          vaultId: 'fixture',
+          path: '/private/fixture/note.md',
+          relativePath: 'note.md',
+        },
+      ],
+    };
+    const broker = new AgentBroker({
+      resolveTarget: async () => {
+        throw new Error('not used');
+      },
+      renderer: {
+        dispatch: async (request) => {
+          calls.push(request);
+          return { ok: true, inspected: true, open: false };
+        },
+      },
+      getContext: async () => context,
+    });
+    const request = req('context');
+    assert.deepEqual(await broker.handle(request), {
+      protocol: 1,
+      requestId: request.requestId,
+      ok: true,
+      type: 'context',
+      context,
+    });
+    assert.equal(calls.length, 0);
+  });
+
+  it('returns empty context, rejects unavailable context, and reports provider errors', async () => {
+    const empty = {
+      registeredVaults: [],
+      activeVaultId: null,
+      activeNote: null,
+      openNotes: [],
+    };
+    const response = (await makeBroker(async () => empty).handle(
+      req('context'),
+    )) as any;
+    assert.equal(response.type, 'context');
+    assert.deepEqual(response.context, empty);
+    const unavailable = (await makeBroker().handle(req('context'))) as any;
+    assert.equal(unavailable.error.code, 'CONTEXT_UNAVAILABLE');
+    const failed = (await makeBroker(async () => {
+      throw new Error('provider failed');
+    }).handle(req('context'))) as any;
+    assert.equal(failed.ok, false);
+    assert.equal(failed.error.code, 'INTERNAL');
+    assert.equal(failed.error.message, 'provider failed');
+    const invalid = (await makeBroker(async () => empty).handle({
+      protocol: 1,
+      type: 'context',
+    })) as any;
+    assert.equal(invalid.error.code, 'INVALID_REQUEST');
+  });
+});
+
 describe('renderer reload lifecycle', () => {
   it('keeps an in-flight append uncertain if an old renderer replies after reload', async () => {
     const response = deferred<AgentRendererResult>();

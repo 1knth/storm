@@ -1,8 +1,13 @@
-import type { AgentActivity, AgentSessionStatus } from './agentProtocol';
+import type {
+  AgentActivity,
+  AgentContext,
+  AgentSessionStatus,
+} from './agentProtocol';
 import type { AgentEditPlan } from '../documents/agentDocumentController';
 import type { SaveNoteRequest, SaveNoteResult } from './types';
 
 export type AgentBridgeRequest =
+  | { type: 'context'; requestId: string }
   | {
       type: 'inspect';
       requestId: string;
@@ -44,6 +49,7 @@ export type AgentBridgeRequest =
   | { type: 'finish' | 'cancel'; requestId: string; sessionId: string };
 
 export type AgentBridgeResult =
+  | { ok: true; context: AgentContext }
   | {
       ok: true;
       inspected: true;

@@ -18,6 +18,7 @@ The app must be running and the note must belong to a registered vault. Endpoint
 ## Commands
 
 ```text
+storm context [--json]
 storm inspect ABS_PATH --json
 storm connect ABS_PATH --json [--name NAME]
 storm stream SESSION --stdin
@@ -32,7 +33,9 @@ storm cancel SESSION
 
 For agents using this live-note workflow, reporting real phase changes is **required**: after connect, report `thinking` before actual inspection/planning, and `drafting` before composing note content for Storm. Report each real transition; do not fabricate phases or require a phase that did not occur. Writes automatically clear activity and show Writing; `idle` is for clearing a phase while still connected. This is mandatory agent guidance, not runtime enforcement: activity remains optional in the protocol for compatibility and non-agent clients. See the [agent activity guide](AGENT-ACTIVITY.md).
 
-### Inspect and connect
+### Context, inspect, and connect
+
+`context` is a read-only snapshot that requires no note session. It reports registered vault IDs, names, and absolute roots, the active vault/note when available, and notes currently open in tabs. `openNotes` is not a full vault listing. Use the root paths and known note paths to guide inspection, then verify an existing target with `inspect ABS_PATH --json` before linking. `context` does not provide note listing, search, or link resolution.
 
 `inspect` is read-only, requires an existing `.md` file, and neither opens a tab nor creates a session/file. For an open editor note, it returns live `content`, `documentVersion`, `diskRevision`, and `saveState`; otherwise it returns disk `content` and `diskRevision`, with no live version.
 
@@ -88,7 +91,7 @@ A saved result or backend `finished` session can precede the last visual reveal.
 
 This is app presentation behavior, not a timing guarantee or a per-command animation flag. Regression checks must distinguish saved source from visual completion. The packaged macOS arm64 app and bundled CLI have been exercised with a single complete append followed by EOF, exact content readback, and the Revealing → Finished transition. That verification does not establish every edit pattern or platform; ongoing release checks are described in [Contributing](../CONTRIBUTING.md#release-verification-and-documentation).
 
-Use appropriate supported Markdown to clarify teaching explanations, connections, worked examples, procedures, or comparisons; do not add decorative structures merely to use every feature. See the [agent authoring guide](AGENT-AUTHORING.md) for examples and edit-selection guidance.
+Use appropriate supported Markdown to clarify teaching explanations, connections, worked examples, procedures, or comparisons; do not add decorative structures merely to use every feature. See the [agent authoring guide](AGENT-AUTHORING.md) for examples and edit-selection guidance, including safe use of supported wiki note links. `context` provides registered vault roots and currently open note paths, not a full file listing. The CLI does not provide note-list, search, or link-resolution commands; do not guess target paths or use `connect` to check whether a target exists, since it may create a missing note. Verify a known existing path with read-only `inspect ABS_PATH --json`.
 
 ## Scope and workflow boundaries
 

@@ -130,6 +130,20 @@ agentBroker = new AgentBroker({
   },
   withVaultLifecycle: runVaultLifecycleExclusive,
   renderer: agentTransport,
+  getContext: async () => {
+    const result = await agentTransport.dispatch({
+      type: 'context',
+      requestId: randomUUID(),
+    });
+    if (!result.ok || !('context' in result))
+      throw Object.assign(
+        new Error(result.ok ? 'Invalid context response' : result.message),
+        {
+          code: 'CONTEXT_UNAVAILABLE',
+        },
+      );
+    return result.context;
+  },
 });
 const removeAgentBrokerIpc = bindAgentBrokerIpc(
   ipcMain,

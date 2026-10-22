@@ -71,6 +71,62 @@ describe('agent document host', () => {
     host.dispose();
   });
 
+  it('serves context without attaching documents, creating sessions, or publishing changes', async () => {
+    let lookups = 0;
+    let opens = 0;
+    let publishes = 0;
+    const context = {
+      registeredVaults: [{ id: 'vault', name: 'Vault', path: '/vault' }],
+      activeVaultId: null,
+      activeNote: null,
+      openNotes: [],
+    };
+    const host = createAgentDocumentHost({
+      lookupDocument: () => {
+        lookups++;
+        return undefined;
+      },
+      openDocument: async () => {
+        opens++;
+        throw new Error('must not open a note');
+      },
+      publishDocument: () => {
+        publishes++;
+      },
+      publishStatus: () => {
+        publishes++;
+      },
+      saveNote: async () => ({ revision: 'r2' }),
+      getAdapterFor: () => undefined,
+      getContext: () => context,
+    });
+    assert.deepEqual(
+      await host.handleRequest({ type: 'context', requestId: 'c' }),
+      {
+        ok: true,
+        context,
+      },
+    );
+    assert.equal(lookups, 0);
+    assert.equal(opens, 0);
+    assert.equal(publishes, 0);
+    assert.equal(host.controller.get('vault:notes/a.md'), undefined);
+    host.dispose();
+  });
+
+  it('returns context unavailable rather than fabricated empty state when no provider exists', async () => {
+    const { host } = makeHost();
+    assert.deepEqual(
+      await host.handleRequest({ type: 'context', requestId: 'c' }),
+      {
+        ok: false,
+        code: 'CONTEXT_UNAVAILABLE',
+        message: 'App context is unavailable',
+      },
+    );
+    host.dispose();
+  });
+
   it('inspects only an already-open document without creating a session or saving', async () => {
     const document = {
       key: 'vault:notes/a.md',

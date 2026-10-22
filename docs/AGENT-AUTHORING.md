@@ -40,3 +40,13 @@ graph LR
 ```
 
 Markdown rendering supports standard Markdown, fenced code, Mermaid, and KaTeX math; raw HTML is not rendered. See the [Markdown rendering notes](../src/components/Editor/README.md) for details and limitations.
+
+## Link related notes carefully
+
+Links can connect an explanation to an existing definition, prerequisite, worked example, or deeper treatment without making the current note incomplete. Use them when they help the reader follow a meaningful relationship; do not link every term, create a prerequisite chain without evidence, or make essential explanation depend on navigating away. A Mermaid map is useful for showing several relationships at once; links provide direct routes to the existing notes behind selected concepts.
+
+Storm renders wiki note links in the preview: `[[note]]`, `[[folder/note]]`, and `[[note|reader-friendly label]]`. A link resolves only within the current vault. Resolution prefers a matching path relative to the current note, then a vault-root path, then a unique basename; ambiguous and missing targets report an error. Include `.md` if useful for disambiguation, and percent-encode spaces or other characters that need encoding in a target. For example, `[[Foundations/Cell Structure|cell structure]]` is an exact vault-relative target with a readable label. `[[Cell Structure]]` is also supported when the target is uniquely resolved by the rules above.
+
+Only link to a target you have actually identified as an existing note (and, if relevant, checked for the content you are pointing readers to). Do not infer a filename from a concept, treat a guessed link as a request to create a note, or use `connect` to test existence: connect can create a missing note. Start with `storm context` (or `bun scripts/storm.ts context` in source development) to see registered vault roots and currently open note paths. This snapshot does not list every file in a vault. The CLI has no note-list, search, or link-resolution command; use the app's file explorer or another reliable source to identify a target, then `inspect ABS_PATH --json` to verify it without opening or creating it. If you cannot establish the exact target, leave the prose unlinked or ask rather than guessing. Preserve existing links when editing notes.
+
+Heading fragments and block links are not supported (`[[note#heading]]` will not navigate to a section); use a note-level link only. Standard Markdown relative links are not documented as Storm vault-note navigation—prefer the supported wiki syntax for note links. Raw HTML, external/protocol tricks, and links to another vault are not alternatives to a verified in-vault target.
