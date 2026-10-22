@@ -84,4 +84,12 @@ This is app presentation behavior, not a timing guarantee or a per-command anima
 
 All note mutations use Storm's coordinated live editor/save path; the CLI never writes note files directly. The supported operations are inspection, append, full replacement, and exact-text patching. Parent-folder creation, restart-durable operation journals, automatic rebasing, and general concurrent-text merging are outside the current command set. These are supported-scope boundaries, not promised future features.
 
-For reference-note preparation, inspect instructor sources and coverage before drafting; distinguish confirmed scope, exclusions, unknowns, learner notes, and supplemental material. Assemble one complete draft and use one coordinated writer. This is reference preparation, not teaching, completion, or mastery. Preserve existing notes and provenance.
+## Efficient reference-note preparation
+
+Read all relevant instructor sources before drafting; distinguish confirmed scope, exclusions, unknowns, learner notes, and supplemental material. Keep a short coverage list rather than generating whole-course file inventories and hashes. Batch independent reads or necessary format conversions, and reuse extracted text when the relevant source is unchanged (check its size/modified time or a reliable reader cache). Re-read changed or uncertain sources. Review relevant diagrams visually; text extraction alone does not establish complete coverage.
+
+Document extraction is handled by the agent's general tools, not by Storm's CLI. Prefer existing readers/helpers; avoid writing a new general-purpose extraction script for every review. The goal is fewer useful calls, not fewer sources or weaker checks.
+
+Prepare one complete draft, inspect any existing destination, then use one writing session and one guarded apply. Finish the owned session and verify a saved result plus exact content readback. Related commands can share a shell call, with result checks and failure cleanup preserved. Routine reviews do not need extra hashes, snapshots, or repeated status polls; add them when requested or when an error needs investigation. Do not pace writes for animation or repeatedly append corrections to an unfinished draft.
+
+This is reference preparation, not teaching, completion, or mastery. Preserve existing notes and provenance. See the [agent skill](../skills/storm/SKILL.md) for the operational workflow.
