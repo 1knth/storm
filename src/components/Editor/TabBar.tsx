@@ -65,6 +65,27 @@ export default function TabBar({
   const [dialog, setDialog] = useState<{ id?: string; value: string } | null>(
     null,
   );
+  const [tabsOverflow, setTabsOverflow] = useState(false);
+  const tabListRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = tabListRef.current;
+    if (!element) return;
+    const updateOverflow = () =>
+      setTabsOverflow(element.scrollWidth > element.clientWidth);
+    updateOverflow();
+    const resizeObserver = new ResizeObserver(updateOverflow);
+    resizeObserver.observe(element);
+    const mutationObserver = new MutationObserver(updateOverflow);
+    mutationObserver.observe(element, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+    };
+  }, [tabs.length, groups.length]);
   const [exitingTabs, setExitingTabs] = useState<
     Array<{ tab: TabSnapshot; rect: DOMRect }>
   >([]);
@@ -503,7 +524,7 @@ export default function TabBar({
           onDragStart={(event) => startDrag(event, 'tab', id)}
           onClick={() => onSelect(tab)}
           aria-current={activeId === id ? 'page' : undefined}
-          className="flex min-w-0 flex-1 items-center gap-2 truncate py-1.5 text-[13px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/35"
+          className="flex min-w-0 flex-1 items-center gap-2 truncate py-1 text-[13px] leading-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/35"
           title={tab.kind === 'note' ? tab.note.path : label}
         >
           <FaRegFile
@@ -556,90 +577,99 @@ export default function TabBar({
             clearDrag();
           } else dropTab(event, null, null);
         }}
-        className="relative flex h-11 min-h-11 w-full min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-y-none bg-transparent select-none"
+        className="tab-list flex h-11 min-h-11 w-full min-w-0 items-center bg-transparent select-none"
       >
-        {mixedTabOrder(tabs, groups, assignments).map((unit) => {
-          if (unit.type === 'tab') return renderTab(unit.tab);
-          const { group } = unit;
-          const members = unit.tabs;
-          return (
-            <div
-              key={group.id}
-              data-tab-group-id={group.id}
-              onDrop={(event) => {
-                const payload = validDrag(event);
-                if (payload?.type === 'group') dropGroup(event, group.id);
-                else dropOnGroup(event, group.id);
-              }}
-              className={`tab-group-surface relative flex h-9 min-h-9 max-h-9 shrink-0 items-center gap-1 overflow-hidden rounded-none border-0 border-b-2 bg-transparent px-1 transition-colors ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-white/25' : ''}`}
-              style={{
-                borderBottomColor:
-                  TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))],
-              }}
-              onDragOver={(event) => {
-                allowDrop(event);
-                if (validDrag(event)?.type === 'group')
-                  setGroupDropTarget(group.id);
-              }}
-              onDragEnd={clearDrag}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                showGroupMenu(
-                  group,
-                  { x: event.clientX, y: event.clientY },
-                  event.currentTarget,
-                );
-              }}
-              onKeyDown={(event) => {
-                if (isContextMenuKey(event)) {
-                  event.preventDefault();
-                  showGroupMenu(
-                    group,
-                    contextMenuPointForElement(event.currentTarget),
-                    event.currentTarget,
-                  );
-                }
-              }}
-            >
-              <button
-                type="button"
-                draggable
-                onDragStart={(event) => {
-                  event.stopPropagation();
-                  startDrag(event, 'group', group.id);
+        <div
+          ref={tabListRef}
+          className={`tab-list-scroll flex h-11 min-h-11 min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-y-none ${tabsOverflow ? 'tab-list--overflowing' : ''}`}
+        >
+          {mixedTabOrder(tabs, groups, assignments).map((unit) => {
+            if (unit.type === 'tab') return renderTab(unit.tab);
+            const { group } = unit;
+            const members = unit.tabs;
+            return (
+              <div
+                key={group.id}
+                data-tab-group-id={group.id}
+                onDrop={(event) => {
+                  const payload = validDrag(event);
+                  if (payload?.type === 'group') dropGroup(event, group.id);
+                  else dropOnGroup(event, group.id);
+                }}
+                className={`tab-group-surface relative flex h-9 min-h-9 max-h-9 shrink-0 items-center gap-1 overflow-hidden rounded-none border-0 border-b-2 bg-transparent px-1 transition-colors ${groupDropTarget === group.id ? 'ring-1 ring-inset ring-white/25' : ''}`}
+                style={{
+                  borderBottomColor:
+                    TAB_GROUP_COLORS[
+                      tabGroupColor(group, groups.indexOf(group))
+                    ],
+                }}
+                onDragOver={(event) => {
+                  allowDrop(event);
+                  if (validDrag(event)?.type === 'group')
+                    setGroupDropTarget(group.id);
                 }}
                 onDragEnd={clearDrag}
-                title={group.name}
-                className="flex max-w-[10.5rem] shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium leading-none text-white transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/65"
-                style={{
-                  backgroundColor: `${TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))]}40`,
-                }}
-                aria-expanded={!group.collapsed}
-                onClick={() => {
-                  if (dragMoved.current) {
-                    dragMoved.current = false;
-                    return;
-                  }
-                  onGroupsChange(
-                    groups.map((item) =>
-                      item.id === group.id
-                        ? { ...item, collapsed: !item.collapsed }
-                        : item,
-                    ),
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  showGroupMenu(
+                    group,
+                    { x: event.clientX, y: event.clientY },
+                    event.currentTarget,
                   );
                 }}
+                onKeyDown={(event) => {
+                  if (isContextMenuKey(event)) {
+                    event.preventDefault();
+                    showGroupMenu(
+                      group,
+                      contextMenuPointForElement(event.currentTarget),
+                      event.currentTarget,
+                    );
+                  }
+                }}
               >
-                <span aria-hidden="true" className="shrink-0 text-white/55">
-                  {group.collapsed ? '▸' : '▾'}
-                </span>
-                <span className="min-w-0 truncate">{group.name}</span>
-                <span className="shrink-0 text-white/40">{members.length}</span>
-              </button>
-              {!group.collapsed && members.map((tab) => renderTab(tab))}
-            </div>
-          );
-        })}
+                <button
+                  type="button"
+                  draggable
+                  onDragStart={(event) => {
+                    event.stopPropagation();
+                    startDrag(event, 'group', group.id);
+                  }}
+                  onDragEnd={clearDrag}
+                  title={group.name}
+                  className="flex max-w-[10.5rem] shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium leading-none text-white transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/65"
+                  style={{
+                    backgroundColor: `${TAB_GROUP_COLORS[tabGroupColor(group, groups.indexOf(group))]}40`,
+                  }}
+                  aria-expanded={!group.collapsed}
+                  onClick={() => {
+                    if (dragMoved.current) {
+                      dragMoved.current = false;
+                      return;
+                    }
+                    onGroupsChange(
+                      groups.map((item) =>
+                        item.id === group.id
+                          ? { ...item, collapsed: !item.collapsed }
+                          : item,
+                      ),
+                    );
+                  }}
+                >
+                  <span aria-hidden="true" className="shrink-0 text-white/55">
+                    {group.collapsed ? '▸' : '▾'}
+                  </span>
+                  <span className="min-w-0 truncate">{group.name}</span>
+                  <span className="shrink-0 text-white/40">
+                    {members.length}
+                  </span>
+                </button>
+                {!group.collapsed && members.map((tab) => renderTab(tab))}
+              </div>
+            );
+          })}
+        </div>
         <button
           type="button"
           onClick={onNew}
