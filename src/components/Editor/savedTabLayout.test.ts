@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { EditorState } from '@codemirror/state';
 import type { NoteData } from '../../shared/types';
 import type { ImageTabSnapshot, NoteTabSnapshot, TabSnapshot } from './Editor';
-import { serializeTabLayout } from './savedTabLayout';
+import { restoreTabGroupState, serializeTabLayout } from './savedTabLayout';
 import { getTabId } from './tabGroups';
 import type { TabGroup } from './tabGroups';
 
@@ -99,6 +99,60 @@ test('round-trips image tabs with mixed tab groups and vault-scoped IDs', () => 
     assignments: { [getTabId(image)]: 'assets', [getTabId(note)]: 'notes' },
   });
   assert.notEqual(getTabId(image), JSON.stringify(['vault-2', image.path]));
+});
+
+test('restores memberships after tabs and groups load, dropping only stale references', () => {
+  const noteData: NoteData = {
+    path: 'notes/current.md',
+    content: 'current',
+    revision: 'revision-3',
+  };
+  const note: NoteTabSnapshot = {
+    kind: 'note',
+    note: noteData,
+    vaultPath: '/vault',
+    vaultId: 'vault',
+    state: EditorState.create({ doc: noteData.content }),
+    scrollTop: 0,
+  };
+  const groups: TabGroup[] = [
+    { id: 'reading', name: 'Reading', collapsed: true },
+    { id: 'writing', name: 'Writing', collapsed: false },
+  ];
+  const persisted = serializeTabLayout(
+    [note],
+    getTabId(note),
+    groups,
+    { [getTabId(note)]: 'reading', stale: 'gone' },
+    new Map(),
+  );
+
+  // Simulate the reload boundary: layout data is persisted, then live tabs are
+  // reconstructed from disk before group membership is reconciled.
+  const restoredTab = {
+    ...note,
+    state: EditorState.create({ doc: 'current' }),
+  };
+  const restored = restoreTabGroupState(
+    [restoredTab],
+    JSON.parse(JSON.stringify(persisted.groups)),
+    JSON.parse(JSON.stringify(persisted.assignments)),
+  );
+  assert.deepEqual(restored, {
+    groups,
+    assignments: { [getTabId(restoredTab)]: 'reading' },
+  });
+  assert.deepEqual(restoreTabGroupState([restoredTab], [], {}).assignments, {});
+  assert.deepEqual(
+    restoreTabGroupState([restoredTab], groups, {}).assignments,
+    {},
+  );
+  assert.deepEqual(
+    restoreTabGroupState([restoredTab], groups, {
+      [getTabId(restoredTab)]: 'deleted-group',
+    }).assignments,
+    {},
+  );
 });
 
 test('serializes bounded view metadata without note content or editor history', () => {

@@ -98,13 +98,18 @@ function invalidateSelectedVault(vaultId: string): void {
 }
 let agentWindow: BrowserWindow | undefined;
 let agentAcceptedUrl: string | undefined;
+let agentBroker: AgentBroker | undefined;
 const agentTransport = registerAgentIpc(
   ipcMain,
   () => agentWindow,
   () => undefined,
   () => agentAcceptedUrl,
+  (ready) => {
+    if (ready) agentBroker?.rendererReady();
+    else agentBroker?.rendererUnavailable();
+  },
 );
-const agentBroker = new AgentBroker({
+agentBroker = new AgentBroker({
   resolveTarget: async (notePath) => {
     const { vaults } = await vaultRegistry.list();
     return resolveAgentNoteTarget(notePath, vaults);
@@ -146,7 +151,10 @@ const removeAgentBrokerIpc = bindAgentBrokerIpc(
   () => agentWindow,
   () => agentAcceptedUrl,
 );
-app.on('before-quit', () => removeAgentBrokerIpc());
+app.on('before-quit', () => {
+  removeAgentBrokerIpc();
+  agentTransport.dispose?.();
+});
 ipcMain.handle('agent:save-note', async (_event, request: unknown) => {
   if (!request || typeof request !== 'object' || Array.isArray(request))
     throw new Error('Invalid save request');

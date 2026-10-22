@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
+  server: { host: '127.0.0.1', port: 5200, strictPort: true },
   resolve: {
     // Keep React imports from the app and optimized dependencies on one runtime.
     dedupe: [

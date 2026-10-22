@@ -1,7 +1,18 @@
 import type { SavedTabLayout } from '../../shared/types';
 import type { TabSnapshot } from './Editor';
 import { getTabId } from './tabGroups';
+import { cleanTabAssignments, normalizeTabGroupState } from './tabGroups';
 import type { TabAssignments, TabGroup } from './tabGroups';
+
+/** Reconcile saved memberships only after saved groups and live tabs are available. */
+export function restoreTabGroupState(
+  tabs: TabSnapshot[],
+  groups: TabGroup[],
+  assignments: TabAssignments,
+) {
+  const validAssignments = cleanTabAssignments(assignments, tabs, groups);
+  return normalizeTabGroupState(tabs, groups, validAssignments);
+}
 
 export function serializeTabLayout(
   tabs: TabSnapshot[],

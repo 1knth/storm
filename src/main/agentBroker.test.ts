@@ -185,6 +185,72 @@ describe('agent context', () => {
   });
 });
 
+describe('renderer reload lifecycle', () => {
+  it('keeps an in-flight append uncertain if an old renderer replies after reload', async () => {
+    const response = deferred<AgentRendererResult>();
+    const broker = brokerWithRenderer(async (request) => {
+      if (request.type === 'snapshot')
+        return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+      if (request.type === 'append') return response.promise;
+      return { ok: true, documentVersion: 1, diskRevision: 'r1' };
+    });
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/outcome/note.md' }),
+    )) as any;
+    const sessionId = connected.session.sessionId;
+    const append = broker.handle(
+      req('append', {
+        sessionId,
+        operationId: 'reload-append',
+        sequence: 1,
+        text: 'accepted by old renderer',
+      }),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    broker.rendererUnavailable();
+    response.resolve({ ok: true, documentVersion: 1, diskRevision: 'r1' });
+    const result = (await append) as any;
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'SESSION_CLOSED');
+    const status = (await broker.handle(req('status', { sessionId }))) as any;
+    assert.equal(status.sessions[0].state, 'disconnected');
+    assert.equal(status.sessions[0].outcomeUncertain, true);
+  });
+
+  it('disconnects old sessions, rejects stale mutations, and permits a fresh generation after readiness', async () => {
+    const { broker } = setup();
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/note.md' }),
+    )) as any;
+    const oldId = connected.session.sessionId;
+    broker.rendererUnavailable();
+    const status = (await broker.handle(
+      req('status', { sessionId: oldId }),
+    )) as any;
+    assert.equal(status.sessions[0].state, 'disconnected');
+    const stale = (await broker.handle(
+      req('append', {
+        sessionId: oldId,
+        operationId: 'old-op',
+        sequence: 1,
+        text: 'stale',
+      }),
+    )) as any;
+    assert.equal(stale.error.code, 'SESSION_CLOSED');
+    const blocked = (await broker.handle(
+      req('connect', { absolutePath: '/note.md' }),
+    )) as any;
+    assert.equal(blocked.ok, false);
+    broker.rendererReady();
+    const fresh = (await broker.handle(
+      req('connect', { absolutePath: '/note.md' }),
+    )) as any;
+    assert.equal(fresh.ok, true);
+    assert.notEqual(fresh.session.sessionId, oldId);
+  });
+});
+
 describe('reported activity', () => {
   it('acknowledges activity without waiting for telemetry and keeps writes independent of delivery failure', async () => {
     const activityDelivery = deferred<AgentRendererResult>();

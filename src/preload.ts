@@ -37,7 +37,10 @@ const stormAgent: StormAgentBridge = {
       if (isAgentRequest(value)) callback(value);
     };
     ipcRenderer.on('agent:renderer-request', listener);
-    return () => ipcRenderer.removeListener('agent:renderer-request', listener);
+    ipcRenderer.send('agent:renderer-ready');
+    return () => {
+      ipcRenderer.removeListener('agent:renderer-request', listener);
+    };
   },
   respond(requestId, result) {
     if (
