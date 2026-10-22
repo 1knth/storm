@@ -84,6 +84,13 @@ function isAgentRequest(value: unknown): value is AgentBridgeRequest {
       typeof item.vaultId === 'string' &&
       typeof item.vaultRoot === 'string'
     );
+  if (item.type === 'activity')
+    return (
+      typeof item.sessionId === 'string' &&
+      (item.activity === null ||
+        item.activity === 'thinking' ||
+        item.activity === 'drafting')
+    );
   if (item.type === 'append')
     return (
       typeof item.sessionId === 'string' &&
@@ -167,6 +174,9 @@ function isAgentStatus(value: unknown): value is AgentBridgeStatusEvent {
     Number.isSafeInteger(status.documentVersion) &&
     typeof status.diskRevision === 'string' &&
     Number.isSafeInteger(status.pendingOperations) &&
+    (status.activity === undefined ||
+      status.activity === 'thinking' ||
+      status.activity === 'drafting') &&
     (event.reason === undefined || typeof event.reason === 'string')
   );
 }

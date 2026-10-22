@@ -556,7 +556,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     receiptsMap: revealReceipts.current,
   });
   void revealProgressVersion;
-  const statusVisualOverride = shouldShowRevealingStatus(
+  const previewPending = shouldShowRevealingStatus(
     agentStatus?.state === 'finished',
     agentWriting,
     Boolean(
@@ -567,9 +567,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       (readingMode || previewVisible),
     ),
     finalRevealDrained,
-  )
-    ? 'Revealing…'
-    : undefined;
+  );
   const toggleAgentStatusVisibility = () => {
     if (!activeNoteKey) return;
     setAgentStatusVisibleForNotes((visibleNotes) => {
@@ -1702,7 +1700,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             status={agentStatus}
             onStop={onStopAgent}
             visible={agentStatusVisible}
-            visualStatus={statusVisualOverride}
+            previewPending={previewPending}
           />
           <div className="flex w-full min-h-0 min-w-0 flex-1 overflow-hidden">
             {imageAsset ? (

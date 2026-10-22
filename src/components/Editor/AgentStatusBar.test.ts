@@ -51,9 +51,24 @@ test('status bar retains every status while visible and never offers Stop unless
   }
   assert.match(render('connected'), />Connected</);
   assert.match(render('connected'), /bg-green-400/);
-  assert.match(render('writing'), /bg-blue-400/);
+  assert.match(render('writing'), /agent-status-spinner/);
   assert.match(render('finished'), /bg-gray-400/);
   assert.doesNotMatch(render('failed'), /agent-status-dot/);
+  const thinking = renderToStaticMarkup(
+    createElement(AgentStatusBar, {
+      status: { ...status('connected'), activity: 'thinking' },
+    }),
+  );
+  assert.match(thinking, />Thinking</);
+  assert.match(thinking, /agent-status-spinner/);
+  assert.doesNotMatch(render('connected'), /agent-status-spinner/);
+  const drafting = renderToStaticMarkup(
+    createElement(AgentStatusBar, {
+      status: { ...status('connected'), activity: 'drafting' },
+    }),
+  );
+  assert.match(drafting, />Drafting</);
+  assert.match(drafting, /agent-status-spinner/);
 });
 
 test('manual visibility hides every status regardless of session state', () => {
@@ -74,35 +89,29 @@ test('manual visibility hides every status regardless of session state', () => {
   }
 });
 
-test('finished backend status shows Revealing until preview reveal drains', () => {
+test('finished status reports Writing while the preview is still updating', () => {
   const html = renderToStaticMarkup(
     createElement(AgentStatusBar, {
       status: status('finished'),
-      visualStatus: 'Revealing…',
+      previewPending: true,
     }),
   );
-  assert.match(html, />Revealing…</);
+  assert.match(html, />Writing</);
+  assert.doesNotMatch(html, /Revealing/);
   assert.doesNotMatch(html, /Finished/);
-  assert.doesNotMatch(html, />Writing</);
   assert.doesNotMatch(html, /Stop/);
-  assert.match(html, /bg-blue-400/);
+  assert.match(html, /agent-status-spinner/);
 });
 
-test('reveal override never masks cancellation, errors, or other session states', () => {
-  for (const state of [
-    'cancelled',
-    'failed',
-    'disconnected',
-    'writing',
-    'connected',
-  ] as const) {
+test('preview progress never masks cancellation, errors, or other session states', () => {
+  for (const state of ['cancelled', 'failed', 'disconnected'] as const) {
     const html = renderToStaticMarkup(
       createElement(AgentStatusBar, {
         status: status(state),
-        visualStatus: 'Revealing…',
+        previewPending: true,
       }),
     );
-    assert.doesNotMatch(html, /Revealing/);
+    assert.doesNotMatch(html, />Writing</);
   }
 });
 

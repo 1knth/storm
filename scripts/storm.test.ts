@@ -17,6 +17,107 @@ import path from 'node:path';
 import { BoundedStdinReader, discoverEndpoint, runCli } from './storm';
 import { assertNativeTarget, buildCliBinary } from './buildCli';
 import { startAgentEndpoint } from '../src/main/agentEndpoint';
+import { AgentBroker } from '../src/main/agentBroker';
+
+test('activity CLI round-trips through the local endpoint and broker lifecycle', async () => {
+  const scratch = await mkdtemp(path.join(os.tmpdir(), 'storm-activity-cli-'));
+  const document = { version: 0, revision: 'r1' };
+  const broker = new AgentBroker({
+    resolveTarget: async (absolutePath) => ({
+      absolutePath,
+      vaultId: 'test-vault',
+      vaultRoot: scratch,
+      relativePath: 'note.md',
+      content: '',
+      diskRevision: document.revision,
+    }),
+    renderer: {
+      dispatch: async (request) => {
+        if (request.type === 'snapshot')
+          return {
+            ok: true,
+            content: '',
+            documentVersion: document.version,
+            diskRevision: document.revision,
+          };
+        if (request.type === 'activity')
+          return {
+            ok: true,
+            documentVersion: document.version,
+            diskRevision: document.revision,
+          };
+        if (request.type === 'append')
+          return {
+            ok: true,
+            documentVersion: ++document.version,
+            diskRevision: document.revision,
+          };
+        if (request.type === 'finish')
+          return {
+            ok: true,
+            documentVersion: document.version,
+            diskRevision: document.revision,
+          };
+        return {
+          ok: false,
+          code: 'INVALID_REQUEST',
+          message: 'Unexpected request',
+        };
+      },
+    },
+  });
+  const endpoint = await startAgentEndpoint({
+    broker,
+    userDataPath: path.join(scratch, 'profile'),
+  });
+  const invoke = async (args: string[]) => {
+    let output = '';
+    let error = '';
+    const code = await runCli(['--endpoint', endpoint.metadataPath, ...args], {
+      home: scratch,
+      stdout: (text) => {
+        output += text;
+      },
+      stderr: (text) => {
+        error += text;
+      },
+    });
+    assert.equal(code, 0, error);
+    return JSON.parse(output);
+  };
+  try {
+    const connected = await invoke(['connect', '/vault/note.md', '--json']);
+    const sessionId = connected.session.sessionId;
+    assert.equal(connected.session.state, 'connected');
+    const thinking = await invoke(['activity', sessionId, 'thinking']);
+    assert.equal(thinking.session.activity, 'thinking');
+    const drafting = await invoke(['activity', sessionId, 'drafting']);
+    assert.equal(drafting.session.activity, 'drafting');
+    await invoke(['activity', sessionId, 'idle']);
+    const idle = await invoke(['status', sessionId, '--json']);
+    assert.equal(idle.sessions[0].state, 'connected');
+    assert.equal(idle.sessions[0].activity, undefined);
+    await invoke(['activity', sessionId, 'thinking']);
+    const finished = await invoke(['finish', sessionId]);
+    assert.equal(finished.session.state, 'finished');
+    assert.equal(finished.session.activity, undefined);
+    let staleError = '';
+    const staleCode = await runCli(
+      ['--endpoint', endpoint.metadataPath, 'activity', sessionId, 'drafting'],
+      {
+        home: scratch,
+        stderr: (text) => {
+          staleError += text;
+        },
+      },
+    );
+    assert.equal(staleCode, 1);
+    assert.match(staleError, /SESSION_CLOSED/);
+  } finally {
+    await endpoint.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
 
 test('bounded stdin reader retains all bytes while its consumer pauses', async () => {
   const stream = new PassThrough();
@@ -225,7 +326,12 @@ test('standalone CLI works from a spaced path without development tools or an in
         env,
       });
 
-    for (const args of [[], ['--help'], ['connect', '--help']]) {
+    for (const args of [
+      [],
+      ['--help'],
+      ['connect', '--help'],
+      ['activity', '--help'],
+    ]) {
       const result = run(args);
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, /Usage:/);
@@ -235,8 +341,15 @@ test('standalone CLI works from a spaced path without development tools or an in
         result.stdout,
         /there is not yet an installed storm executable/i,
       );
-      if (args.length === 0 || args[0] === '--help')
+      if (args.length === 0 || args[0] === '--help') {
         assert.match(result.stdout, /Application Support\/Storm/);
+        assert.match(result.stdout, /REQUIRED for agents/);
+        assert.match(result.stdout, /not runtime enforcement/);
+      }
+      if (args[0] === 'activity') {
+        assert.match(result.stdout, /REQUIRED for agents/);
+        assert.match(result.stdout, /cannot enforce agent compliance/);
+      }
     }
     for (const args of [['--unknown'], ['not-a-command']]) {
       const result = run(args);
@@ -319,6 +432,47 @@ test('standalone CLI works from a spaced path without development tools or an in
       ),
     );
     assert.ok(requests.some((request) => request.type === 'finish'));
+
+    const runActivity = async (phase: string) => {
+      const child = spawn(
+        installedCli,
+        ['activity', 'packaged-session', phase],
+        {
+          cwd: scratch,
+          env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+      let output = '';
+      let error = '';
+      child.stdout
+        .setEncoding('utf8')
+        .on('data', (text: string) => (output += text));
+      child.stderr
+        .setEncoding('utf8')
+        .on('data', (text: string) => (error += text));
+      const code = await new Promise<number>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (status) => resolve(status ?? -1));
+      });
+      assert.equal(code, 0, error);
+      return output;
+    };
+    assert.match(await runActivity('thinking'), /"ok":true/);
+    assert.ok(
+      requests.some(
+        (request) =>
+          request.type === 'activity' &&
+          request.sessionId === 'packaged-session' &&
+          request.activity === 'thinking',
+      ),
+    );
+    assert.match(await runActivity('idle'), /"ok":true/);
+    assert.ok(
+      requests.some(
+        (request) => request.type === 'activity' && request.activity === null,
+      ),
+    );
   } finally {
     await endpoint?.close();
     await rm(scratch, { recursive: true, force: true });

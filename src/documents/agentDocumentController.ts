@@ -1,5 +1,6 @@
 import { EditorState, Transaction } from '@codemirror/state';
 import type { SaveNoteRequest, SaveNoteResult } from '../shared/types';
+import type { AgentActivity } from '../shared/agentProtocol';
 
 export type AgentDocumentStatus =
   | 'connected'
@@ -30,6 +31,8 @@ export type AgentDocument = {
   revision: string;
   state: EditorState;
   status: AgentDocumentStatus;
+  activity?: AgentActivity;
+  appendCount: number;
   acceptedVersion: number;
   pending: Promise<void>;
   savePending: Promise<void>;
@@ -88,6 +91,7 @@ export class AgentDocumentController {
       revision,
       state,
       status: 'connected',
+      appendCount: 0,
       acceptedVersion: 0,
       pending: Promise.resolve(),
       savePending: Promise.resolve(),
@@ -255,6 +259,19 @@ export class AgentDocumentController {
     return { version: acceptedVersion, content: preview.content };
   }
 
+  setActivity(document: AgentDocument, activity: AgentActivity | null): void {
+    if (
+      document.closed ||
+      document.closing ||
+      document.status === 'finished' ||
+      document.status === 'stopped' ||
+      document.status === 'disconnected'
+    )
+      throw new Error('Agent session is closed');
+    document.activity = activity ?? undefined;
+    this.notify(document);
+  }
+
   append(document: AgentDocument, text: string): Promise<{ version: number }> {
     if (
       document.closed ||
@@ -263,6 +280,8 @@ export class AgentDocumentController {
       document.status === 'disconnected'
     )
       return Promise.reject(new Error('Agent session is closed'));
+    document.activity = undefined;
+    document.appendCount++;
     document.status = 'writing';
     this.notify(document);
     let resolveResult!: (value: { version: number }) => void;
@@ -277,6 +296,7 @@ export class AgentDocumentController {
         document.status === 'stopped' ||
         document.status === 'disconnected'
       ) {
+        document.appendCount--;
         rejectResult(
           new Error('Agent session closed before operation acceptance'),
         );
@@ -297,6 +317,8 @@ export class AgentDocumentController {
           : document.reveal.ranges,
       };
       document.dirty = true;
+      document.appendCount--;
+      document.status = document.appendCount > 0 ? 'writing' : 'connected';
       this.notify(document);
       resolveResult({ version: document.acceptedVersion });
       this.scheduleSave(document);
@@ -309,18 +331,21 @@ export class AgentDocumentController {
       !document.closed &&
       (document.status === 'connected' || document.status === 'writing')
     ) {
+      document.activity = undefined;
       document.status = 'finished';
       this.notify(document);
     }
   }
   stop(document: AgentDocument): void {
     if (!document.closed) {
+      document.activity = undefined;
       document.status = 'stopped';
       this.notify(document);
     }
   }
   disconnect(document: AgentDocument): void {
     if (!document.closed) {
+      document.activity = undefined;
       document.status = 'disconnected';
       this.notify(document);
     }
@@ -344,6 +369,7 @@ export class AgentDocumentController {
   ): Promise<boolean> {
     if (document.closed) return !document.dirty;
     document.closing = true;
+    document.activity = undefined;
     document.status = 'disconnected';
     this.notify(document);
     await document.pending.catch(() => undefined);

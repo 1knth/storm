@@ -7,6 +7,7 @@ describe('agent document host', () => {
   function makeHost(saveNote = async () => ({ revision: 'r2' })) {
     const published: string[] = [];
     const statuses: string[] = [];
+    const statusEvents: Array<{ state: string; activity?: string }> = [];
     const host = createAgentDocumentHost({
       lookupDocument: () => undefined,
       openDocument: async ({ absolutePath }) => ({
@@ -20,11 +21,14 @@ describe('agent document host', () => {
       }),
       publishDocument: (document) =>
         published.push(document.state.doc.toString()),
-      publishStatus: (event) => statuses.push(event.session.state),
+      publishStatus: (event) => {
+        statuses.push(event.session.state);
+        statusEvents.push(event.session);
+      },
       saveNote,
       getAdapterFor: () => undefined,
     });
-    return { host, published, statuses };
+    return { host, published, statuses, statusEvents };
   }
 
   it('exposes the adapter lookup used by tab closing for managed and unmanaged notes', () => {
@@ -155,6 +159,38 @@ describe('agent document host', () => {
       diskRevision: 'r1',
     });
     assert.equal(host.controller.get('vault:notes/a.md')?.path, 'notes/a.md');
+    host.dispose();
+  });
+
+  it('publishes agent-reported activity and clears it when appending', async () => {
+    const { host, statusEvents } = makeHost();
+    await host.handleRequest({
+      type: 'snapshot',
+      requestId: 'snapshot',
+      sessionId: 'session-1',
+      absolutePath: '/vault/notes/a.md',
+      vaultId: 'vault',
+      vaultRoot: '/vault',
+    });
+    await host.handleRequest({
+      type: 'activity',
+      requestId: 'activity',
+      sessionId: 'session-1',
+      activity: 'thinking',
+    });
+    assert.equal(statusEvents.at(-1)?.state, 'connected');
+    assert.equal(statusEvents.at(-1)?.activity, 'thinking');
+    await host.handleRequest({
+      type: 'append',
+      requestId: 'append',
+      sessionId: 'session-1',
+      absolutePath: '/vault/notes/a.md',
+      operationId: 'op',
+      sequence: 1,
+      text: 'new',
+    });
+    assert.equal(statusEvents.at(-1)?.state, 'connected');
+    assert.equal(statusEvents.at(-1)?.activity, undefined);
     host.dispose();
   });
 

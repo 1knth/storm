@@ -1,4 +1,4 @@
-import type { AgentSessionStatus } from './agentProtocol';
+import type { AgentActivity, AgentSessionStatus } from './agentProtocol';
 import type { AgentEditPlan } from '../documents/agentDocumentController';
 import type { SaveNoteRequest, SaveNoteResult } from './types';
 
@@ -16,6 +16,12 @@ export type AgentBridgeRequest =
       absolutePath: string;
       vaultId: string;
       vaultRoot: string;
+    }
+  | {
+      type: 'activity';
+      requestId: string;
+      sessionId: string;
+      activity: AgentActivity | null;
     }
   | {
       type: 'append';
