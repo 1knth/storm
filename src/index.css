@@ -219,17 +219,30 @@
   border-left-color: var(--storm-cursor, rgb(255 150 150 / 70%)) !important;
 }
 
-/* Collapse the tab strip and its reserved space together without resizing the editor itself. */
-.tab-list--overflowing::after {
-  position: absolute;
-  z-index: 1;
-  top: 0;
-  right: 2.25rem;
-  bottom: 0;
-  width: 2rem;
-  background: linear-gradient(to right, transparent, rgb(32 32 32 / 72%));
-  content: '';
-  pointer-events: none;
+/* Clip/fade the scrolling tab contents before they reach the fixed new-tab control.
+   Applying the mask to the scroll viewport also clips tab shadows; no opaque color
+   is painted over the (potentially transparent) editor chrome. */
+.tab-list-scroll {
+  scrollbar-width: none;
+}
+
+.tab-list-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-list-scroll.tab-list--overflowing {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 2rem),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 2rem),
+    transparent 100%
+  );
 }
 
 .tab-bar-slot {
