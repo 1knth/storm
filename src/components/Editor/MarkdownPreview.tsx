@@ -927,14 +927,14 @@ function MarkdownPreview({
         if (!state.following) return;
         const containerRect = container.getBoundingClientRect();
         const wordRect = word.getBoundingClientRect();
-        const bottom = containerRect.bottom - 28;
-        if (wordRect.bottom > bottom) {
-          const delta = wordRect.bottom - bottom;
+        const targetTop =
+          container.scrollTop +
+          wordRect.top -
+          containerRect.top -
+          container.clientHeight * 0.75;
+        if (Math.abs(targetTop - container.scrollTop) > 1) {
           state.programmatic = true;
-          container.scrollTop = Math.max(
-            container.scrollTop,
-            container.scrollTop + delta,
-          );
+          container.scrollTo({ top: targetTop, behavior: 'instant' });
           requestAnimationFrame(() => {
             state.programmatic = false;
           });
