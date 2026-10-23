@@ -22,6 +22,11 @@ import {
   lineNumbers,
 } from '@codemirror/view';
 import type { NoteData } from '../../shared/types';
+import {
+  previewNoteScrollKey,
+  previewScrollTarget,
+  rememberPreviewScroll,
+} from './previewNoteScroll';
 import { markdownEditorExtensions } from './extensions';
 import { foldGutter } from '@codemirror/language';
 import { createMarkdownSyntaxHighlighting } from './markdownHighlighting';
@@ -227,7 +232,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     [],
   );
   const documentKey = current.current
-    ? JSON.stringify([current.current.vaultId, current.current.note.path])
+    ? previewNoteScrollKey({
+        vaultId: current.current.vaultId,
+        notePath: current.current.note.path,
+      })
     : null;
   const previousWriting = useRef(new Map<string, boolean>());
   const writingBaseline = useRef(new Map<string, string>());
@@ -322,6 +330,10 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const previousReadingMode = useRef(readingMode);
   const pendingFocus = useRef(false);
   const previewScrollRef = useRef<HTMLDivElement>(null);
+  const previewScrollPositions = useRef(new Map<string, number>());
+  const previewScrollKeyRef = useRef<string | null>(null);
+  const previewScrollTopRef = useRef(0);
+  const pendingPreviewRestoreKey = useRef<string | null>(null);
   const onReadingKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       const modalOpen = Boolean(
@@ -660,6 +672,23 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const markPreviewScrollIntent = useCallback(() => {
     previewScrollIntentUntil.current = Date.now() + PREVIEW_SCROLL_INTENT_MS;
   }, []);
+  const rememberActivePreviewScroll = useCallback(
+    (scrollTop: number) => {
+      const key = documentKey;
+      if (
+        !key ||
+        key !== currentDocumentKeyRef.current ||
+        previewScrollKeyRef.current !== key ||
+        pendingPreviewRestoreKey.current === key
+      )
+        return;
+      if (!Number.isFinite(scrollTop) || scrollTop < 0) return;
+      previewScrollKeyRef.current = key;
+      previewScrollTopRef.current = scrollTop;
+      rememberPreviewScroll(previewScrollPositions.current, key, scrollTop);
+    },
+    [documentKey],
+  );
   const syncFromPreview = useCallback(() => {
     if (previewAnimation.current.active) return;
     const pane = previewScrollRef.current;
@@ -773,6 +802,95 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       ),
     });
   }, [renameInProgress]);
+
+  useLayoutEffect(() => {
+    const key = documentKey;
+    const pane = previewScrollRef.current;
+    if (
+      !key ||
+      !pane ||
+      preview?.vaultId !== current.current?.vaultId ||
+      preview?.notePath !== current.current?.note.path
+    )
+      return;
+
+    // Save the outgoing pane before the keyed preview replaces its contents.
+    if (previewScrollKeyRef.current && previewScrollKeyRef.current !== key) {
+      rememberPreviewScroll(
+        previewScrollPositions.current,
+        previewScrollKeyRef.current,
+        previewScrollTopRef.current,
+      );
+    }
+    previewScrollKeyRef.current = key;
+    const target = previewScrollTarget(
+      previewScrollPositions.current,
+      key,
+      pane.scrollHeight,
+      pane.clientHeight,
+    );
+    if (target !== null) {
+      pendingPreviewRestoreKey.current = null;
+      pane.scrollTop = target;
+      previewScrollTopRef.current = target;
+      return;
+    }
+    pendingPreviewRestoreKey.current = key;
+
+    // The initial markdown render can be shorter than the saved position
+    // (notably before async diagrams/images expand). Wait for real layout growth.
+    let cancelled = false;
+    const cancelPendingRestore = () => {
+      cancelled = true;
+      pendingPreviewRestoreKey.current = null;
+      observer.disconnect();
+      mutations.disconnect();
+    };
+    const tryRestore = () => {
+      if (cancelled || currentDocumentKeyRef.current !== key) return;
+      const available = previewScrollTarget(
+        previewScrollPositions.current,
+        key,
+        pane.scrollHeight,
+        pane.clientHeight,
+      );
+      if (available === null) return;
+      pendingPreviewRestoreKey.current = null;
+      pane.scrollTop = available;
+      previewScrollTopRef.current = available;
+      observer.disconnect();
+      mutations.disconnect();
+    };
+    const observer = new ResizeObserver(tryRestore);
+    const observeContent = (node: Element) => {
+      observer.observe(node);
+      node.querySelectorAll('*').forEach((child) => observer.observe(child));
+    };
+    const mutations = new MutationObserver((records) => {
+      for (const record of records)
+        record.addedNodes.forEach((node) => {
+          if (node instanceof Element) observeContent(node);
+        });
+      tryRestore();
+    });
+    observeContent(pane);
+    mutations.observe(pane, { childList: true, subtree: true });
+    pane.addEventListener('wheel', cancelPendingRestore, { once: true });
+    pane.addEventListener('pointerdown', cancelPendingRestore, { once: true });
+    return () => {
+      observer.disconnect();
+      mutations.disconnect();
+      pane.removeEventListener('wheel', cancelPendingRestore);
+      pane.removeEventListener('pointerdown', cancelPendingRestore);
+    };
+  }, [
+    documentKey,
+    preview?.vaultId,
+    preview?.notePath,
+    preview?.previewRevision,
+    readingMode,
+    previewVisible,
+  ]);
 
   useLayoutEffect(() => {
     const wasReading = previousReadingMode.current;
@@ -1740,6 +1858,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                     onOpenNote={onOpenNote}
                     scrollRef={previewScrollRef}
                     onScroll={syncFromPreview}
+                    onScrollPosition={rememberActivePreviewScroll}
                     onScrollIntent={markPreviewScrollIntent}
                     onUserScroll={cancelScrollAnimations}
                     onReadingKeyDown={onReadingKeyDown}
@@ -1791,6 +1910,7 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
                 onOpenNote={onOpenNote}
                 scrollRef={previewScrollRef}
                 onScroll={syncFromPreview}
+                onScrollPosition={rememberActivePreviewScroll}
                 onScrollIntent={markPreviewScrollIntent}
                 onUserScroll={cancelScrollAnimations}
                 appearance={appearance}
