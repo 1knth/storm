@@ -267,6 +267,7 @@ type Props = {
   onCloseFind?: () => void;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   onScroll?: () => void;
+  onScrollPosition?: (scrollTop: number) => void;
   onUserScroll?: () => void;
   onScrollIntent?: () => void;
   onReadingKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
@@ -875,6 +876,7 @@ function MarkdownPreview({
   onCloseFind,
   scrollRef,
   onScroll,
+  onScrollPosition,
   onUserScroll,
   onScrollIntent,
   onReadingKeyDown,
@@ -1350,7 +1352,10 @@ function MarkdownPreview({
                   ref={scrollRef}
                   data-preview-focus=""
                   tabIndex={0}
-                  onScroll={onScroll}
+                  onScroll={(event) => {
+                    onScrollPosition?.(event.currentTarget.scrollTop);
+                    onScroll?.();
+                  }}
                   onKeyDownCapture={(event) => {
                     if (
                       [
