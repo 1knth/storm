@@ -5,6 +5,7 @@ export async function resolveVaultNote(
   vaultPath: string,
   currentNotePath: string,
   target: string,
+  indexedFiles?: readonly string[],
 ): Promise<string> {
   let decoded: string;
   try {
@@ -17,17 +18,21 @@ export async function resolveVaultNote(
   if (!decoded || decoded.split('/').some((part) => part === '..'))
     throw new Error('Invalid note link');
   const root = await realpath(vaultPath);
-  const files: string[] = [];
-  async function walk(directory: string): Promise<void> {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (entry.isSymbolicLink()) continue;
-      const file = path.join(directory, entry.name);
-      if (entry.isDirectory()) await walk(file);
-      else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
-        files.push(path.relative(root, file).replace(/\\/g, '/'));
+  let files: readonly string[] = indexedFiles ?? [];
+  if (!indexedFiles) {
+    const found: string[] = [];
+    async function walk(directory: string): Promise<void> {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) continue;
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) await walk(file);
+        else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
+          found.push(path.relative(root, file).replace(/\\/g, '/'));
+      }
     }
+    await walk(root);
+    files = found;
   }
-  await walk(root);
   const withExtension = /\.md$/i.test(decoded) ? decoded : `${decoded}.md`;
   const lower = (value: string) => value.toLowerCase();
   const currentDirectory = path.posix.dirname(

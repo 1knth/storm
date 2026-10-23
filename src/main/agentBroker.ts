@@ -97,6 +97,30 @@ export interface AgentBrokerOptions {
   withVaultLifecycle?<T>(root: string, operation: () => Promise<T>): Promise<T>;
   renderer: AgentRendererTransport;
   getContext?(): Promise<AgentContext>;
+  discover?(
+    vaultId: string,
+    query: string | undefined,
+    limit: number,
+    options?: { sourcePath?: string; depth?: number; includeSource?: boolean },
+  ): Promise<{
+    results: Array<{ path: string; name: string; excerpt?: string }>;
+    unresolved: Array<{
+      sourcePath: string;
+      target: string;
+      reason: 'missing' | 'ambiguous' | 'invalid';
+    }>;
+    truncated?: boolean;
+  }>;
+  resolveLink?(
+    vaultId: string,
+    sourcePath: string,
+    target: string,
+  ): Promise<{
+    sourcePath: string;
+    target: string;
+    path?: string;
+    reason?: 'missing' | 'ambiguous' | 'invalid';
+  }>;
 }
 type CachedOperation = {
   fingerprint: string;
@@ -320,6 +344,56 @@ export class AgentBroker {
           });
         } finally {
           this.resolvingConnects--;
+        }
+      }
+      if (request.type === 'discover') {
+        if (!this.options.discover)
+          return fail('CONTEXT_UNAVAILABLE', 'Vault discovery is unavailable');
+        try {
+          const discovery = await this.options.discover(
+            request.vaultId,
+            request.query,
+            request.limit ?? 50,
+            {
+              sourcePath: request.sourcePath,
+              depth: request.depth,
+              includeSource: request.includeSource,
+            },
+          );
+          return {
+            protocol: AGENT_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            ok: true,
+            type: 'discovery',
+            vaultId: request.vaultId,
+            ...discovery,
+          };
+        } catch (error) {
+          return fail('INVALID_PATH', errorMessage(error));
+        }
+      }
+      if (request.type === 'resolve-link') {
+        if (!this.options.resolveLink)
+          return fail(
+            'CONTEXT_UNAVAILABLE',
+            'Vault link resolution is unavailable',
+          );
+        try {
+          const resolution = await this.options.resolveLink(
+            request.vaultId,
+            request.sourcePath,
+            request.target,
+          );
+          return {
+            protocol: AGENT_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            ok: true,
+            type: 'link-resolution',
+            vaultId: request.vaultId,
+            ...resolution,
+          };
+        } catch (error) {
+          return fail('INVALID_PATH', errorMessage(error));
         }
       }
       if (request.type === 'context') {
@@ -836,6 +910,38 @@ function isRequest(v: unknown): v is AgentRequest {
       Number.isSafeInteger(r.sequence)
     );
   if (r.type === 'context') return true;
+  if (r.type === 'resolve-link')
+    return (
+      typeof r.vaultId === 'string' &&
+      r.vaultId.length > 0 &&
+      typeof r.sourcePath === 'string' &&
+      r.sourcePath.length > 0 &&
+      typeof r.target === 'string' &&
+      r.target.length > 0 &&
+      r.target.length <= 512
+    );
+  if (r.type === 'discover') {
+    const hasSourcePath =
+      typeof r.sourcePath === 'string' && r.sourcePath.length > 0;
+    return (
+      typeof r.vaultId === 'string' &&
+      r.vaultId.length > 0 &&
+      (r.query === undefined ||
+        (typeof r.query === 'string' && r.query.length <= 256)) &&
+      (r.limit === undefined ||
+        (Number.isSafeInteger(r.limit) &&
+          Number(r.limit) >= 1 &&
+          Number(r.limit) <= 100)) &&
+      (r.sourcePath === undefined || hasSourcePath) &&
+      (r.depth === undefined ||
+        (Number.isSafeInteger(r.depth) &&
+          Number(r.depth) >= 0 &&
+          Number(r.depth) <= 5)) &&
+      (r.includeSource === undefined || typeof r.includeSource === 'boolean') &&
+      ((r.depth === undefined && r.includeSource === undefined) ||
+        hasSourcePath)
+    );
+  }
   return (
     ['finish', 'cancel', 'status', 'disconnect'].includes(String(r.type)) &&
     (r.sessionId === undefined || typeof r.sessionId === 'string')

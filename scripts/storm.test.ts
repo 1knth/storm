@@ -88,6 +88,236 @@ test('context CLI round-trips through the endpoint and broker without a note ses
   }
 });
 
+test('list and search CLI send read-only discovery requests through the broker', async () => {
+  const scratch = await mkdtemp(path.join(os.tmpdir(), 'storm-discovery-cli-'));
+  const requests: Array<{
+    vaultId: string;
+    query?: string;
+    limit: number;
+    sourcePath?: string;
+    depth?: number;
+    includeSource?: boolean;
+  }> = [];
+  const broker = new AgentBroker({
+    resolveTarget: async () => {
+      throw new Error('discovery must not connect');
+    },
+    renderer: {
+      dispatch: async () => ({
+        ok: false,
+        code: 'UNEXPECTED',
+        message: 'Unexpected',
+      }),
+    },
+    discover: async (vaultId, query, limit, options) => {
+      requests.push({
+        vaultId,
+        ...(query !== undefined ? { query } : {}),
+        limit,
+        ...(options?.sourcePath !== undefined
+          ? { sourcePath: options.sourcePath }
+          : {}),
+        ...(options?.depth !== undefined ? { depth: options.depth } : {}),
+        ...(options?.includeSource ? { includeSource: true } : {}),
+      });
+      return {
+        results: [
+          {
+            path: 'Folder/Note.md',
+            name: 'Note',
+            ...(query ? { excerpt: 'matched body' } : {}),
+          },
+        ],
+        unresolved: query
+          ? [
+              {
+                sourcePath: 'Folder/Source.md',
+                target: 'Missing',
+                reason: 'missing' as const,
+              },
+            ]
+          : [],
+        ...(query ? { truncated: true } : {}),
+      };
+    },
+  });
+  const endpoint = await startAgentEndpoint({
+    broker,
+    userDataPath: path.join(scratch, 'profile'),
+  });
+  const invoke = async (args: string[]) => {
+    let output = '';
+    const code = await runCli(['--endpoint', endpoint.metadataPath, ...args], {
+      home: scratch,
+      stdout: (text) => {
+        output += text;
+      },
+    });
+    assert.equal(code, 0);
+    return output;
+  };
+  try {
+    assert.equal(
+      await invoke(['list', '--vault', 'vault-a']),
+      'Note\tFolder/Note.md\n',
+    );
+    const json = JSON.parse(
+      await invoke([
+        'search',
+        'needle',
+        '--vault',
+        'vault-a',
+        '--limit',
+        '7',
+        '--json',
+      ]),
+    );
+    assert.equal(json.results[0].excerpt, 'matched body');
+    assert.equal(json.truncated, true);
+    assert.deepEqual(json.unresolved, [
+      { sourcePath: 'Folder/Source.md', target: 'Missing', reason: 'missing' },
+    ]);
+    const linked = JSON.parse(
+      await invoke([
+        'search',
+        'needle',
+        '--vault',
+        'vault-a',
+        '--source',
+        'Folder/Source.md',
+        '--depth',
+        '0',
+        '--include-source',
+        '--json',
+      ]),
+    );
+    assert.equal(linked.results[0].excerpt, 'matched body');
+    const linkedText = await invoke([
+      'search',
+      'needle',
+      '--vault',
+      'vault-a',
+      '--source',
+      'Folder/Source.md',
+    ]);
+    assert.match(linkedText, /Unresolved links:/);
+    assert.ok(
+      linkedText.includes('missing: [[Missing]] from Folder/Source.md'),
+    );
+    assert.match(linkedText, /Traversal truncated/);
+    assert.deepEqual(requests, [
+      { vaultId: 'vault-a', limit: 50 },
+      { vaultId: 'vault-a', query: 'needle', limit: 7 },
+      {
+        vaultId: 'vault-a',
+        query: 'needle',
+        limit: 50,
+        sourcePath: 'Folder/Source.md',
+        depth: 0,
+        includeSource: true,
+      },
+      {
+        vaultId: 'vault-a',
+        query: 'needle',
+        limit: 50,
+        sourcePath: 'Folder/Source.md',
+      },
+    ]);
+    for (const invalid of [
+      ['search', 'needle', '--vault', 'vault-a', '--depth', '6'],
+      ['search', 'needle', '--vault', 'vault-a', '--depth', '1'],
+      ['search', 'needle', '--vault', 'vault-a', '--include-source'],
+      ['search', 'needle', '--vault', 'vault-a', '--source'],
+    ]) {
+      let error = '';
+      const code = await runCli(invalid, {
+        home: scratch,
+        stderr: (text) => {
+          error += text;
+        },
+      });
+      assert.equal(code, 2);
+      assert.match(error, /--depth|--source/);
+    }
+  } finally {
+    await endpoint.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('resolve-link CLI reports successful and unresolved results in text and JSON', async () => {
+  const scratch = await mkdtemp(path.join(os.tmpdir(), 'storm-resolve-cli-'));
+  const broker = new AgentBroker({
+    resolveTarget: async () => {
+      throw new Error('resolution must not connect');
+    },
+    resolveLink: async (_vaultId, sourcePath, target) =>
+      target === 'Found'
+        ? { sourcePath, target, path: 'Folder/Found.md' }
+        : {
+            sourcePath,
+            target,
+            reason: target === 'Twin' ? 'ambiguous' : 'missing',
+          },
+    renderer: {
+      dispatch: async () => ({
+        ok: false,
+        code: 'UNEXPECTED',
+        message: 'Unexpected',
+      }),
+    },
+  });
+  const endpoint = await startAgentEndpoint({
+    broker,
+    userDataPath: path.join(scratch, 'profile'),
+  });
+  const invoke = async (target: string, json = false) => {
+    let output = '';
+    let error = '';
+    const args = [
+      'resolve-link',
+      '--vault',
+      'vault-a',
+      '--source',
+      'Source.md',
+      '--target',
+      target,
+      ...(json ? ['--json'] : []),
+    ];
+    const code = await runCli(['--endpoint', endpoint.metadataPath, ...args], {
+      home: scratch,
+      stdout: (text) => {
+        output += text;
+      },
+      stderr: (text) => {
+        error += text;
+      },
+    });
+    assert.equal(code, 0, error);
+    return output;
+  };
+  try {
+    assert.equal(await invoke('Found'), 'Folder/Found.md\n');
+    assert.equal(
+      await invoke('Missing'),
+      'Unresolved (missing): [[Missing]] from Source.md\n',
+    );
+    assert.equal(
+      await invoke('Twin'),
+      'Unresolved (ambiguous): [[Twin]] from Source.md\n',
+    );
+    assert.equal(
+      JSON.parse(await invoke('Found', true)).path,
+      'Folder/Found.md',
+    );
+    assert.equal(JSON.parse(await invoke('Missing', true)).reason, 'missing');
+    assert.equal(JSON.parse(await invoke('Twin', true)).reason, 'ambiguous');
+  } finally {
+    await endpoint.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
 test('activity CLI round-trips through the local endpoint and broker lifecycle', async () => {
   const scratch = await mkdtemp(path.join(os.tmpdir(), 'storm-activity-cli-'));
   const document = { version: 0, revision: 'r1' };
@@ -419,18 +649,16 @@ test('standalone CLI works from a spaced path without development tools or an in
         assert.match(result.stdout, /\[\[note\]\]/);
         assert.match(result.stdout, /\[\[folder\/note\]\]/);
         assert.match(result.stdout, /\[\[note\|label\]\]/);
-        assert.match(
-          result.stdout,
-          /no note-list, search, or link-resolution command/,
-        );
+        assert.match(result.stdout, /Use list --vault ID/);
+        assert.match(result.stdout, /resolve-link --vault/);
         assert.match(result.stdout, /inspect ABS_PATH --json/);
         assert.match(result.stdout, /Never use connect as an existence check/);
-        assert.match(result.stdout, /heading fragments are\s+unsupported/);
+        assert.match(result.stdout, /Heading\s+fragments are\s+unsupported/);
       }
       if (args[0] === 'context') {
         assert.match(result.stdout, /read-only snapshot/i);
         assert.match(result.stdout, /not a complete vault listing/i);
-        assert.match(result.stdout, /inspect ABS_PATH --json/);
+        assert.match(result.stdout, /Use list\/search to discover/);
       }
       if (args[0] === 'activity') {
         assert.match(result.stdout, /REQUIRED workflow guidance/);

@@ -14,6 +14,7 @@ Commands:
   activity SESSION thinking|drafting|idle Report or clear the current work phase
   finish SESSION                         Stop writing normally
   cancel SESSION                         Cancel writing; accepted edits remain
+  resolve-link --vault ID --source PATH --target TARGET [--json]
 
 Quick context check (does not require or create a note session):
   bun scripts/storm.ts context
@@ -53,8 +54,12 @@ Storm preview supports in-vault wiki note links: [[note]], [[folder/note]], and
 context to see registered vault roots and currently open notes; openNotes is not a full
 vault listing. Use inspect ABS_PATH --json to verify an existing note without opening
 or creating it. Never use connect as an existence check: it can create a missing note.
-The CLI has no note-list, search, or link-resolution command; heading fragments are
-unsupported.
+Use list --vault ID to list note names and paths, and search QUERY --vault ID
+to search names and contents. Search can traverse links from --source PATH to
+--depth 0..5; --include-source includes the starting note. resolve-link --vault
+ID --source PATH --target TARGET resolves one wikilink. Discovery is read-only and
+bounded; JSON reports truncated when traversal hits its safety budget. Heading
+fragments are unsupported.
 
 The connect JSON response includes session.sessionId; use that as SESSION_ID. The CLI
 requires a running Storm app and a registered vault. It creates only a missing .md file
@@ -83,16 +88,21 @@ protocol errors go to stderr) and exits nonzero. Endpoint metadata contains a pr
 authentication token: do not disclose it. Use --help with any command for details.`;
 
 const commandHelp: Record<string, string> = {
+  'resolve-link': `Usage: bun scripts/storm.ts [endpoint options] resolve-link --vault VAULT_ID --source NOTE_PATH --target WIKILINK_TARGET [--json]
+
+Resolve one wikilink from an existing note through the registered vault. Read-only;
+never opens or creates notes. Reports the matching relative path or missing/ambiguous.
+`,
   context: `Usage: bun scripts/storm.ts [endpoint options] context [--json]
 
 Read-only snapshot of registered vault IDs, names, and absolute roots, the active vault
 and note (when available), and notes currently open in tabs. This does not require a
 session and never creates or opens notes. Open notes are not a complete vault listing.
 
-Use the returned vault roots and known open-note paths to guide safe inspection. Verify
-an existing target with inspect ABS_PATH --json before linking to it; never use connect
-as an existence check because it can create a missing note. There are no CLI note-list,
-search, or link-resolution commands.
+Use list/search to discover existing notes by name or contents; linked search follows
+wikilinks from a specified source. Use resolve-link to check a specific target. These
+commands are read-only; never use connect as an existence check because it can create
+a missing note. Linked search reports unresolved targets and is bounded.
 
 Without --json, prints a readable summary. With --json, prints the protocol response
 including type: context and its context object.
