@@ -6,6 +6,8 @@ export const DEFAULT_APPEARANCE = {
   activeLine: '#e0bfff',
   cursor: '#027DFF',
   folderIcon: '#9EE4FF',
+  previewBoldColor: null as string | null,
+  previewItalicColor: null as string | null,
   headings: DEFAULT_HEADING_COLORS,
   mermaidBackground: '#ffffff',
   mermaidNodeFill: '#ECECFF',
@@ -58,14 +60,26 @@ export function validateAppearance(value: unknown): Appearance {
     value && typeof value === 'object'
       ? (value as Record<string, unknown>)
       : {};
-  const color = (value: unknown, fallback: string) =>
-    typeof value === 'string' && hex.test(value) ? value : fallback;
+  function color(value: unknown, fallback: string): string;
+  function color(value: unknown, fallback: null): string | null;
+  function color(value: unknown, fallback: string | null) {
+    return typeof value === 'string' && hex.test(value) ? value : fallback;
+  }
   const headings = Array.isArray(input.headings) ? input.headings : [];
   return {
     selection: color(input.selection, DEFAULT_APPEARANCE.selection),
     activeLine: color(input.activeLine, DEFAULT_APPEARANCE.activeLine),
     cursor: color(input.cursor, DEFAULT_APPEARANCE.cursor),
     folderIcon: color(input.folderIcon, DEFAULT_APPEARANCE.folderIcon),
+    previewBoldColor:
+      input.previewBoldColor === null || input.previewBoldColor === undefined
+        ? null
+        : color(input.previewBoldColor, null),
+    previewItalicColor:
+      input.previewItalicColor === null ||
+      input.previewItalicColor === undefined
+        ? null
+        : color(input.previewItalicColor, null),
     headings: DEFAULT_HEADING_COLORS.map((fallback, index) =>
       color(headings[index], fallback),
     ),

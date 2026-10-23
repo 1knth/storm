@@ -7,13 +7,13 @@ import { markdownPreviewUrlTransform } from './MarkdownPreview';
 import MarkdownPreview from './MarkdownPreview';
 import { DEFAULT_APPEARANCE } from '../../appearance';
 
-function preview(markdown: string) {
+function preview(markdown: string, appearance = DEFAULT_APPEARANCE) {
   return renderToStaticMarkup(
     React.createElement(MarkdownPreview, {
       markdown,
       vaultId: 'test-vault',
       notePath: 'current.md',
-      appearance: DEFAULT_APPEARANCE,
+      appearance,
       onToggleTask: () => {},
       onOpenNote: () => {},
     } as any),
@@ -21,6 +21,24 @@ function preview(markdown: string) {
 }
 
 describe('preview heading section rendering', () => {
+  it('sets independent emphasis colors on the rendered preview only', () => {
+    const html = preview('**bold** and *italic*', {
+      ...DEFAULT_APPEARANCE,
+      previewBoldColor: '#123456',
+      previewItalicColor: '#abcdef',
+    });
+    assert.match(
+      html,
+      /style="--preview-bold-color:#123456;--preview-italic-color:#abcdef"/,
+    );
+    assert.match(html, /<strong[^>]*>bold<\/strong>/);
+    assert.match(html, /<em[^>]*>italic<\/em>/);
+
+    const defaultHtml = preview('**bold** and *italic*');
+    assert.doesNotMatch(defaultHtml, /--preview-(?:bold|italic)-color/);
+    assert.match(defaultHtml, /<strong[^>]*>bold<\/strong>/);
+    assert.match(defaultHtml, /<em[^>]*>italic<\/em>/);
+  });
   it('nests sections and closes at equal or higher heading levels', () => {
     const html = preview(
       '# One\nbody\n## Inner\ninside\n## Equal\nnext\n# Two\nend',
