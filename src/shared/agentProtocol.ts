@@ -124,6 +124,25 @@ export type AgentRequest =
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
       requestId: string;
+      type: 'discover';
+      vaultId: string;
+      query?: string;
+      limit?: number;
+      sourcePath?: string;
+      depth?: number;
+      includeSource?: boolean;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'resolve-link';
+      vaultId: string;
+      sourcePath: string;
+      target: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
       type: 'disconnect';
       sessionId: AgentSessionId;
     };
@@ -233,6 +252,31 @@ export type AgentResponse =
       ok: true;
       type: 'context';
       context: AgentContext;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'discovery';
+      vaultId: string;
+      results: Array<{ path: string; name: string; excerpt?: string }>;
+      unresolved: Array<{
+        sourcePath: string;
+        target: string;
+        reason: 'missing' | 'ambiguous' | 'invalid';
+      }>;
+      truncated?: boolean;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'link-resolution';
+      vaultId: string;
+      sourcePath: string;
+      target: string;
+      path?: string;
+      reason?: 'missing' | 'ambiguous' | 'invalid';
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;

@@ -8,8 +8,8 @@ import {
   shell,
 } from 'electron';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { realpath } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
@@ -32,6 +32,7 @@ import {
 } from './vault/vaultAssets';
 import { savePastedImage } from './vault/pasteImage';
 import { VaultWriteBarrier } from './vault/writeBarrier';
+import { discoverVaultNotes, resolveVaultLink } from './main/vaultDiscovery';
 import { resolveVaultNote } from './vault/vaultNoteResolver';
 import { createFolder, createMarkdownNote } from './vault/vaultCreation';
 import {
@@ -130,6 +131,16 @@ agentBroker = new AgentBroker({
   },
   withVaultLifecycle: runVaultLifecycleExclusive,
   renderer: agentTransport,
+  discover: async (vaultId, query, limit, options) =>
+    discoverVaultNotes(
+      () => vaultRegistry.list(),
+      vaultId,
+      query,
+      limit,
+      options,
+    ),
+  resolveLink: async (vaultId, sourcePath, target) =>
+    resolveVaultLink(() => vaultRegistry.list(), vaultId, sourcePath, target),
   getContext: async () => {
     const result = await agentTransport.dispatch({
       type: 'context',

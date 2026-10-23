@@ -185,6 +185,70 @@ describe('agent context', () => {
   });
 });
 
+describe('discovery request validation', () => {
+  it('accepts valid discovery options and rejects malformed fields without dispatching', async () => {
+    const calls: unknown[] = [];
+    const broker = new AgentBroker({
+      resolveTarget: async () => {
+        throw new Error('not used');
+      },
+      renderer: {
+        dispatch: async () => ({ ok: true, inspected: true, open: false }),
+      },
+      discover: async (...args) => {
+        calls.push(args);
+        return { results: [], unresolved: [] };
+      },
+      resolveLink: async (vaultId, sourcePath, target) => ({
+        sourcePath,
+        target,
+      }),
+    });
+    const good = await broker.handle(
+      req('discover', {
+        vaultId: 'v',
+        sourcePath: 'a.md',
+        depth: 0,
+        includeSource: false,
+        limit: 100,
+      }),
+    );
+    assert.equal(good.ok, true);
+    assert.equal(calls.length, 1);
+    const badInputs = [
+      { depth: -1, sourcePath: 'a.md' },
+      { depth: 6, sourcePath: 'a.md' },
+      { depth: 1.5, sourcePath: 'a.md' },
+      { depth: 1 },
+      { includeSource: true },
+      { includeSource: 'yes', sourcePath: 'a.md' },
+      { sourcePath: '' },
+      { limit: 0 },
+      { limit: 101 },
+      { limit: 1.2 },
+    ];
+    for (const fields of badInputs) {
+      const response = await broker.handle(
+        req('discover', { vaultId: 'v', ...fields }),
+      );
+      assert.equal(response.ok, false, JSON.stringify(fields));
+      assert.equal(response.error.code, 'INVALID_REQUEST');
+    }
+    for (const fields of [
+      { sourcePath: '' },
+      { sourcePath: 'a.md', target: '' },
+      { sourcePath: 'a.md', target: 'x'.repeat(513) },
+    ]) {
+      const response = await broker.handle(
+        req('resolve-link', { vaultId: 'v', target: 'x', ...fields }),
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_REQUEST');
+    }
+    assert.equal(calls.length, 1);
+  });
+});
+
 describe('renderer reload lifecycle', () => {
   it('keeps an in-flight append uncertain if an old renderer replies after reload', async () => {
     const response = deferred<AgentRendererResult>();

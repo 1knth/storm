@@ -203,7 +203,10 @@ export async function runCli(
       const beforeHelp = args.slice(0, helpIndex);
       const command = [...beforeHelp]
         .reverse()
-        .find((arg) => knownCommands.includes(arg));
+        .find(
+          (arg) =>
+            knownCommands.includes(arg) || arg === 'list' || arg === 'search',
+        );
       out(`${cliHelp(command)}\n`);
       return 0;
     }
@@ -226,7 +229,13 @@ export async function runCli(
         arg !== '--name' &&
         arg !== '--expected-version' &&
         arg !== '--dry-run' &&
-        arg !== '--operation-id'
+        arg !== '--operation-id' &&
+        arg !== '--vault' &&
+        arg !== '--limit' &&
+        arg !== '--source' &&
+        arg !== '--target' &&
+        arg !== '--depth' &&
+        arg !== '--include-source'
       ) {
         throw new CliUsageError(`Unknown option: ${arg}`);
       } else rest.push(arg);
@@ -236,7 +245,11 @@ export async function runCli(
       out(`${cliHelp()}\n`);
       return 0;
     }
-    if (!knownCommands.includes(command))
+    if (
+      !knownCommands.includes(command) &&
+      command !== 'list' &&
+      command !== 'search'
+    )
       throw new CliUsageError(`Unknown command: ${command}`);
     const nameFlag = rest.indexOf('--name');
     if (
@@ -302,6 +315,102 @@ export async function runCli(
           `${command} requires SESSION --expected-version N --stdin`,
         );
     }
+    let discoveryVaultId: string | undefined;
+    let discoveryQuery: string | undefined;
+    let discoveryLimit: number | undefined;
+    let discoverySourcePath: string | undefined;
+    let discoveryDepth: number | undefined;
+    let discoveryIncludeSource = false;
+    let discoveryJson = false;
+    let resolveVaultId: string | undefined;
+    let resolveSource: string | undefined;
+    let resolveTarget: string | undefined;
+    let resolveJson = false;
+    if (command === 'resolve-link') {
+      for (let index = 1; index < rest.length; index++) {
+        const flag = rest[index]!;
+        if (flag === '--vault') resolveVaultId = rest[++index];
+        else if (flag === '--source') resolveSource = rest[++index];
+        else if (flag === '--target') resolveTarget = rest[++index];
+        else if (flag === '--json') resolveJson = true;
+        else throw new CliUsageError(`Unknown resolve-link argument: ${flag}`);
+      }
+      if (!resolveVaultId || !resolveSource || !resolveTarget)
+        throw new CliUsageError(
+          'resolve-link requires --vault VAULT_ID --source NOTE_PATH --target WIKILINK_TARGET',
+        );
+    }
+    if (command === 'list' || command === 'search') {
+      const required = command === 'search' ? 2 : 1;
+      if (
+        rest.length < required + 1 ||
+        (command === 'search' && (!rest[1] || rest[1].startsWith('-')))
+      )
+        throw new CliUsageError(
+          command === 'search'
+            ? 'search requires QUERY --vault VAULT_ID [--limit N] [--json]'
+            : 'list requires --vault VAULT_ID [--limit N] [--json]',
+        );
+      discoveryQuery = command === 'search' ? rest[1] : undefined;
+      for (let index = required; index < rest.length; index++) {
+        const flag = rest[index]!;
+        if (flag === '--vault') {
+          if (discoveryVaultId) throw new CliUsageError('Duplicate --vault');
+          discoveryVaultId = rest[++index];
+          if (!discoveryVaultId || discoveryVaultId.startsWith('-'))
+            throw new CliUsageError('--vault requires a vault ID');
+        } else if (flag === '--limit') {
+          if (discoveryLimit !== undefined)
+            throw new CliUsageError('Duplicate --limit');
+          const value = rest[++index];
+          if (
+            !value ||
+            !/^[1-9]\d*$/.test(value) ||
+            !Number.isSafeInteger(Number(value))
+          )
+            throw new CliUsageError('--limit requires a positive safe integer');
+          discoveryLimit = Number(value);
+        } else if (flag === '--source') {
+          if (discoverySourcePath)
+            throw new CliUsageError('Duplicate --source');
+          discoverySourcePath = rest[++index];
+          if (!discoverySourcePath || discoverySourcePath.startsWith('-'))
+            throw new CliUsageError('--source requires a note path');
+        } else if (flag === '--depth') {
+          if (discoveryDepth !== undefined)
+            throw new CliUsageError('Duplicate --depth');
+          const value = rest[++index];
+          if (!value || !/^[0-5]$/.test(value))
+            throw new CliUsageError('--depth requires an integer from 0 to 5');
+          discoveryDepth = Number(value);
+        } else if (flag === '--include-source') {
+          if (discoveryIncludeSource)
+            throw new CliUsageError('Duplicate --include-source');
+          discoveryIncludeSource = true;
+        } else if (flag === '--json') {
+          if (discoveryJson) throw new CliUsageError('Duplicate --json');
+          discoveryJson = true;
+        } else throw new CliUsageError(`Unknown ${command} argument: ${flag}`);
+      }
+      if (!discoveryVaultId)
+        throw new CliUsageError(`${command} requires --vault VAULT_ID`);
+      if (
+        command !== 'search' &&
+        (discoverySourcePath ||
+          discoveryDepth !== undefined ||
+          discoveryIncludeSource)
+      )
+        throw new CliUsageError(
+          'Linked discovery options are supported only by search',
+        );
+      if (
+        (discoveryDepth !== undefined || discoveryIncludeSource) &&
+        !discoverySourcePath
+      )
+        throw new CliUsageError(
+          '--depth and --include-source require --source NOTE_PATH',
+        );
+    }
     if (
       command === 'context' &&
       (rest.length > 2 || (rest[1] && rest[1] !== '--json'))
@@ -359,6 +468,25 @@ export async function runCli(
     };
     let result: any;
     if (command === 'context') result = await request({ type: 'context' });
+    else if (command === 'resolve-link')
+      result = await request({
+        type: 'resolve-link',
+        vaultId: resolveVaultId!,
+        sourcePath: resolveSource!,
+        target: resolveTarget!,
+      });
+    else if (command === 'list' || command === 'search')
+      result = await request({
+        type: 'discover',
+        vaultId: discoveryVaultId!,
+        ...(discoveryQuery !== undefined ? { query: discoveryQuery } : {}),
+        ...(discoveryLimit !== undefined ? { limit: discoveryLimit } : {}),
+        ...(discoverySourcePath !== undefined
+          ? { sourcePath: discoverySourcePath }
+          : {}),
+        ...(discoveryDepth !== undefined ? { depth: discoveryDepth } : {}),
+        ...(discoveryIncludeSource ? { includeSource: true } : {}),
+      });
     else if (command === 'inspect' && rest[1] && rest[2] === '--json')
       result = await request({ type: 'inspect', absolutePath: rest[1] });
     else if (command === 'connect' && rest[1] && rest[2] === '--json')
@@ -519,7 +647,24 @@ export async function runCli(
     }
     if (command === 'context' && rest[1] !== '--json')
       out(`${formatContext(result.context)}\n`);
-    else out(`${JSON.stringify(result)}\n`);
+    else if (command === 'resolve-link' && !resolveJson)
+      out(
+        result.path
+          ? `${result.path}\n`
+          : `Unresolved (${result.reason}): [[${result.target}]] from ${result.sourcePath}\n`,
+      );
+    else if ((command === 'list' || command === 'search') && !discoveryJson) {
+      const notes = result.results.length
+        ? `${result.results.map((note: { path: string; name: string; excerpt?: string }) => `${note.name}\t${note.path}${note.excerpt ? `\n${note.excerpt}` : ''}`).join('\n')}\n`
+        : '(no notes)\n';
+      const links = result.unresolved?.length
+        ? `Unresolved links:\n${result.unresolved.map((link: { sourcePath: string; target: string; reason: string }) => `  ${link.reason}: [[${link.target}]] from ${link.sourcePath}`).join('\n')}\n`
+        : '';
+      const truncated = result.truncated
+        ? 'Traversal truncated at its safety limit.\n'
+        : '';
+      out(notes + links + truncated);
+    } else out(`${JSON.stringify(result)}\n`);
     return 0;
   } catch (error) {
     if (error instanceof CliUsageError) {
