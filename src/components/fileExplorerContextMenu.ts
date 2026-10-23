@@ -1,6 +1,9 @@
 import type { ContextMenuItem } from './ContextMenu';
 
-type ExplorerTarget = { path: string; kind: 'note' | 'folder' | 'image' };
+type ExplorerTarget = {
+  path: string;
+  kind: 'note' | 'folder' | 'image' | 'pdf';
+};
 
 export function absoluteExplorerPath(
   vaultPath: string,
@@ -22,7 +25,18 @@ export function getExplorerContextMenuItems(
   onOpenLocation?: (path: string, kind: ExplorerTarget['kind']) => void,
   onRename?: (path: string, kind: ExplorerTarget['kind']) => void,
   onCopyPath?: (path: string, kind: ExplorerTarget['kind']) => void,
+  onOpen?: (path: string, kind: ExplorerTarget['kind']) => void,
 ): ContextMenuItem[] {
+  const openAction: ContextMenuItem[] =
+    target?.kind === 'pdf' && onOpen
+      ? [
+          {
+            id: 'open-entry',
+            label: 'Open',
+            onSelect: () => onOpen(target.path, target.kind),
+          },
+        ]
+      : [];
   const locationAction: ContextMenuItem[] =
     target && onOpenLocation
       ? [
@@ -67,6 +81,7 @@ export function getExplorerContextMenuItems(
 
   if (target && target.kind !== 'folder') {
     return [
+      ...openAction,
       ...renameAction,
       ...copyPathAction,
       ...locationAction,

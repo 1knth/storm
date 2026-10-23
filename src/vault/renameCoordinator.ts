@@ -54,6 +54,7 @@ export function remapRenamedTabs<
     kind: string;
     path?: string;
     filename?: string;
+    relativePath?: string;
     note?: { path: string; content: string; revision: string };
     state?: { doc: { toString(): string } };
   },
@@ -63,12 +64,18 @@ export function remapRenamedTabs<
   createState: (content: string) => T extends { state?: infer S } ? S : never,
 ): T[] {
   return tabs.map((tab) => {
-    if (tab.kind === 'image' && tab.path) {
-      const path = remapRenamedPath(tab.path, rename.oldPath, rename.newPath);
+    if (
+      (tab.kind === 'image' && tab.path) ||
+      (tab.kind === 'pdf' && tab.relativePath)
+    ) {
+      const oldPath = tab.kind === 'image' ? tab.path! : tab.relativePath!;
+      const path = remapRenamedPath(oldPath, rename.oldPath, rename.newPath);
       return (
-        path === tab.path
+        path === oldPath
           ? tab
-          : { ...tab, path, filename: path.split('/').at(-1) }
+          : tab.kind === 'image'
+            ? { ...tab, path, filename: path.split('/').at(-1) }
+            : { ...tab, relativePath: path }
       ) as T;
     }
     if (tab.kind !== 'note' || !tab.note || !tab.state) return tab;
