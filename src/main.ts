@@ -611,7 +611,9 @@ ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
       ? 'Folder.'
       : target.kind === 'image'
         ? 'Image.'
-        : 'Markdown note.';
+        : target.kind === 'pdf'
+          ? 'PDF document.'
+          : 'Markdown note.';
   const contains =
     target.kind === 'folder' ? ' Its entire contents will be moved.' : '';
   const choice = await dialog.showMessageBox(

@@ -36,6 +36,27 @@ async function fixture() {
   return { root, service, note, vaultPath: service.getSelectedVaultPath()! };
 }
 
+test('renames PDFs as opaque binary files, preserving their extension and note contents', async () => {
+  const { root, service } = await fixture();
+  const bytes = Buffer.from([0, 1, 2, 255, 37, 80, 68, 70]);
+  await writeFile(path.join(root, 'Guide.PDF'), bytes);
+
+  const result = await service.renameEntryAndUpdateLinks(
+    'Guide.PDF',
+    'Manual.PDF',
+  );
+
+  assert.equal(result.kind, 'pdf');
+  assert.deepEqual(result.changedNotes, []);
+  assert.deepEqual(await readFile(path.join(root, 'Manual.PDF')), bytes);
+  assert.equal(
+    await readFile(path.join(root, 'note.md'), 'utf8'),
+    'original note',
+  );
+  await assert.rejects(service.renameEntry('Manual.PDF', 'NoExtension'));
+  assert.deepEqual(await readFile(path.join(root, 'Manual.PDF')), bytes);
+});
+
 test('renames supported entries and folders atomically within the selected vault', async () => {
   const { root, service } = await fixture();
   await mkdir(path.join(root, 'folder'));

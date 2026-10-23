@@ -1614,7 +1614,11 @@ function App() {
       const matchesDeleted = (tab: TabSnapshot) => {
         if (tab.kind === 'empty' || tab.vaultId !== vaultId) return false;
         const tabPath = normalize(
-          tab.kind === 'note' ? tab.note.path : tab.path,
+          tab.kind === 'note'
+            ? tab.note.path
+            : tab.kind === 'pdf'
+              ? tab.relativePath
+              : tab.path,
         );
         return (
           tabPath === deletedPath ||

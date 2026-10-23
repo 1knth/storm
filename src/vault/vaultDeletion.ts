@@ -2,7 +2,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { isSupportedVaultImagePath } from './vaultAssets';
 
-export type DeletionKind = 'note' | 'folder' | 'image';
+export type DeletionKind = 'note' | 'folder' | 'image' | 'pdf';
 export interface DeletionTarget {
   absolutePath: string;
   relativePath: string;
@@ -52,9 +52,14 @@ export async function resolveDeletionTarget(
     // Markdown note.
   } else if (target.isFile() && isSupportedVaultImagePath(current)) {
     // Supported raster image.
+  } else if (
+    target.isFile() &&
+    path.extname(current).toLowerCase() === '.pdf'
+  ) {
+    // PDF document.
   } else {
     throw new Error(
-      'Only Markdown notes, supported images and folders can be moved to Trash',
+      'Only Markdown notes, supported images, PDFs and folders can be moved to Trash',
     );
   }
   const canonical = await realpath(current);
@@ -67,7 +72,9 @@ export async function resolveDeletionTarget(
       ? 'folder'
       : isSupportedVaultImagePath(current)
         ? 'image'
-        : 'note',
+        : path.extname(current).toLowerCase() === '.pdf'
+          ? 'pdf'
+          : 'note',
     dev: target.dev,
     ino: target.ino,
     mtimeMs: target.mtimeMs,
