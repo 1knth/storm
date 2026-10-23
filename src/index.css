@@ -1,5 +1,13 @@
 @import 'tailwindcss';
 
+.markdown-preview-content strong {
+  color: var(--preview-bold-color, inherit);
+}
+
+.markdown-preview-content em {
+  color: var(--preview-italic-color, inherit);
+}
+
 /* Keep the preview's fold affordance out of normal heading layout. */
 .preview-fold-heading {
   position: relative;

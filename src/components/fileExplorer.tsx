@@ -872,6 +872,55 @@ export default function FileExplorer({
                     <p className="mb-3 text-sm text-white/60">
                       Fine-tune editor highlights, Mermaid diagrams, and charts.
                     </p>
+                    <fieldset className="space-y-2 border-t border-white/10 pt-3">
+                      <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/55">
+                        Markdown preview emphasis
+                      </legend>
+                      <p className="text-xs text-white/50">
+                        These colors affect the rendered preview only.
+                      </p>
+                      {(
+                        [
+                          ['Bold text color', 'previewBoldColor'],
+                          ['Italic text color', 'previewItalicColor'],
+                        ] as const
+                      ).map(([label, key]) => (
+                        <div
+                          key={key}
+                          className="grid grid-cols-[1fr_auto] items-center gap-3 text-xs text-white/80"
+                        >
+                          <label htmlFor={`appearance-${key}`}>{label}</label>
+                          <span className="flex items-center gap-2">
+                            <input
+                              id={`appearance-${key}`}
+                              aria-label={label}
+                              type="color"
+                              style={{ colorScheme: 'dark' }}
+                              value={appearance[key] ?? '#ffffff'}
+                              onChange={(event) =>
+                                onAppearanceChange({
+                                  ...appearance,
+                                  [key]: event.target.value,
+                                })
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="app-button text-xs"
+                              disabled={appearance[key] === null}
+                              onClick={() =>
+                                onAppearanceChange({
+                                  ...appearance,
+                                  [key]: null,
+                                })
+                              }
+                            >
+                              Use theme default
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </fieldset>
                     {(
                       [
                         [

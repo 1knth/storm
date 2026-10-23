@@ -48,6 +48,37 @@ describe('appearance preferences', () => {
     );
     strictEqual(result.mermaidGroupText, DEFAULT_APPEARANCE.mermaidGroupText);
   });
+  it('migrates preview emphasis colors independently and restores theme defaults', () => {
+    const legacy = validateAppearance({ folderIcon: '#123456' });
+    strictEqual(legacy.previewBoldColor, null);
+    strictEqual(legacy.previewItalicColor, null);
+
+    const custom = validateAppearance({
+      previewBoldColor: '#123456',
+      previewItalicColor: '#abcdef',
+    });
+    strictEqual(custom.previewBoldColor, '#123456');
+    strictEqual(custom.previewItalicColor, '#abcdef');
+    strictEqual(
+      validateAppearance({ previewBoldColor: 'var(--bad)' }).previewBoldColor,
+      null,
+    );
+
+    const memory = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => memory.get(key) ?? null,
+      setItem: (key: string, value: string) => memory.set(key, value),
+    };
+    saveAppearance(storage, custom);
+    strictEqual(loadAppearance(storage).previewBoldColor, '#123456');
+    strictEqual(loadAppearance(storage).previewItalicColor, '#abcdef');
+    saveAppearance(storage, {
+      ...custom,
+      previewBoldColor: null,
+    });
+    strictEqual(loadAppearance(storage).previewBoldColor, null);
+    strictEqual(loadAppearance(storage).previewItalicColor, '#abcdef');
+  });
   it('migrates legacy preferences and persists custom folder icon colors', () => {
     strictEqual(
       validateAppearance({ selection: '#123456' }).folderIcon,
