@@ -145,7 +145,7 @@ declare global {
       openDirectory: () => Promise<void>;
       openLocation: (
         relativePath: string,
-        kind: 'note' | 'image' | 'folder',
+        kind: 'note' | 'image' | 'pdf' | 'folder',
       ) => Promise<void>;
       registryList: () => Promise<{
         vaults: RegisteredVault[];
@@ -199,7 +199,7 @@ declare global {
       renameEntry: (request: { path: string; newName: string }) => Promise<{
         oldPath: string;
         newPath: string;
-        kind: 'note' | 'image' | 'directory';
+        kind: 'note' | 'image' | 'pdf' | 'directory';
         changedNotes: { path: string; content: string; revision: string }[];
       }>;
       deleteEntry: (request: {

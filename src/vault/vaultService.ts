@@ -116,7 +116,7 @@ export class VaultService {
   ): Promise<{
     oldPath: string;
     newPath: string;
-    kind: 'note' | 'image' | 'directory';
+    kind: 'note' | 'image' | 'pdf' | 'directory';
   }> {
     const move = await this.validateRenameEntry(relativePath, newBaseName);
     if (move.oldPath !== move.newPath)
@@ -130,7 +130,7 @@ export class VaultService {
   ): Promise<{
     oldPath: string;
     newPath: string;
-    kind: 'note' | 'image' | 'directory';
+    kind: 'note' | 'image' | 'pdf' | 'directory';
     source: string;
     destination: string;
   }> {
@@ -185,8 +185,12 @@ export class VaultService {
         ? 'note'
         : isSupportedImage(source)
           ? 'image'
-          : null;
+          : path.extname(source).toLowerCase() === '.pdf'
+            ? 'pdf'
+            : null;
     if (!kind) throw new Error('Unsupported rename entry');
+    if (kind === 'pdf' && path.extname(newBaseName) !== path.extname(source))
+      throw new Error('PDF file extension must be preserved');
     const destination = path.join(path.dirname(source), newBaseName);
     if (!withinRoot(destination)) throw new Error('Invalid rename destination');
     const newPath = path
@@ -213,13 +217,20 @@ export class VaultService {
   ): Promise<{
     oldPath: string;
     newPath: string;
-    kind: 'note' | 'image' | 'directory';
+    kind: 'note' | 'image' | 'pdf' | 'directory';
     changedNotes: { path: string; content: string; revision: string }[];
   }> {
     // Reject invalid requests before scanning unrelated notes for link rewrites.
     const move = await this.validateRenameEntry(relativePath, newBaseName);
     const root = this.selectedVaultPath;
     if (!root) throw new Error('No vault selected');
+    if (move.kind === 'pdf') {
+      const renamed = await this.renameEntry(
+        move.oldPath,
+        path.posix.basename(move.newPath),
+      );
+      return { ...renamed, changedNotes: [] };
+    }
     const entries = await this.listNotes();
     const documents: { path: string; content: string; revision: string }[] = [];
     for (const entry of entries) {

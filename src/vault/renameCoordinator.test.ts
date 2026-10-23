@@ -66,6 +66,7 @@ test('rename tab remap installs committed changed-note content and revision only
       state: makeState('old'),
     },
     { kind: 'image', path: 'folder/image.png', filename: 'image.png' },
+    { kind: 'pdf', relativePath: 'folder/guide.pdf' },
     {
       kind: 'note',
       note: { path: 'other.md', content: 'keep', revision: 'r3' },
@@ -90,7 +91,8 @@ test('rename tab remap installs committed changed-note content and revision only
   assert.equal(result[1].note?.path, 'renamed/child.md');
   assert.equal(result[1].state?.doc.toString(), 'old');
   assert.equal(result[2].path, 'renamed/image.png');
-  assert.equal(result[3], tabs[3]);
+  assert.equal(result[3].relativePath, 'renamed/guide.pdf');
+  assert.equal(result[4], tabs[4]);
 });
 
 test('renamed tab assignments retain groups for notes, descendants, and images', () => {

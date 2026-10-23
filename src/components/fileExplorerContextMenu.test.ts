@@ -15,7 +15,7 @@ function ids(items: ReturnType<typeof getExplorerContextMenuItems>) {
 }
 
 describe('file explorer context menu', () => {
-  it.each(['note', 'image'] as const)(
+  it.each(['note', 'image', 'pdf'] as const)(
     'shows only the delete action for a %s, including nested clicked content',
     (kind) => {
       const items = getExplorerContextMenuItems(
@@ -92,6 +92,7 @@ describe('file explorer context menu', () => {
   it.each([
     [{ path: 'nested/note.md', kind: 'note' }, '/vault/nested/note.md'],
     [{ path: 'nested/image.png', kind: 'image' }, '/vault/nested/image.png'],
+    [{ path: 'nested/guide.pdf', kind: 'pdf' }, '/vault/nested/guide.pdf'],
     [{ path: 'nested/folder', kind: 'folder' }, '/vault/nested/folder'],
   ] as const)(
     'copies the full absolute path for %s',
@@ -112,6 +113,29 @@ describe('file explorer context menu', () => {
       expect(copied).toEqual([absolutePath]);
     },
   );
+
+  it('provides PDF Open, Rename, Copy Path, Open Location, and Trash actions', () => {
+    const called: string[] = [];
+    const items = getExplorerContextMenuItems(
+      { path: 'docs/guide.pdf', kind: 'pdf' },
+      'docs',
+      create,
+      () => called.push('trash'),
+      () => called.push('location'),
+      () => called.push('rename'),
+      () => called.push('copy'),
+      () => called.push('open'),
+    );
+    expect(ids(items)).toEqual([
+      'open-entry',
+      'rename-entry',
+      'copy-path',
+      'open-location',
+      'delete-entry',
+    ]);
+    for (const item of items) if (item.type !== 'separator') item.onSelect?.();
+    expect(called).toEqual(['open', 'rename', 'copy', 'location', 'trash']);
+  });
 
   it('normalizes relative separators using the vault path platform style', () => {
     expect(absoluteExplorerPath('C:\\vault\\', 'nested/file.md')).toBe(

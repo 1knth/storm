@@ -80,7 +80,10 @@ type FileExplorerProps = {
   vaultId: string | null;
   onCreate: (kind: 'note' | 'folder', parentPath: string) => void;
   onCreateNote: () => void;
-  onDeleteEntry?: (path: string, kind: 'note' | 'folder' | 'image') => void;
+  onDeleteEntry?: (
+    path: string,
+    kind: 'note' | 'folder' | 'image' | 'pdf',
+  ) => void;
   onRenameEntry: (path: string, newName: string) => Promise<void>;
   creationPending: boolean;
   onAddVault: () => void;
@@ -164,7 +167,7 @@ export default function FileExplorer({
   }, [notes, optimisticRename]);
   const [renameDialog, setRenameDialog] = useState<{
     path: string;
-    kind: 'note' | 'folder' | 'image';
+    kind: 'note' | 'folder' | 'image' | 'pdf';
     name: string;
   } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -213,7 +216,7 @@ export default function FileExplorer({
   const [contextMenu, setContextMenu] = useState<{
     position: ContextMenuPosition;
     parent: string;
-    target: { path: string; kind: 'note' | 'folder' | 'image' } | null;
+    target: { path: string; kind: 'note' | 'folder' | 'image' | 'pdf' } | null;
     returnFocusTo: HTMLElement | null;
   } | null>(null);
   const openContextMenu = (
@@ -226,10 +229,11 @@ export default function FileExplorer({
     const entryKind = row?.dataset.entryKind;
     const isImage = entryKind === 'image';
     const isNote = entryKind === 'note';
+    const isPdf = entryKind === 'pdf';
     if (
       row &&
       (!path ||
-        (!isFolder && !isImage && !isNote) ||
+        (!isFolder && !isImage && !isNote && !isPdf) ||
         (isFolder && entryKind !== 'directory'))
     ) {
       setContextMenu(null);
@@ -243,7 +247,16 @@ export default function FileExplorer({
       returnFocusTo,
       parent: !path || isFolder ? path : path.split('/').slice(0, -1).join('/'),
       target: path
-        ? { path, kind: isFolder ? 'folder' : isImage ? 'image' : 'note' }
+        ? {
+            path,
+            kind: isFolder
+              ? 'folder'
+              : isImage
+                ? 'image'
+                : isPdf
+                  ? 'pdf'
+                  : 'note',
+          }
         : null,
     });
   };
@@ -306,7 +319,10 @@ export default function FileExplorer({
               }
             } else if (event.key !== 'h') {
               event.preventDefault();
-              if (row.dataset.entryKind === 'image') {
+              if (
+                row.dataset.entryKind === 'image' ||
+                row.dataset.entryKind === 'pdf'
+              ) {
                 if (event.key === 'Enter')
                   row.querySelector<HTMLButtonElement>('button')?.click();
               } else if (event.key === 'Enter')
@@ -483,6 +499,7 @@ export default function FileExplorer({
                 onError: onCopyPathError,
               });
             },
+            (entryPath) => onPdfSelect(entryPath),
           )}
         />
       )}
