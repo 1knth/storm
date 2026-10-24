@@ -180,7 +180,12 @@ describe('quiz question types', () => {
           { ok: false, error: 'invalid-input' },
         );
       assert.equal(
-        (await m.learner(2, 'valid', { matches: { l1: 'r1', l2: 'r2' } })).ok,
+        (
+          await m.learner(2, 'valid', {
+            matches: { l1: 'r1', l2: 'r2' },
+            reasoning: 'This explains the connection.',
+          })
+        ).ok,
         true,
       );
     } finally {

@@ -471,7 +471,8 @@ export class QuizService {
           if (
             !matches ||
             request.choiceId !== undefined ||
-            request.reasoning !== undefined ||
+            (request.reasoning !== undefined &&
+              typeof request.reasoning !== 'string') ||
             request.answer !== undefined ||
             Object.keys(matches).length !== leftIds.length ||
             leftIds.some(
@@ -483,7 +484,8 @@ export class QuizService {
           )
             return { ok: false, error: 'invalid-input' };
           question.matchesDraft = structuredClone(matches);
-          answerText = JSON.stringify(matches);
+          question.reasoningDraft = request.reasoning ?? '';
+          answerText = `${JSON.stringify(matches)}${request.reasoning?.trim() ? `\nReasoning: ${request.reasoning}` : ''}`;
         } else {
           const answer = request.answer;
           const limit = question.kind === 'short-answer' ? 2000 : 20000;
