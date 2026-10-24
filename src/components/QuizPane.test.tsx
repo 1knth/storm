@@ -21,6 +21,10 @@ function render(markdown: string, appearance?: Appearance) {
 }
 
 describe('quiz Markdown links', () => {
+  it('memoizes the Markdown renderer type', () => {
+    assert.equal(QuizMarkdown.$$typeof, Symbol.for('react.memo'));
+    assert.equal(React.createElement(QuizMarkdown).type, QuizMarkdown);
+  });
   it('opens only absolute HTTP(S) links in a new window for the Electron external-link handler', () => {
     const html = render('[secure](https://example.com/path) [plain](http://example.org)');
     assert.match(html, /href="https:\/\/example\.com\/path" target="_blank" rel="noopener noreferrer"/);

@@ -1,5 +1,6 @@
 import {
   createContext,
+  memo,
   useContext,
   useCallback,
   useEffect,
@@ -330,7 +331,7 @@ export function QuizVerdict({
   );
 }
 
-export function QuizMarkdown({
+function QuizMarkdownContent({
   children,
   appearance,
   reveal = false,
@@ -362,6 +363,8 @@ export function QuizMarkdown({
     </QuizMarkdownAppearanceContext.Provider>
   );
 }
+
+export const QuizMarkdown = memo(QuizMarkdownContent);
 
 export default function QuizPane({
   visible,
