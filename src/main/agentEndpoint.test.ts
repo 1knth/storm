@@ -1,9 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { connect } from 'node:net';
+import { connect, createServer } from 'node:net';
 import {
   startAgentEndpoint,
   readAgentEndpoint,
@@ -12,6 +12,70 @@ import {
 import { AgentBroker } from './agentBroker';
 
 describe('agent endpoint', () => {
+  test('settles on peer close and rejects an incomplete response at EOF', async () => {
+    for (const response of ['', '{"partial":']) {
+      const server = createServer((socket) => {
+        socket.once('data', () => {
+          if (response) socket.write(response);
+          socket.end();
+        });
+      });
+      const socketPath = join(
+        await mkdtemp(join(tmpdir(), 'storm-agent-client-')),
+        'endpoint.sock',
+      );
+      await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+      try {
+        await assert.rejects(
+          sendAgentRequest(
+            { endpoint: socketPath, token: 'x' },
+            {
+              protocol: 1,
+              requestId: 'eof',
+              type: 'connect',
+              absolutePath: '/fake.md',
+            },
+          ),
+          /closed before completing its response/,
+        );
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    }
+  });
+
+  test(
+    'times out when a peer remains connected without responding',
+    { timeout: 35_000 },
+    async () => {
+    const server = createServer((socket) => socket.on('data', () => {}));
+    const dir = await mkdtemp(join(tmpdir(), 'storm-agent-timeout-'));
+    const socketPath = join(dir, 'endpoint.sock');
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    try {
+      await assert.rejects(
+        sendAgentRequest(
+          { endpoint: socketPath, token: 'x' },
+          {
+            protocol: 1,
+            requestId: 'timeout',
+            type: 'connect',
+            absolutePath: '/fake.md',
+          },
+        ),
+        /Agent request timed out/,
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+      await rm(dir, { recursive: true, force: true });
+    }
+    },
+  );
+
   test('authenticates then dispatches bounded framed broker requests', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'storm-agent-'));
     const broker = new AgentBroker({

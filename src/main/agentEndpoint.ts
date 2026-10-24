@@ -156,6 +156,8 @@ export async function readAgentEndpoint(
     throw new Error('Invalid endpoint metadata');
   return value as AgentEndpointInfo;
 }
+const AGENT_REQUEST_TIMEOUT_MS = 30_000;
+
 export function sendAgentRequest(
   info: AgentEndpointInfo,
   request: AgentRequest,
@@ -163,21 +165,49 @@ export function sendAgentRequest(
   return new Promise((resolve, reject) => {
     const socket = connectSocket(info.endpoint);
     let buffer = '';
-    socket.once('error', reject);
-    socket.on('connect', () =>
-      socket.write(`${JSON.stringify({ token: info.token, request })}\n`),
-    );
-    socket.on('data', (chunk) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.removeListener('connect', onConnect);
+      socket.removeListener('data', onData);
+      socket.removeListener('end', onEnd);
+      socket.removeListener('error', onError);
+      socket.removeListener('close', onClose);
+    };
+    const finish = (error?: unknown, value?: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.destroy();
+      if (error !== undefined) reject(error);
+      else resolve(value);
+    };
+    const onConnect = () =>
+      socket.write(`${JSON.stringify({ token: info.token, request })}\n`);
+    const onData = (chunk: Buffer) => {
       buffer += chunk.toString();
       const end = buffer.indexOf('\n');
       if (end >= 0) {
-        socket.end();
         try {
-          resolve(JSON.parse(buffer.slice(0, end)));
+          finish(undefined, JSON.parse(buffer.slice(0, end)));
         } catch (error) {
-          reject(error);
+          finish(error);
         }
       }
-    });
+    };
+    const onEnd = () =>
+      finish(new Error('Agent endpoint closed before completing its response'));
+    const onError = (error: Error) => finish(error);
+    const onClose = () =>
+      finish(new Error('Agent endpoint closed before completing its response'));
+    const timeout = setTimeout(
+      () => finish(new Error('Agent request timed out')),
+      AGENT_REQUEST_TIMEOUT_MS,
+    );
+    socket.once('connect', onConnect);
+    socket.on('data', onData);
+    socket.once('end', onEnd);
+    socket.once('error', onError);
+    socket.once('close', onClose);
   });
 }
