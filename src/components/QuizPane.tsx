@@ -1001,7 +1001,7 @@ export default function QuizPane({
                 </div>
                 <form
                   ref={composerRef}
-                  className={`quiz-composer absolute inset-x-0 bottom-3 z-10 mx-auto flex w-[80%] max-w-full min-w-0 shrink-0 flex-col rounded-xl p-1 ${session.currentQuestion && qaExpanded ? 'gap-1' : ''}`}
+                  className={`quiz-composer absolute inset-x-0 bottom-3 z-10 mx-auto flex w-[80%] max-w-full min-w-0 shrink-0 flex-col rounded-xl p-1 ${session.currentQuestion?.status === 'open' && qaExpanded ? 'gap-1' : ''}`}
                   onSubmit={(e) => {
                     e.preventDefault();
                     sendComposer();
@@ -1068,7 +1068,7 @@ export default function QuizPane({
                           />
                         </div>
                       )
-                    : session.currentQuestion && (
+                    : session.currentQuestion?.status === 'open' && (
                         <>
                           {qaExpanded && (
                             <div
@@ -1261,180 +1261,173 @@ export default function QuizPane({
                                     />
                                   </>
                                 )}
-                              {session.currentQuestion.status ===
-                                'feedback' && (
-                                <>
-                                  <QuizVerdict
-                                    verdict={session.currentQuestion.verdict}
-                                    answerLabel={
-                                      session.currentQuestion.choices.find(
-                                        (choice) =>
-                                          choice.id ===
-                                          session.currentQuestion
-                                            ?.selectedChoiceId,
-                                      )?.text
-                                    }
-                                  />
-                                  <div className="quiz-agent-markdown mt-3">
-                                    <QuizMarkdown
-                                      children={
-                                        session.currentQuestion.feedback ?? ''
-                                      }
-                                    />
-                                  </div>
-                                  <button
-                                    type="button"
-                                    disabled={!connected || busy}
-                                    className="quiz-action-button mt-3 rounded px-3.5 py-1.5 disabled:opacity-40"
-                                    onClick={() => send('continue')}
-                                  >
-                                    Continue
-                                  </button>
-                                </>
-                              )}
                             </div>
                           )}
                         </>
                       )}
                   <div className="flex min-w-0 items-center gap-1">
-                    <div className="relative flex min-w-0 flex-1">
-                      {!!sessionImages.length && (
-                        <div className="flex flex-wrap gap-2 px-2 pt-2">
-                          {sessionImages.map((image) => (
-                            <span key={image.id} className="relative">
-                              <img
-                                src={image.url}
-                                alt="Image attachment preview"
-                                className="h-16 w-16 rounded object-cover"
-                              />
-                              <button
-                                type="button"
-                                aria-label="Remove image attachment"
-                                className="absolute -right-1 -top-1 rounded-full bg-black px-1"
-                                onClick={() => {
-                                  void bridge.removeImage(session.id, image.id);
-                                  URL.revokeObjectURL(image.url);
-                                  setPendingImages((current) => ({
-                                    ...current,
-                                    [session.id]: (
-                                      current[session.id] ?? []
-                                    ).filter((entry) => entry.id !== image.id),
-                                  }));
-                                }}
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      <textarea
-                        onPaste={(event) => {
-                          const files = getClipboardImages(event.clipboardData);
-                          if (!files.length || !session || !bridge) return;
-                          event.preventDefault();
-                          void (async () => {
-                            if (deletedSessions.current.has(session.id)) return;
-                            const existing =
-                              imagesRef.current[session.id] ?? [];
-                            let remainingBytes = Math.max(
-                              0,
-                              10 * 1024 * 1024 -
-                                existing.reduce(
-                                  (sum, image) => sum + image.size,
-                                  0,
-                                ),
-                            );
-                            for (const file of files.slice(
-                              0,
-                              Math.max(0, 4 - existing.length),
-                            )) {
-                              if (file.size > remainingBytes) {
-                                setError(
-                                  'Images are limited to 10 MB per message.',
-                                );
-                                continue;
-                              }
-                              remainingBytes -= file.size;
-                              const result = await bridge.addImage(session.id, {
-                                mimeType: file.type,
-                                data: new Uint8Array(await file.arrayBuffer()),
-                              });
-                              if (!result.ok) {
-                                setError(
-                                  `Could not add image: ${result.error}`,
-                                );
-                                continue;
-                              }
-                              if (deletedSessions.current.has(session.id)) {
-                                void bridge
-                                  .removeImage(session.id, result.value.id)
-                                  .catch(() => undefined);
-                                continue;
-                              }
-                              const image = {
-                                ...result.value,
-                                url: URL.createObjectURL(file),
-                              };
-                              setPendingImages((current) => ({
-                                ...current,
-                                [session.id]: [
-                                  ...(current[session.id] ?? []),
-                                  image,
-                                ],
-                              }));
-                            }
-                          })().catch(() =>
-                            setError('Could not read clipboard image.'),
-                          );
-                        }}
-                        rows={1}
-                        className="quiz-composer-input min-h-8 min-w-0 flex-1 resize-y rounded-2xl border-0 py-1.5 pl-3 pr-10 text-[13px] outline-none"
-                        placeholder="Write a message"
-                        aria-label="Write a message"
-                        onKeyDown={(event) =>
-                          handleQuizComposerEnter(
-                            {
-                              key: event.key,
-                              shiftKey: event.shiftKey,
-                              isComposing: event.nativeEvent.isComposing,
-                              preventDefault: () => event.preventDefault(),
-                            },
-                            connected &&
-                              !busy &&
-                              (hasChatMessage || canSubmitAnswer),
-                            sendComposer,
-                          )
-                        }
-                        value={draft}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setDraft(value);
-                          if (session) persistDraft(session.id);
-                        }}
-                        onBlur={() => {
-                          if (session) persistDraft(session.id, true);
-                        }}
-                      />
+                    {session.currentQuestion?.status === 'feedback' ? (
                       <button
-                        type="submit"
-                        disabled={
-                          !connected ||
-                          busy ||
-                          (!hasChatMessage && !canSubmitAnswer)
-                        }
-                        aria-label={
-                          hasChatMessage ? 'Send message' : 'Submit answer'
-                        }
-                        title={
-                          hasChatMessage ? 'Send message' : 'Submit answer'
-                        }
-                        className="absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-white/75 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                        type="button"
+                        disabled={!connected || busy}
+                        className="quiz-action-button rounded px-3.5 py-1.5 disabled:opacity-40"
+                        onClick={() => send('continue')}
                       >
-                        <FaTelegram aria-hidden="true" size={21} />
+                        Continue
                       </button>
-                    </div>
-                    {session.currentQuestion && (
+                    ) : (
+                      <div className="relative flex min-w-0 flex-1">
+                        {!!sessionImages.length && (
+                          <div className="flex flex-wrap gap-2 px-2 pt-2">
+                            {sessionImages.map((image) => (
+                              <span key={image.id} className="relative">
+                                <img
+                                  src={image.url}
+                                  alt="Image attachment preview"
+                                  className="h-16 w-16 rounded object-cover"
+                                />
+                                <button
+                                  type="button"
+                                  aria-label="Remove image attachment"
+                                  className="absolute -right-1 -top-1 rounded-full bg-black px-1"
+                                  onClick={() => {
+                                    void bridge.removeImage(
+                                      session.id,
+                                      image.id,
+                                    );
+                                    URL.revokeObjectURL(image.url);
+                                    setPendingImages((current) => ({
+                                      ...current,
+                                      [session.id]: (
+                                        current[session.id] ?? []
+                                      ).filter(
+                                        (entry) => entry.id !== image.id,
+                                      ),
+                                    }));
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <textarea
+                          onPaste={(event) => {
+                            const files = getClipboardImages(
+                              event.clipboardData,
+                            );
+                            if (!files.length || !session || !bridge) return;
+                            event.preventDefault();
+                            void (async () => {
+                              if (deletedSessions.current.has(session.id))
+                                return;
+                              const existing =
+                                imagesRef.current[session.id] ?? [];
+                              let remainingBytes = Math.max(
+                                0,
+                                10 * 1024 * 1024 -
+                                  existing.reduce(
+                                    (sum, image) => sum + image.size,
+                                    0,
+                                  ),
+                              );
+                              for (const file of files.slice(
+                                0,
+                                Math.max(0, 4 - existing.length),
+                              )) {
+                                if (file.size > remainingBytes) {
+                                  setError(
+                                    'Images are limited to 10 MB per message.',
+                                  );
+                                  continue;
+                                }
+                                remainingBytes -= file.size;
+                                const result = await bridge.addImage(
+                                  session.id,
+                                  {
+                                    mimeType: file.type,
+                                    data: new Uint8Array(
+                                      await file.arrayBuffer(),
+                                    ),
+                                  },
+                                );
+                                if (!result.ok) {
+                                  setError(
+                                    `Could not add image: ${result.error}`,
+                                  );
+                                  continue;
+                                }
+                                if (deletedSessions.current.has(session.id)) {
+                                  void bridge
+                                    .removeImage(session.id, result.value.id)
+                                    .catch(() => undefined);
+                                  continue;
+                                }
+                                const image = {
+                                  ...result.value,
+                                  url: URL.createObjectURL(file),
+                                };
+                                setPendingImages((current) => ({
+                                  ...current,
+                                  [session.id]: [
+                                    ...(current[session.id] ?? []),
+                                    image,
+                                  ],
+                                }));
+                              }
+                            })().catch(() =>
+                              setError('Could not read clipboard image.'),
+                            );
+                          }}
+                          rows={1}
+                          className="quiz-composer-input min-h-8 min-w-0 flex-1 resize-y rounded-2xl border-0 py-1.5 pl-3 pr-10 text-[13px] outline-none"
+                          placeholder="Write a message"
+                          aria-label="Write a message"
+                          onKeyDown={(event) =>
+                            handleQuizComposerEnter(
+                              {
+                                key: event.key,
+                                shiftKey: event.shiftKey,
+                                isComposing: event.nativeEvent.isComposing,
+                                preventDefault: () => event.preventDefault(),
+                              },
+                              connected &&
+                                !busy &&
+                                (hasChatMessage || canSubmitAnswer),
+                              sendComposer,
+                            )
+                          }
+                          value={draft}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setDraft(value);
+                            if (session) persistDraft(session.id);
+                          }}
+                          onBlur={() => {
+                            if (session) persistDraft(session.id, true);
+                          }}
+                        />
+                        <button
+                          type="submit"
+                          disabled={
+                            !connected ||
+                            busy ||
+                            (!hasChatMessage && !canSubmitAnswer)
+                          }
+                          aria-label={
+                            hasChatMessage ? 'Send message' : 'Submit answer'
+                          }
+                          title={
+                            hasChatMessage ? 'Send message' : 'Submit answer'
+                          }
+                          className="absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-white/75 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <FaTelegram aria-hidden="true" size={21} />
+                        </button>
+                      </div>
+                    )}
+                    {session.currentQuestion?.status === 'open' && (
                       <button
                         type="button"
                         className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/65 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
