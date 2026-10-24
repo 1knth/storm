@@ -20,6 +20,24 @@ function render(markdown: string, appearance?: Appearance) {
   );
 }
 
+describe('quiz Markdown links', () => {
+  it('opens only absolute HTTP(S) links in a new window for the Electron external-link handler', () => {
+    const html = render('[secure](https://example.com/path) [plain](http://example.org)');
+    assert.match(html, /href="https:\/\/example\.com\/path" target="_blank" rel="noopener noreferrer"/);
+    assert.match(html, /href="http:\/\/example\.org\/" target="_blank" rel="noopener noreferrer"/);
+  });
+
+  it('renders unsupported, malformed, and relative destinations as inert text', () => {
+    const html = render(
+      '[file](file:///tmp/a) [script](javascript:alert%281%29) [data](data:text/html,x) [custom](storm://open) [relative](../note) [bad](http://[)',
+    );
+    assert.doesNotMatch(html, /<a\\b/);
+    assert.match(html, /<span>file<\/span>/);
+    assert.match(html, /<span>relative<\/span>/);
+    assert.match(html, /<span>bad<\/span>/);
+  });
+});
+
 describe('quiz Markdown appearance inheritance', () => {
   it('inherits saved appearance from its pane context when no prop is passed', () => {
     const appearance = {
@@ -158,6 +176,83 @@ describe('quiz Markdown renderer', () => {
     assert.match(html, /<li>Outer item/);
     assert.doesNotMatch(html, /<li[^>]*style=/);
   });
+describe('quiz word reveal', () => {
+  it('reveals text nodes in order while preserving whitespace and inline markup', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(QuizMarkdown, {
+        reveal: true,
+        children: 'one **bold word**\nnext `code`',
+      }),
+    );
+
+    assert.match(html, /class="quiz-reveal-word"/);
+    assert.match(html, /<strong><span><span class="quiz-reveal-word"/);
+    assert.match(html, /<code>code<\/code>/);
+    assert.ok(html.includes('<strong>'));
+    assert.ok(html.includes('<br/><span>\n</span>'));
+    assert.match(html, /--quiz-word-index:0/);
+    assert.match(html, /--quiz-word-index:1/);
+    assert.match(html, /--quiz-word-index:2/);
+  });
+
+  it('keeps unordered, ordered, and nested list markers aligned to each item first word', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(QuizMarkdown, {
+        reveal: true,
+        children: '- alpha **bold**\n- beta\n\n1. first\n   1. nested',
+      }),
+    );
+
+    assert.equal((html.match(/quiz-reveal-list-item/g) ?? []).length, 4);
+    assert.equal((html.match(/quiz-reveal-marker/g) ?? []).length, 4);
+    assert.match(html, /<li class="quiz-reveal-list-item"><span class="quiz-reveal-marker" style="--quiz-word-index:0" aria-hidden="true"><\/span><span><span class="quiz-reveal-word"/);
+    assert.match(html, /<ol>/);
+    assert.match(html, /<ul>/);
+  });
+
+  it('keeps GFM task checkboxes semantic and reveals them with their first text, without duplicate bullets', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(QuizMarkdown, {
+        reveal: true,
+        children: '- [ ] unchecked\n- [x] checked\n  - [ ] nested',
+      }),
+    );
+
+    assert.equal((html.match(/quiz-reveal-marker/g) ?? []).length, 0);
+    assert.equal((html.match(/quiz-reveal-task-checkbox/g) ?? []).length, 3);
+    assert.match(html, /type="checkbox" disabled="" class="quiz-reveal-task-checkbox" style="--quiz-word-index:0"/);
+    assert.match(html, /type="checkbox" disabled="" class="quiz-reveal-task-checkbox" style="--quiz-word-index:1" checked=""/);
+    assert.doesNotMatch(html, /aria-hidden/);
+  });
+
+  it('does not add synthetic markers to code-only list items', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(QuizMarkdown, {
+        reveal: true,
+        children: '- `code-only`',
+      }),
+    );
+
+    assert.doesNotMatch(html, /quiz-reveal-marker/);
+    assert.match(html, /<li><code>code-only<\/code><\/li>/);
+  });
+
+  it('does not wrap code or math while revealing surrounding prose', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(QuizMarkdown, {
+        reveal: true,
+        children: 'before `literal` $x^2$ after',
+      }),
+    );
+
+    assert.match(html, /<code>literal<\/code>/);
+    assert.match(html, /class="katex"/);
+    assert.match(html, /quiz-reveal-word/);
+    assert.doesNotMatch(html, /quiz-reveal-word[^>]*>literal/);
+    assert.doesNotMatch(html, /quiz-reveal-word[^>]*>x/);
+  });
+});
+
   it('renders inline and display math used in quiz prompts and choices', () => {
     const html = render('Solve $x^2=4$.\n\n$$\nx=\\pm 2\n$$');
     assert.match(html, /class="katex"/);

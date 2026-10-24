@@ -879,10 +879,20 @@ export default function VaultSidebar({
           onClick={onToggleQuiz}
           aria-label="Toggle Quiz pane"
           aria-pressed={quizOpen}
-          title="Quiz"
+          title="Quiz (⌘Q)"
           className={`app-icon-button relative focus-visible:ring-2 focus-visible:ring-white/60 ${quizOpen ? '!text-white' : 'text-white/70 hover:bg-transparent hover:text-white'}`}
         >
           <IoMdSchool aria-hidden="true" className="h-3.5 w-3.5" />
+          {commandHeld && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute bottom-full left-0 z-20 mb-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white"
+            >
+              {navigator.platform.toLowerCase().includes('mac')
+                ? '⌘Q'
+                : 'Ctrl+Q'}
+            </span>
+          )}
         </button>
       </div>
     </aside>

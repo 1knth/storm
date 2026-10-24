@@ -94,9 +94,105 @@ const quizMarkdownRemarkPlugins = [
   remarkGfm,
   remarkSoftBreaks,
 ];
+function rehypeQuizWordReveal() {
+  return (tree: any) => {
+    let index = 0;
+    const visit = (node: any, atomic = false) => {
+      const classes = node.properties?.className ?? [];
+      const skip =
+        atomic ||
+        ['code', 'pre', 'svg'].includes(node.tagName) ||
+        classes.some((name: string) => /math|katex/i.test(name));
+      if (node.type === 'text' && !atomic) {
+        const parts = node.value.split(/(\\s+)/);
+        node.type = 'element';
+        node.tagName = 'span';
+        node.properties = {};
+        node.children = parts.map((part: string) =>
+          part.trim()
+            ? {
+                type: 'element',
+                tagName: 'span',
+                properties: {
+                  className: ['quiz-reveal-word'],
+                  style: { '--quiz-word-index': index++ },
+                },
+                children: [{ type: 'text', value: part }],
+              }
+            : { type: 'text', value: part },
+        );
+        return;
+      }
+      for (const child of node.children ?? []) visit(child, skip);
+      if (!skip && node.tagName === 'li') {
+        const firstIndex = (children: any[]): number | undefined => {
+          for (const child of children) {
+            const value = child.properties?.style?.['--quiz-word-index'];
+            if (value !== undefined) return Number(value);
+            const nested = firstIndex(child.children ?? []);
+            if (nested !== undefined) return nested;
+          }
+          return undefined;
+        };
+        const markerIndex = firstIndex(node.children ?? []);
+        if (markerIndex !== undefined) {
+          node.properties ??= {};
+          const isTask = (node.properties.className ?? []).includes('task-list-item');
+          if (isTask) {
+            const checkbox = (node.children ?? []).find(
+              (child: any) => child.tagName === 'input' && child.properties?.type === 'checkbox',
+            );
+            if (checkbox) {
+              checkbox.properties.className = [
+                ...(checkbox.properties.className ?? []),
+                'quiz-reveal-task-checkbox',
+              ];
+              checkbox.properties.style = {
+                ...(checkbox.properties.style ?? {}),
+                '--quiz-word-index': markerIndex,
+              };
+            }
+          }
+          node.properties.className = [
+            ...(node.properties.className ?? []),
+            'quiz-reveal-list-item',
+          ];
+          if (!isTask) node.children.unshift({
+            type: 'element',
+            tagName: 'span',
+            properties: {
+              className: ['quiz-reveal-marker'],
+              style: { '--quiz-word-index': markerIndex },
+              ariaHidden: 'true',
+            },
+            children: [],
+          });
+        }
+      }
+    };
+    visit(tree);
+  };
+}
 const quizMarkdownRehypePlugins = [markdownMathRehypePlugin];
 export const QuizMarkdownAppearanceContext = createContext(DEFAULT_APPEARANCE);
+function SafeQuizMarkdownLink({ href, children, ...props }: any) {
+  if (typeof href !== 'string') return <span>{children}</span>;
+  try {
+    const url = new URL(href);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return <span>{children}</span>;
+    }
+    return (
+      <a {...props} href={url.href} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
+    );
+  } catch {
+    return <span>{children}</span>;
+  }
+}
 const quizMarkdownComponents = {
+  a: SafeQuizMarkdownLink,
   h1: ({ children, node: _node, ...props }: any) => {
     const appearance = useContext(QuizMarkdownAppearanceContext);
     return <h1 {...props} style={{ color: appearance.headings[0] }}>{children}</h1>;
@@ -237,9 +333,11 @@ export function QuizVerdict({
 export function QuizMarkdown({
   children,
   appearance,
+  reveal = false,
 }: {
   children: string;
   appearance?: Appearance;
+  reveal?: boolean;
 }) {
   const inheritedAppearance = useContext(QuizMarkdownAppearanceContext);
   const configuredAppearance = appearance ?? inheritedAppearance;
@@ -255,7 +353,7 @@ export function QuizMarkdown({
       >
         <ReactMarkdown
           remarkPlugins={quizMarkdownRemarkPlugins}
-          rehypePlugins={quizMarkdownRehypePlugins}
+          rehypePlugins={reveal ? [...quizMarkdownRehypePlugins, rehypeQuizWordReveal] : quizMarkdownRehypePlugins}
           components={quizMarkdownComponents}
         >
           {children}
@@ -1066,13 +1164,14 @@ export default function QuizPane({
                             className={`quiz-agent-markdown w-full text-[0.95rem] leading-[1.7] text-white/95 ${revealedMessages[m.id] === undefined ? '' : 'quiz-agent-reveal'}`}
                           >
                             {revealedMessages[m.id] === undefined ? (
-                              <QuizMarkdown>{m.text}</QuizMarkdown>
+                              <QuizMarkdown reveal>{m.text}</QuizMarkdown>
                             ) : (
                               m.text
                                 .split(/\n\s*\n/)
                                 .slice(0, revealedMessages[m.id])
                                 .map((paragraph, paragraphIndex) => (
                                   <QuizMarkdown
+                                    reveal
                                     key={`${m.id}-${paragraphIndex}`}
                                   >
                                     {paragraph}

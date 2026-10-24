@@ -806,3 +806,56 @@ body,
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+.quiz-reveal-word {
+  animation: quiz-word-reveal 100ms ease-out both;
+  animation-delay: calc(var(--quiz-word-index) * 50ms);
+}
+
+.quiz-reveal-list-item {
+  list-style: none;
+}
+
+.quiz-reveal-task-checkbox {
+  animation: quiz-word-reveal 100ms ease-out both;
+  animation-delay: calc(var(--quiz-word-index) * 50ms);
+}
+
+.quiz-reveal-marker {
+  display: inline-block;
+  width: 1.5em;
+  margin-left: -1.5em;
+  color: var(--preview-list-marker-color, currentColor);
+  animation: quiz-word-reveal 100ms ease-out both;
+  animation-delay: calc(var(--quiz-word-index) * 50ms);
+}
+
+.quiz-reveal-list-item > .quiz-reveal-marker::before {
+  content: '•';
+}
+.quiz-agent-markdown ol > .quiz-reveal-list-item > .quiz-reveal-marker::before {
+  content: counter(list-item) '.';
+}
+.quiz-agent-markdown ul ul > .quiz-reveal-list-item > .quiz-reveal-marker::before {
+  content: '◦';
+}
+.quiz-agent-markdown ul ul ul > .quiz-reveal-list-item > .quiz-reveal-marker::before {
+  content: '▪';
+}
+
+@keyframes quiz-word-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-reveal-word,
+  .quiz-reveal-marker,
+  .quiz-reveal-task-checkbox {
+    animation: none;
+  }
+}
