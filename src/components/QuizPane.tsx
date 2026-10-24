@@ -95,7 +95,7 @@ const quizMarkdownRemarkPlugins = [
   remarkSoftBreaks,
 ];
 const quizMarkdownRehypePlugins = [markdownMathRehypePlugin];
-const QuizMarkdownAppearanceContext = createContext(DEFAULT_APPEARANCE);
+export const QuizMarkdownAppearanceContext = createContext(DEFAULT_APPEARANCE);
 const quizMarkdownComponents = {
   h1: ({ children, node: _node, ...props }: any) => {
     const appearance = useContext(QuizMarkdownAppearanceContext);
@@ -236,18 +236,20 @@ export function QuizVerdict({
 
 export function QuizMarkdown({
   children,
-  appearance = DEFAULT_APPEARANCE,
+  appearance,
 }: {
   children: string;
   appearance?: Appearance;
 }) {
+  const inheritedAppearance = useContext(QuizMarkdownAppearanceContext);
+  const configuredAppearance = appearance ?? inheritedAppearance;
   return (
-    <QuizMarkdownAppearanceContext.Provider value={appearance}>
+    <QuizMarkdownAppearanceContext.Provider value={configuredAppearance}>
       <div
         className="quiz-markdown"
         style={
           {
-            '--preview-list-marker-color': appearance.listMarkerColor ?? undefined,
+            '--preview-list-marker-color': configuredAppearance.listMarkerColor ?? undefined,
           } as React.CSSProperties
         }
       >
@@ -266,10 +268,12 @@ export function QuizMarkdown({
 export default function QuizPane({
   visible,
   onClose,
+  appearance,
 }: {
   vaultId: string | null;
   vaultName: string;
   notePath: string | null;
+  appearance: Appearance;
   visible: boolean;
   onClose: () => void;
 }) {
@@ -724,7 +728,8 @@ export default function QuizPane({
     }
   };
   return (
-    <section
+    <QuizMarkdownAppearanceContext.Provider value={appearance}>
+      <section
       className="quiz-pane-surface flex min-h-0 min-w-0 flex-1 flex-col border-l border-white/10 text-white"
       aria-label="Quiz"
     >
@@ -1756,6 +1761,7 @@ export default function QuizPane({
           ) : null}
         </>
       )}
-    </section>
+      </section>
+    </QuizMarkdownAppearanceContext.Provider>
   );
 }

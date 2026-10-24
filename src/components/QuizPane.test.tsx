@@ -9,6 +9,7 @@ import {
   mergeQuizSessionDrafts,
   getQuizComposerActions,
   QuizMarkdown,
+  QuizMarkdownAppearanceContext,
   QuizThinkingIndicator,
   QuizVerdict,
 } from './QuizPane';
@@ -18,6 +19,24 @@ function render(markdown: string, appearance?: Appearance) {
     React.createElement(QuizMarkdown, { children: markdown, appearance }),
   );
 }
+
+describe('quiz Markdown appearance inheritance', () => {
+  it('inherits saved appearance from its pane context when no prop is passed', () => {
+    const appearance = {
+      ...DEFAULT_APPEARANCE,
+      headings: ['#111111', ...DEFAULT_APPEARANCE.headings.slice(1)],
+    };
+    const html = renderToStaticMarkup(
+      React.createElement(
+        QuizMarkdownAppearanceContext.Provider,
+        { value: appearance },
+        React.createElement(QuizMarkdown, { children: '# Heading' }),
+      ),
+    );
+    assert.match(html, /<h1[^>]*color:#111111/);
+    assert.doesNotMatch(render('# Heading'), /color:#111111/);
+  });
+});
 
 describe('quiz draft snapshot reconciliation', () => {
   const session = (overrides: Record<string, unknown> = {}) =>
