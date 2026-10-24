@@ -1,4 +1,6 @@
 import {
+  createContext,
+  useContext,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -93,6 +95,51 @@ const quizMarkdownRemarkPlugins = [
   remarkSoftBreaks,
 ];
 const quizMarkdownRehypePlugins = [markdownMathRehypePlugin];
+const QuizMarkdownAppearanceContext = createContext(DEFAULT_APPEARANCE);
+const quizMarkdownComponents = {
+  h1: ({ children, node: _node, ...props }: any) => {
+    const appearance = useContext(QuizMarkdownAppearanceContext);
+    return <h1 {...props} style={{ color: appearance.headings[0] }}>{children}</h1>;
+  },
+  h2: ({ children, node: _node, ...props }: any) => {
+    const appearance = useContext(QuizMarkdownAppearanceContext);
+    return <h2 {...props} style={{ color: appearance.headings[1] }}>{children}</h2>;
+  },
+  h3: ({ children, node: _node, ...props }: any) => {
+    const appearance = useContext(QuizMarkdownAppearanceContext);
+    return <h3 {...props} style={{ color: appearance.headings[2] }}>{children}</h3>;
+  },
+  h4: ({ children, node: _node, ...props }: any) => {
+    const appearance = useContext(QuizMarkdownAppearanceContext);
+    return <h4 {...props} style={{ color: appearance.headings[3] }}>{children}</h4>;
+  },
+  h5: ({ children, node: _node, ...props }: any) => {
+    const appearance = useContext(QuizMarkdownAppearanceContext);
+    return <h5 {...props} style={{ color: appearance.headings[4] }}>{children}</h5>;
+  },
+  h6: ({ children, node: _node, ...props }: any) => {
+    const appearance = useContext(QuizMarkdownAppearanceContext);
+    return <h6 {...props} style={{ color: appearance.headings[5] }}>{children}</h6>;
+  },
+  strong: ({ children, node: _node, ...props }: any) => {
+    const appearance = useContext(QuizMarkdownAppearanceContext);
+    return <strong {...props} style={{ color: appearance.previewBoldColor ?? undefined }}>{children}</strong>;
+  },
+  em: ({ children, node: _node, ...props }: any) => {
+    const appearance = useContext(QuizMarkdownAppearanceContext);
+    return <em {...props} style={{ color: appearance.previewItalicColor ?? undefined }}>{children}</em>;
+  },
+  pre: ({ children, node: _node, ...props }: any) => {
+    const appearance = useContext(QuizMarkdownAppearanceContext);
+    const child = Array.isArray(children) ? children[0] : children;
+    if (child && typeof child === 'object' && 'props' in child) {
+      const code = child.props as { className?: string; children?: unknown };
+      if (code.className?.split(/\\s+/).includes('language-mermaid'))
+        return <MermaidBlock source={String(code.children ?? '').replace(/\\n$/, '')} appearance={appearance} />;
+    }
+    return <pre {...props}>{children}</pre>;
+  },
+};
 
 export function QuizThinkingIndicator({
   activity,
@@ -109,6 +156,36 @@ export function QuizThinkingIndicator({
       {activity === 'thinking' ? 'Thinking…' : 'Drafting…'}
     </div>
   );
+}
+
+export function mergeQuizSessionDrafts<T extends PublicQuizSession>(
+  incoming: T,
+  current: T | null,
+): T {
+  if (!current || current.id !== incoming.id) return incoming;
+  if (current.revision > incoming.revision) return current;
+  const question = incoming.currentQuestion;
+  const currentQuestion = current.currentQuestion;
+  const prompt = incoming.currentPrompt;
+  const currentPrompt = current.currentPrompt;
+  return {
+    ...incoming,
+    freeChatDraft: current.freeChatDraft,
+    currentQuestion:
+      question?.status === 'open' && currentQuestion?.id === question.id && currentQuestion.status === 'open'
+        ? {
+            ...question,
+            selectedChoiceId: currentQuestion.selectedChoiceId,
+            reasoningDraft: currentQuestion.reasoningDraft,
+            matchesDraft: currentQuestion.matchesDraft,
+            textDraft: currentQuestion.textDraft,
+          }
+        : question,
+    currentPrompt:
+      prompt && currentPrompt?.id === prompt.id
+        ? { ...prompt, selectedChoiceId: currentPrompt.selectedChoiceId, detailDraft: currentPrompt.detailDraft }
+        : prompt,
+  };
 }
 
 export function getMatchingItemLabel(side: 'left' | 'right', index: number) {
@@ -165,36 +242,24 @@ export function QuizMarkdown({
   appearance?: Appearance;
 }) {
   return (
-    <div
-      className="quiz-markdown"
-      style={
-        {
-          '--preview-list-marker-color': appearance.listMarkerColor ?? undefined,
-        } as React.CSSProperties
-      }
-    >
-    <ReactMarkdown
-      remarkPlugins={quizMarkdownRemarkPlugins}
-      rehypePlugins={quizMarkdownRehypePlugins}
-      components={{
-        h1: ({ children, node: _node, ...props }) => <h1 {...props} style={{ color: appearance.headings[0] }}>{children}</h1>,
-        h2: ({ children, node: _node, ...props }) => <h2 {...props} style={{ color: appearance.headings[1] }}>{children}</h2>,
-        h3: ({ children, node: _node, ...props }) => <h3 {...props} style={{ color: appearance.headings[2] }}>{children}</h3>,
-        h4: ({ children, node: _node, ...props }) => <h4 {...props} style={{ color: appearance.headings[3] }}>{children}</h4>,
-        h5: ({ children, node: _node, ...props }) => <h5 {...props} style={{ color: appearance.headings[4] }}>{children}</h5>,
-        h6: ({ children, node: _node, ...props }) => <h6 {...props} style={{ color: appearance.headings[5] }}>{children}</h6>,
-        strong: ({ children, node: _node, ...props }) => <strong {...props} style={{ color: appearance.previewBoldColor ?? undefined }}>{children}</strong>,
-        em: ({ children, node: _node, ...props }) => <em {...props} style={{ color: appearance.previewItalicColor ?? undefined }}>{children}</em>,
-        code({ className, children: code }) {
-          if (className?.split(/\\s+/).includes('language-mermaid'))
-            return <MermaidBlock source={String(code ?? '').replace(/\\n$/, '')} appearance={appearance} />;
-          return <code className={className}>{code}</code>;
-        },
-      }}
-    >
-      {children}
-    </ReactMarkdown>
-    </div>
+    <QuizMarkdownAppearanceContext.Provider value={appearance}>
+      <div
+        className="quiz-markdown"
+        style={
+          {
+            '--preview-list-marker-color': appearance.listMarkerColor ?? undefined,
+          } as React.CSSProperties
+        }
+      >
+        <ReactMarkdown
+          remarkPlugins={quizMarkdownRemarkPlugins}
+          rehypePlugins={quizMarkdownRehypePlugins}
+          components={quizMarkdownComponents}
+        >
+          {children}
+        </ReactMarkdown>
+      </div>
+    </QuizMarkdownAppearanceContext.Provider>
   );
 }
 
@@ -243,6 +308,7 @@ export default function QuizPane({
   const [composerSpacerHeight, setComposerSpacerHeight] = useState(0);
   const questionIdRef = useRef<string | null>(null);
   const sessionRef = useRef(session);
+  const openGeneration = useRef(0);
   const draftRef = useRef(draft);
   const busyRef = useRef(false);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -377,35 +443,9 @@ export default function QuizPane({
               draftRevision.current = snapshot.session.revision;
               result = await send(snapshot.session.revision);
             }
-            if (
-              result.ok &&
-              sessionRef.current?.id === id &&
-              draftRef.current === value.freeChatDraft
-            ) {
-              draftRevision.current = result.value.revision;
-              setSession((current) => {
-                if (current?.id !== id) return current;
-                const currentQuestion = current.currentQuestion;
-                const savedQuestion = result.value.currentQuestion;
-                if (
-                  savedQuestion &&
-                  currentQuestion &&
-                  savedQuestion.id === currentQuestion.id &&
-                  currentQuestion.status === 'open'
-                ) {
-                  return {
-                    ...result.value,
-                    currentQuestion: {
-                      ...savedQuestion,
-                      selectedChoiceId: currentQuestion.selectedChoiceId,
-                      reasoningDraft: currentQuestion.reasoningDraft,
-                      matchesDraft: currentQuestion.matchesDraft,
-                      textDraft: currentQuestion.textDraft,
-                    },
-                  };
-                }
-                return result.value;
-              });
+            if (result.ok && sessionRef.current?.id === id) {
+              draftRevision.current = Math.max(draftRevision.current ?? 0, result.value.revision);
+              setSession((current) => current?.id === id ? mergeQuizSessionDrafts(result.value, current) : current);
             }
           })
           .catch(() => undefined);
@@ -432,22 +472,7 @@ export default function QuizPane({
     if (current) {
       const updated = next.find((item) => item.id === current.id);
       if (updated && !busyRef.current) {
-        setSession({
-          ...updated,
-          ...(updated.currentQuestion &&
-          current.currentQuestion?.id === updated.currentQuestion.id &&
-          updated.currentQuestion.status === 'open'
-            ? {
-                currentQuestion: {
-                  ...updated.currentQuestion,
-                  selectedChoiceId: current.currentQuestion.selectedChoiceId,
-                  reasoningDraft: current.currentQuestion.reasoningDraft,
-                  matchesDraft: current.currentQuestion.matchesDraft,
-                  textDraft: current.currentQuestion.textDraft,
-                },
-              }
-            : {}),
-        });
+        setSession(mergeQuizSessionDrafts(updated, current));
       }
     } else if (!showSessionList && id && next.some((item) => item.id === id)) {
       try {
@@ -495,10 +520,12 @@ export default function QuizPane({
   }, [bridge, refresh, visible]);
   async function openSession(id: string) {
     if (!bridge) return;
+    const generation = ++openGeneration.current;
     try {
       if (sessionRef.current) persistDraft(sessionRef.current.id, true);
       window.clearTimeout(saveTimer.current);
       const snapshot = await bridge.getSnapshot(id);
+      if (generation !== openGeneration.current) return;
       restoreSession(snapshot?.session ?? null);
       if (snapshot) {
         window.localStorage.setItem(PICKER_KEY, id);
@@ -511,15 +538,19 @@ export default function QuizPane({
     setBusy(true);
     setError('');
     try {
+      const actionSessionId = sessionRef.current?.id;
       const result = await action();
       if (!result.ok) {
         setError(`Quiz action failed: ${result.error}`);
         return;
       }
+      if (sessionRef.current?.id !== actionSessionId) return;
       const questionId = result.value.currentQuestion?.id ?? null;
       if (questionId !== questionIdRef.current) setQaExpanded(true);
       questionIdRef.current = questionId;
-      setSession(result.value);
+      const merged = mergeQuizSessionDrafts(result.value, sessionRef.current);
+      setSession(merged);
+      sessionRef.current = merged;
       setSessions(await bridge!.listSessions());
     } catch {
       setError('Could not reach the quiz service.');
@@ -646,7 +677,15 @@ export default function QuizPane({
             : {}),
         });
         if (result.ok && !deletedSessions.current.has(session.id)) {
-          if (draftRef.current === submittedDraft) setDraft('');
+          if (draftRef.current === submittedDraft) {
+            draftRef.current = '';
+            setDraft('');
+            if (sessionRef.current?.id === session.id) {
+              const cleared = { ...sessionRef.current, freeChatDraft: '' };
+              sessionRef.current = cleared;
+              setSession(cleared);
+            }
+          }
           setSentImages((current) => ({
             ...current,
             [session.id]: [...(current[session.id] ?? []), ...images],

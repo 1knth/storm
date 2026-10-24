@@ -6,6 +6,7 @@ import type { Appearance } from '../appearance';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   getMatchingItemLabel,
+  mergeQuizSessionDrafts,
   getQuizComposerActions,
   QuizMarkdown,
   QuizThinkingIndicator,
@@ -17,6 +18,50 @@ function render(markdown: string, appearance?: Appearance) {
     React.createElement(QuizMarkdown, { children: markdown, appearance }),
   );
 }
+
+describe('quiz draft snapshot reconciliation', () => {
+  const session = (overrides: Record<string, unknown> = {}) =>
+    ({
+      id: 'session-a',
+      revision: 3,
+      freeChatDraft: 'submitted text',
+      currentQuestion: { id: 'question-a', status: 'open', textDraft: 'local' },
+      ...overrides,
+    }) as any;
+
+  it('keeps a successfully cleared sent draft clear through snapshots, but preserves newer typing', () => {
+    const beforeSend = session();
+    const cleared = { ...beforeSend, freeChatDraft: '' };
+    const staleSnapshot = session({ revision: 4, freeChatDraft: 'submitted text' });
+    assert.equal(mergeQuizSessionDrafts(staleSnapshot, cleared).freeChatDraft, '');
+
+    const typed = { ...beforeSend, freeChatDraft: 'typed while sending' };
+    const laterSnapshot = session({ revision: 5, freeChatDraft: '' });
+    assert.equal(
+      mergeQuizSessionDrafts(laterSnapshot, typed).freeChatDraft,
+      'typed while sending',
+    );
+  });
+
+  it('does not clear a submitted draft after a failed send', () => {
+    const submitted = 'keep on failure';
+    const failedSend = { ok: false };
+    const current = session({ freeChatDraft: submitted });
+    if (failedSend.ok) current.freeChatDraft = '';
+    assert.equal(current.freeChatDraft, submitted);
+  });
+
+  it('accepts snapshots when content transitions and resets the associated draft', () => {
+    const current = session();
+    const transitioned = session({
+      revision: 4,
+      currentQuestion: { id: 'question-b', status: 'open', textDraft: '' },
+    });
+    const merged = mergeQuizSessionDrafts(transitioned, current);
+    assert.equal(merged.currentQuestion.id, 'question-b');
+    assert.equal(merged.currentQuestion.textDraft, '');
+  });
+});
 
 describe('quiz composer feedback layout', () => {
   it('keeps the input row and Continue action without a second disconnected-status row', () => {
