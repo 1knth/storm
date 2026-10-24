@@ -39,7 +39,7 @@ graph LR
   DivideByTime --> Speed
 ```
 
-Markdown rendering supports standard Markdown, fenced code, Mermaid, and KaTeX math; raw HTML is not rendered. See the [Markdown rendering notes](../src/components/Editor/README.md) for details and limitations.
+Markdown rendering supports standard Markdown, fenced code, Mermaid, and KaTeX math; raw HTML is not rendered. These renderers apply to rendered Markdown content, not native select-option labels in quiz UI, which display plain text (so do not rely on LaTeX rendering inside multiple-choice/dropdown options). See the [Markdown rendering notes](../src/components/Editor/README.md) for details and limitations.
 
 ## Link related notes carefully
 

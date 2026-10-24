@@ -249,7 +249,27 @@ export function bindAgentBrokerIpc(
   );
   return () => ipc.removeHandler('agent:request');
 }
-function isAcceptedUrl(actual: string, expected: string): boolean {
+export function isTrustedRenderer(
+  windowAlive: boolean,
+  contentsAlive: boolean,
+  sender: unknown,
+  expectedSender: unknown,
+  frame: { url: string } | null | undefined,
+  mainFrame: unknown,
+  acceptedUrl: string | undefined,
+): boolean {
+  return (
+    windowAlive &&
+    contentsAlive &&
+    sender === expectedSender &&
+    !!frame &&
+    frame === mainFrame &&
+    !!acceptedUrl &&
+    isAcceptedUrl(frame.url, acceptedUrl)
+  );
+}
+
+export function isAcceptedUrl(actual: string, expected: string): boolean {
   try {
     const a = new URL(actual);
     const e = new URL(expected);

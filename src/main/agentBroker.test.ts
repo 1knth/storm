@@ -102,6 +102,140 @@ function brokerWithRenderer(
   });
 }
 
+describe('quiz broker requests', () => {
+  it('forwards valid requests and rejects malformed requests or an absent handler', async () => {
+    const seen: unknown[] = [];
+    const broker = new AgentBroker({
+      resolveTarget: async () => {
+        throw new Error('not used');
+      },
+      renderer: {
+        dispatch: async () => ({ ok: true, inspected: true, open: false }),
+      },
+      quiz: async (request) => {
+        seen.push(request);
+        return {
+          protocol: 1,
+          requestId: request.requestId,
+          ok: true,
+          type: 'quiz',
+          operation: 'list',
+          result: { ok: true, value: [] },
+        };
+      },
+    });
+    const valid = req('quiz', { operation: 'list' });
+    assert.equal((await broker.handle(valid)).ok, true);
+    assert.equal(seen.length, 1);
+    const pose = (fields: Record<string, unknown>) =>
+      req('quiz', {
+        operation: 'request',
+        request: {
+          type: 'pose-question',
+          sessionId: 's',
+          agentToken: 't',
+          expectedRevision: 0,
+          idempotencyKey: 'pose',
+          question: 'Question',
+          ...fields,
+        },
+      });
+    for (const request of [
+      pose({ choices: [{ id: 'a', text: 'A' }] }),
+      pose({
+        kind: 'matching',
+        leftItems: [
+          { id: 'l1', text: 'L1' },
+          { id: 'l2', text: 'L2' },
+        ],
+        rightItems: [
+          { id: 'r1', text: 'R1' },
+          { id: 'r2', text: 'R2' },
+        ],
+      }),
+      pose({ kind: 'short-answer' }),
+      pose({ kind: 'long-answer' }),
+    ])
+      assert.equal((await broker.handle(request)).ok, true);
+    for (const request of [
+      pose({ choices: [] }),
+      pose({
+        kind: 'multiple-choice',
+        choices: Array.from({ length: 7 }, (_, index) => ({
+          id: String(index),
+          text: 'Option',
+        })),
+      }),
+      pose({
+        kind: 'matching',
+        leftItems: [
+          { id: 'a', text: 'A' },
+          { id: 'b', text: 'B' },
+        ],
+        rightItems: [
+          { id: 'a', text: 'A' },
+          { id: 'c', text: 'C' },
+        ],
+      }),
+      pose({ kind: 'short-answer', choices: [{ id: 'a', text: 'A' }] }),
+      pose({ kind: 'unknown' }),
+    ])
+      assert.equal((await broker.handle(request)).ok, false);
+    const malformedSnapshot = await broker.handle(
+      req('quiz', {
+        operation: 'snapshot',
+        sessionId: 's',
+        agentToken: 't',
+        after: -1,
+      }),
+    );
+    assert.equal(malformedSnapshot.ok, false);
+    if (!malformedSnapshot.ok)
+      assert.equal(malformedSnapshot.error.code, 'INVALID_REQUEST');
+    const learnerActions = ['answer', 'continue', 'message'].map((type) =>
+      req('quiz', {
+        operation: 'request',
+        request: {
+          type,
+          sessionId: 's',
+          agentToken: 't',
+          expectedRevision: 0,
+          idempotencyKey: 'k',
+          choiceId: 'a',
+          reasoning: 'x',
+          text: 'x',
+        },
+      }),
+    );
+    for (const attempted of learnerActions) {
+      const response = await broker.handle(attempted);
+      assert.equal(response.ok, false);
+      if (!response.ok) assert.equal(response.error.code, 'INVALID_REQUEST');
+    }
+    const malformedRequest = await broker.handle(
+      req('quiz', {
+        operation: 'request',
+        request: { type: 'answer', sessionId: 's' },
+      }),
+    );
+    assert.equal(malformedRequest.ok, false);
+    if (!malformedRequest.ok)
+      assert.equal(malformedRequest.error.code, 'INVALID_REQUEST');
+    const unavailable = new AgentBroker({
+      resolveTarget: async () => {
+        throw new Error('not used');
+      },
+      renderer: {
+        dispatch: async () => ({ ok: true, inspected: true, open: false }),
+      },
+    });
+    const noHandler = await unavailable.handle(valid);
+    assert.equal(noHandler.ok, false);
+    if (!noHandler.ok)
+      assert.equal(noHandler.error.message, 'Quiz service is unavailable');
+  });
+});
+
 describe('agent context', () => {
   const makeBroker = (getContext?: () => Promise<any>) =>
     new AgentBroker({

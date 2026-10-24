@@ -1,5 +1,21 @@
 @import 'tailwindcss';
 
+.quiz-learner-markdown > :first-child {
+  margin-top: 0;
+}
+.quiz-learner-markdown > :last-child {
+  margin-bottom: 0;
+}
+.quiz-learner-markdown p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.quiz-learner-markdown .katex-display {
+  margin: 0.25rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .markdown-preview-content strong {
   color: var(--preview-bold-color, inherit);
 }
@@ -522,6 +538,209 @@
 .editor-pane-surface--visible {
   border-color: rgb(255 255 255 / 15%);
   background-color: rgb(0 0 0 / 30%);
+}
+
+.quiz-pane-surface {
+  /* Match the explorer's rgb(0 0 0 / 50%) glass over the shared app backdrop. */
+  background-color: rgb(0 0 0 / 50%);
+}
+
+.quiz-activity-spinner {
+  width: 0.8rem;
+  height: 0.8rem;
+  flex: none;
+  border: 2px solid rgb(255 255 255 / 25%);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: quiz-spinner-rotate 700ms linear infinite;
+}
+
+@keyframes quiz-spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.quiz-agent-reveal > * {
+  animation: quiz-message-reveal 280ms ease-out both;
+}
+
+@keyframes quiz-message-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-activity-spinner {
+    animation: none;
+    border-top-color: currentColor;
+  }
+
+  .quiz-agent-reveal > * {
+    animation: none;
+  }
+}
+
+.quiz-composer {
+  /* Keep the composer at its content height. A max-height here only clamps the
+     form box; with visible overflow, feedback and prompt content spill past it. */
+  overflow: visible;
+  border: 1px solid rgb(255 255 255 / 12%);
+  background-color: rgb(15 17 20 / 78%);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+.quiz-choice-card--selected {
+  border-color: rgb(255 255 255 / 35%);
+}
+
+.quiz-action-button {
+  background-color: #0a84ff;
+  color: white;
+}
+
+.quiz-action-button:disabled {
+  opacity: 0.4;
+}
+
+.quiz-session-row {
+  border-color: transparent;
+  background-color: rgb(255 255 255 / 2%);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.quiz-session-row:hover {
+  border-color: rgb(255 255 255 / 20%);
+  background-color: rgb(255 255 255 / 8%);
+}
+
+.quiz-session-row:focus-within {
+  border-color: rgb(255 255 255 / 28%);
+  background-color: rgb(255 255 255 / 7%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-session-row {
+    transition: none;
+  }
+}
+
+.quiz-action-button:hover:not(:disabled) {
+  background-color: #2794ff;
+}
+
+.quiz-composer-input {
+  background-color: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.quiz-agent-markdown {
+  color: rgb(var(--ui-fg) / 96%);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.quiz-agent-markdown > :first-child {
+  margin-top: 0;
+}
+
+.quiz-agent-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.quiz-agent-markdown p,
+.quiz-agent-markdown ul,
+.quiz-agent-markdown ol,
+.quiz-agent-markdown blockquote,
+.quiz-agent-markdown pre {
+  margin-block: 0.75em;
+}
+
+.quiz-agent-markdown ul,
+.quiz-agent-markdown ol {
+  padding-left: 1.5rem;
+}
+
+.quiz-agent-markdown ul {
+  list-style: disc;
+}
+
+.quiz-agent-markdown ol {
+  list-style: decimal;
+}
+
+.quiz-agent-markdown li + li {
+  margin-top: 0.4em;
+}
+
+.quiz-agent-markdown h1,
+.quiz-agent-markdown h2,
+.quiz-agent-markdown h3,
+.quiz-agent-markdown h4 {
+  margin-block: 1em 0.45em;
+  color: rgb(var(--ui-fg));
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.quiz-agent-markdown h1 {
+  font-size: 1.35rem;
+}
+
+.quiz-agent-markdown h2 {
+  font-size: 1.2rem;
+}
+
+.quiz-agent-markdown h3,
+.quiz-agent-markdown h4 {
+  font-size: 1.05rem;
+}
+
+.quiz-agent-markdown em {
+  font-style: italic;
+}
+
+.quiz-agent-markdown strong,
+.quiz-agent-markdown b {
+  color: rgb(var(--ui-fg));
+  font-weight: 750;
+}
+
+.quiz-agent-markdown blockquote {
+  border-left: 3px solid rgb(var(--ui-border) / 30%);
+  padding-left: 0.85rem;
+  color: rgb(var(--ui-fg) / 78%);
+}
+
+.quiz-agent-markdown code {
+  border-radius: 0.25rem;
+  background: rgb(var(--ui-panel) / 35%);
+  padding: 0.1em 0.3em;
+  font-size: 0.9em;
+}
+
+.quiz-agent-markdown pre {
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: rgb(var(--ui-panel) / 35%);
+  padding: 0.75rem;
+}
+
+.quiz-agent-markdown pre code {
+  background: transparent;
+  padding: 0;
 }
 
 body {

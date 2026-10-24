@@ -15,6 +15,8 @@ import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
 import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
+import { QuizStore } from './main/quizStore';
+import { QuizService } from './main/quizService';
 import {
   classifyVaultListError,
   formatVaultListError,
@@ -43,8 +45,13 @@ import { confirmQuitAndFlush } from './quitConfirmation';
 import { VaultWatcher } from './vault/vaultWatcher';
 import { registerVaultRegistryIpc } from './main/registerVaultRegistryIpc';
 import { AgentBroker } from './main/agentBroker';
+import { createQuizAgentHandler } from './main/quizAgentHandler';
 import { runVaultLifecycleExclusive } from './main/vaultLifecycle';
-import { bindAgentBrokerIpc, registerAgentIpc } from './main/registerAgentIpc';
+import {
+  bindAgentBrokerIpc,
+  isTrustedRenderer,
+  registerAgentIpc,
+} from './main/registerAgentIpc';
 import {
   resolveAgentNoteTarget,
   resolveExistingAgentNoteTarget,
@@ -63,6 +70,59 @@ import {
 
 const vaultService = new VaultService();
 const vaultRegistry = new VaultRegistry(app.getPath('userData'));
+const quizService = new QuizService(
+  new QuizStore(path.join(app.getPath('userData'), 'quiz-sessions.json')),
+  async (scope) => {
+    const { vaults } = await vaultRegistry.list();
+    const vault = vaults.find((entry) => entry.id === scope.vaultId);
+    if (
+      !vault ||
+      !Array.isArray(scope.selectedNotePaths) ||
+      scope.selectedNotePaths.length > 1000
+    )
+      return false;
+    const root = await realpath(vault.path).catch(() => null);
+    if (!root) return false;
+    const contained = async (
+      relative: string | null,
+      kind: 'file' | 'directory',
+    ) => {
+      if (relative === null) return true;
+      if (
+        !relative ||
+        path.isAbsolute(relative) ||
+        relative
+          .split(/[\\/]/)
+          .some((part) => !part || part === '.' || part === '..')
+      )
+        return false;
+      const resolved = await realpath(path.resolve(root, relative)).catch(
+        () => null,
+      );
+      if (
+        !resolved ||
+        (resolved !== root && !resolved.startsWith(root + path.sep))
+      )
+        return false;
+      const stat = await import('node:fs/promises')
+        .then(({ stat }) => stat(resolved))
+        .catch(() => null);
+      return !!stat && (kind === 'file' ? stat.isFile() : stat.isDirectory());
+    };
+    return (
+      (await contained(scope.notePath, 'file')) &&
+      (await contained(scope.folderPath, 'directory')) &&
+      scope.selectedNotePaths.every(
+        (item) => typeof item === 'string' && item.length <= 4096,
+      ) &&
+      (
+        await Promise.all(
+          scope.selectedNotePaths.map((item) => contained(item, 'file')),
+        )
+      ).every(Boolean)
+    );
+  },
+);
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;
 let shutdownInFlight: Promise<boolean> | null = null;
@@ -131,6 +191,7 @@ agentBroker = new AgentBroker({
   },
   withVaultLifecycle: runVaultLifecycleExclusive,
   renderer: agentTransport,
+  quiz: createQuizAgentHandler(quizService),
   discover: async (vaultId, query, limit, options) =>
     discoverVaultNotes(
       () => vaultRegistry.list(),
@@ -163,8 +224,287 @@ const removeAgentBrokerIpc = bindAgentBrokerIpc(
   () => agentAcceptedUrl,
 );
 app.on('before-quit', () => {
+  quizService.disposeImages();
   removeAgentBrokerIpc();
   agentTransport.dispose?.();
+});
+const quizPublicSession = (
+  session: import('./shared/quizProtocol').QuizSession,
+) => {
+  const { agentToken: _agentToken, ...publicSession } = session;
+  return publicSession;
+};
+const isTrustedQuizRenderer = (event: Electron.IpcMainInvokeEvent) => {
+  const window = agentWindow;
+  const acceptedUrl = agentAcceptedUrl;
+  return isTrustedRenderer(
+    !!window && !window.isDestroyed(),
+    !!window && !window.webContents.isDestroyed(),
+    event.sender,
+    window?.webContents,
+    event.senderFrame,
+    event.sender.mainFrame,
+    acceptedUrl,
+  );
+};
+ipcMain.handle('quiz:create', async (event, scope?: unknown) => {
+  if (!isTrustedQuizRenderer(event))
+    return { ok: false, error: 'unauthorized' };
+  if (
+    scope !== undefined &&
+    (!scope || typeof scope !== 'object' || Array.isArray(scope))
+  )
+    return { ok: false, error: 'invalid-input' };
+  if (scope !== undefined) {
+    const value = scope as Record<string, unknown>;
+    if (
+      typeof value.vaultId !== 'string' ||
+      !(value.notePath === null || typeof value.notePath === 'string') ||
+      !(value.folderPath === null || typeof value.folderPath === 'string') ||
+      !Array.isArray(value.selectedNotePaths) ||
+      !value.selectedNotePaths.every((item) => typeof item === 'string')
+    )
+      return { ok: false, error: 'invalid-input' };
+  }
+  const result = await quizService.createSession(
+    scope as import('./shared/quizProtocol').QuizScope | undefined,
+  );
+  return result.ok
+    ? { ...result, value: quizPublicSession(result.value) }
+    : result;
+});
+ipcMain.handle('quiz:rename', async (event, id: unknown, name: unknown) => {
+  if (!isTrustedQuizRenderer(event))
+    return { ok: false, error: 'unauthorized' };
+  if (
+    typeof id !== 'string' ||
+    id.length === 0 ||
+    id.length > 128 ||
+    typeof name !== 'string' ||
+    name.trim().length === 0 ||
+    name.trim().length > 100
+  )
+    return { ok: false, error: 'invalid-input' };
+  const result = await quizService.renameSession(id, name);
+  return result.ok
+    ? { ...result, value: quizPublicSession(result.value) }
+    : result;
+});
+ipcMain.handle('quiz:stop-agent', async (event, id: unknown) => {
+  if (!isTrustedQuizRenderer(event))
+    return { ok: false, error: 'unauthorized' };
+  if (typeof id !== 'string' || id.length === 0 || id.length > 128)
+    return { ok: false, error: 'invalid-input' };
+  const result = await quizService.stopAgent(id);
+  return result.ok
+    ? { ...result, value: quizPublicSession(result.value) }
+    : result;
+});
+ipcMain.handle('quiz:delete', async (event, id: unknown) => {
+  if (!isTrustedQuizRenderer(event))
+    return { ok: false, error: 'unauthorized' };
+  if (typeof id !== 'string' || id.length === 0 || id.length > 128)
+    return { ok: false, error: 'invalid-input' };
+  return { ok: true, value: await quizService.deleteSession(id) };
+});
+ipcMain.handle('quiz:list', async (event) =>
+  isTrustedQuizRenderer(event)
+    ? (await quizService.listSessions()).map(quizPublicSession)
+    : [],
+);
+ipcMain.handle('quiz:snapshot', async (event, id: unknown, after: unknown) => {
+  if (!isTrustedQuizRenderer(event)) return null;
+  const snapshot =
+    typeof id === 'string' &&
+    (after === undefined || (Number.isSafeInteger(after) && Number(after) >= 0))
+      ? await quizService.getSnapshot(
+          id,
+          after === undefined ? 0 : Number(after),
+        )
+      : null;
+  return snapshot
+    ? { ...snapshot, session: quizPublicSession(snapshot.session) }
+    : null;
+});
+ipcMain.handle(
+  'quiz:draft',
+  async (event, id: unknown, revision: unknown, draft: unknown) => {
+    if (!isTrustedQuizRenderer(event))
+      return { ok: false, error: 'unauthorized' };
+    if (
+      typeof id !== 'string' ||
+      id.length > 128 ||
+      !Number.isSafeInteger(revision) ||
+      Number(revision) < 0 ||
+      !draft ||
+      typeof draft !== 'object' ||
+      Array.isArray(draft)
+    )
+      return { ok: false, error: 'invalid-input' };
+    const value = draft as Record<string, unknown>;
+    if (
+      !(
+        value.questionId === null ||
+        (typeof value.questionId === 'string' && value.questionId.length <= 128)
+      ) ||
+      !(
+        value.selectedChoiceId === null ||
+        (typeof value.selectedChoiceId === 'string' &&
+          value.selectedChoiceId.length <= 128)
+      ) ||
+      typeof value.reasoningDraft !== 'string' ||
+      typeof value.freeChatDraft !== 'string' ||
+      (value.matchesDraft !== undefined &&
+        (!value.matchesDraft ||
+          typeof value.matchesDraft !== 'object' ||
+          Array.isArray(value.matchesDraft) ||
+          Object.keys(value.matchesDraft).length > 12 ||
+          Object.entries(value.matchesDraft).some(
+            ([key, val]) =>
+              !key ||
+              key.length > 128 ||
+              typeof val !== 'string' ||
+              !val ||
+              val.length > 128,
+          ))) ||
+      (value.textDraft !== undefined &&
+        (typeof value.textDraft !== 'string' ||
+          value.textDraft.length > 20000)) ||
+      (value.promptId !== undefined &&
+        (typeof value.promptId !== 'string' || value.promptId.length > 128)) ||
+      (value.selectedPromptChoiceId !== undefined &&
+        (typeof value.selectedPromptChoiceId !== 'string' ||
+          value.selectedPromptChoiceId.length > 128)) ||
+      (value.promptDetailDraft !== undefined &&
+        (typeof value.promptDetailDraft !== 'string' ||
+          value.promptDetailDraft.length > 20000)) ||
+      new TextEncoder().encode(value.reasoningDraft).byteLength > 65536 ||
+      new TextEncoder().encode(value.freeChatDraft).byteLength > 65536
+    )
+      return { ok: false, error: 'invalid-input' };
+    const result = await quizService.saveDraft(
+      id,
+      Number(revision),
+      value as import('./shared/quizProtocol').QuizDraft,
+    );
+    return result.ok
+      ? { ...result, value: quizPublicSession(result.value) }
+      : result;
+  },
+);
+ipcMain.handle(
+  'quiz:image-add',
+  async (event, sessionId: unknown, input: unknown) => {
+    if (!isTrustedQuizRenderer(event))
+      return { ok: false, error: 'unauthorized' };
+    if (
+      typeof sessionId !== 'string' ||
+      sessionId.length === 0 ||
+      sessionId.length > 128 ||
+      !input ||
+      typeof input !== 'object' ||
+      Array.isArray(input)
+    )
+      return { ok: false, error: 'invalid-input' };
+    const image = input as Record<string, unknown>;
+    if (
+      typeof image.mimeType !== 'string' ||
+      !(image.data instanceof Uint8Array)
+    )
+      return { ok: false, error: 'invalid-input' };
+    return quizService.addImage(sessionId, {
+      mimeType: image.mimeType,
+      data: image.data,
+    });
+  },
+);
+ipcMain.handle(
+  'quiz:image-remove',
+  async (event, sessionId: unknown, id: unknown) => {
+    if (!isTrustedQuizRenderer(event))
+      return { ok: false, error: 'unauthorized' };
+    if (typeof sessionId !== 'string' || typeof id !== 'string')
+      return { ok: false, error: 'invalid-input' };
+    return { ok: true, value: await quizService.removeImage(sessionId, id) };
+  },
+);
+ipcMain.handle('quiz:learner-request', async (event, value: unknown) => {
+  if (!isTrustedQuizRenderer(event))
+    return { ok: false, error: 'unauthorized' };
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return { ok: false, error: 'invalid-input' };
+  const request = value as Record<string, unknown>;
+  if (
+    !['answer', 'message', 'continue', 'respond-prompt'].includes(
+      String(request.type),
+    ) ||
+    typeof request.sessionId !== 'string' ||
+    request.sessionId.length > 128 ||
+    typeof request.idempotencyKey !== 'string' ||
+    request.idempotencyKey.length > 128 ||
+    !request.idempotencyKey.trim() ||
+    !Number.isSafeInteger(request.expectedRevision) ||
+    Number(request.expectedRevision) < 0
+  )
+    return { ok: false, error: 'invalid-input' };
+  if (request.type === 'answer') {
+    const optionalString = (key: string, max: number) =>
+      request[key] === undefined ||
+      (typeof request[key] === 'string' && String(request[key]).length <= max);
+    const matches = request.matches;
+    if (
+      !optionalString('choiceId', 128) ||
+      !optionalString('reasoning', 65536) ||
+      !optionalString('answer', 20000) ||
+      (matches !== undefined &&
+        (!matches ||
+          typeof matches !== 'object' ||
+          Array.isArray(matches) ||
+          Object.keys(matches).length > 12 ||
+          Object.entries(matches).some(
+            ([key, val]) =>
+              !key ||
+              key.length > 128 ||
+              typeof val !== 'string' ||
+              !val ||
+              val.length > 128,
+          ))) ||
+      (typeof request.reasoning === 'string' &&
+        new TextEncoder().encode(request.reasoning).byteLength > 65536)
+    )
+      return { ok: false, error: 'invalid-input' };
+  }
+  if (
+    request.type === 'respond-prompt' &&
+    (typeof request.promptId !== 'string' ||
+      !request.promptId ||
+      request.promptId.length > 128 ||
+      typeof request.choiceId !== 'string' ||
+      !request.choiceId ||
+      request.choiceId.length > 128 ||
+      (request.detail !== undefined &&
+        (typeof request.detail !== 'string' || request.detail.length > 20000)))
+  )
+    return { ok: false, error: 'invalid-input' };
+  if (
+    request.type === 'message' &&
+    ((request.text !== undefined &&
+      (typeof request.text !== 'string' ||
+        new TextEncoder().encode(request.text).byteLength > 65536)) ||
+      (request.attachments !== undefined &&
+        (!Array.isArray(request.attachments) ||
+          request.attachments.length > 4 ||
+          request.attachments.some(
+            (id) => typeof id !== 'string' || id.length > 128,
+          ))))
+  )
+    return { ok: false, error: 'invalid-input' };
+  const result = await quizService.learnerRequest(
+    request as import('./shared/quizProtocol').QuizLearnerRequest,
+  );
+  return result.ok
+    ? { ...result, value: quizPublicSession(result.value) }
+    : result;
 });
 ipcMain.handle('agent:save-note', async (_event, request: unknown) => {
   if (!request || typeof request !== 'object' || Array.isArray(request))
@@ -822,8 +1162,17 @@ app.whenReady().then(async () => {
         { role: 'unhide' },
         { type: 'separator' },
         {
-          label: 'Quit',
+          label: 'Toggle Quiz',
           accelerator: process.platform === 'darwin' ? 'Command+Q' : undefined,
+          click: () => {
+            const window =
+              BrowserWindow.getFocusedWindow() ??
+              BrowserWindow.getAllWindows()[0];
+            window?.webContents.send('quiz:toggle');
+          },
+        },
+        {
+          label: 'Quit',
           click: () => app.quit(),
         },
       ],

@@ -11,6 +11,7 @@ import type {
 } from './shared/types';
 import { deriveVisibleVaults } from './shared/vaultGroups';
 import Editor from './components/Editor/Editor';
+import QuizPane from './components/QuizPane';
 import FilePicker from './components/FilePicker';
 import { filterPickerEntries } from './components/filePickerEntries';
 import type { EditorHandle, TabSnapshot } from './components/Editor/Editor';
@@ -123,6 +124,13 @@ function App() {
   const [tabGroupAssignments, setTabGroupAssignments] =
     useState<TabAssignments>({});
   const [tabs, setTabs] = useState<TabSnapshot[]>([]);
+  const [quizOpen, setQuizOpen] = useState(false);
+  const [quizMounted, setQuizMounted] = useState(false);
+  const toggleQuiz = () => {
+    setQuizMounted(true);
+    setQuizOpen((open) => !open);
+  };
+  useEffect(() => window.stormMenu.onToggleQuiz(toggleQuiz), []);
   const [renameInProgress, setRenameInProgress] = useState(false);
   const renameInProgressRef = useRef(false);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -2605,6 +2613,8 @@ function App() {
             commandHeld={commandHeld}
             vimMode={vimMode}
             onOpenSettings={() => setSettingsOpen(true)}
+            onToggleQuiz={toggleQuiz}
+            quizOpen={quizOpen}
           />
           <FileExplorer
             vaultPath={vaultPath}
@@ -2649,119 +2659,147 @@ function App() {
             selectedPath={activePath}
           />
         </div>
-        <Editor
-          ref={editorRef}
-          pdfAsset={(() => {
-            const tab = tabs.find((item) => getTabId(item) === activeId);
-            return tab?.kind === 'pdf' && tab.vaultId === activeVaultId
-              ? tab
-              : null;
-          })()}
-          imageAsset={(() => {
-            const tab = tabs.find((item) => getTabId(item) === activeId);
-            return tab?.kind === 'image' && tab.vaultId === activeVaultId
-              ? { vaultId: tab.vaultId, path: tab.path, filename: tab.filename }
-              : null;
-          })()}
-          readingMode={readingMode}
-          onOpenNote={openWikiNote}
-          onToggleReadingMode={toggleReadingMode}
-          commandHeld={commandHeld}
-          vimMode={vimMode}
-          renameInProgress={renameInProgress}
-          appearance={appearance}
-          tabsVisible={hasOpenTabs(tabs)}
-          vaultId={activeVaultId}
-          agentDocument={activeAgentAdapter}
-          agentStatus={activeAgentStatus}
-          agentWriting={matchingAgentStatuses.some(
-            (status) => status.state === 'writing',
-          )}
-          agentGenerationFinished={
-            matchingAgentStatuses.length > 0 &&
-            matchingAgentStatuses.every((status) => status.state === 'finished')
-          }
-          onStopAgent={(sessionId) => {
-            window.stormAgent.cancel(sessionId, 'Stopped from editor');
-            setAgentStatuses((current) => ({
-              ...current,
-              [sessionId]: { ...current[sessionId], state: 'cancelled' },
-            }));
-          }}
-          onLayoutChange={() => {
-            const vaultId = activeVaultIdRef.current;
-            const latest = editorRef.current?.snapshot();
-            if (!vaultId || !latest) return;
-            visitedVaults.current.add(vaultId);
-            const currentTabs = tabsRef.current.map((tab) =>
-              tab.kind === 'note' && tab.note.path === latest.note.path
-                ? latest
-                : tab,
-            );
-            sessions.current.set(vaultId, {
-              tabs: currentTabs,
-              activeId: activeIdRef.current,
-              groups: groupsRef.current,
-              assignments: assignmentsRef.current,
-            });
-            scheduleCheckpoint();
-          }}
-          tabs={
-            <TabBar
+        <div className="flex min-h-0 min-w-0 flex-1 flex-row">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <Editor
+              ref={editorRef}
+              pdfAsset={(() => {
+                const tab = tabs.find((item) => getTabId(item) === activeId);
+                return tab?.kind === 'pdf' && tab.vaultId === activeVaultId
+                  ? tab
+                  : null;
+              })()}
+              imageAsset={(() => {
+                const tab = tabs.find((item) => getTabId(item) === activeId);
+                return tab?.kind === 'image' && tab.vaultId === activeVaultId
+                  ? {
+                      vaultId: tab.vaultId,
+                      path: tab.path,
+                      filename: tab.filename,
+                    }
+                  : null;
+              })()}
+              readingMode={readingMode}
+              onOpenNote={openWikiNote}
+              onToggleReadingMode={toggleReadingMode}
               commandHeld={commandHeld}
-              tabs={tabs}
-              activeId={activeId}
-              onSelect={(tab) =>
-                tab.kind === 'note'
-                  ? void selectNote(tab.note.path)
-                  : void (async () => {
-                      if (!(await editorRef.current?.flush())) return;
-                      const outgoing = editorRef.current?.snapshot();
-                      if (outgoing)
-                        setTabs((old) =>
-                          old.map((item) =>
-                            item.kind === 'note' &&
-                            item.note.path === outgoing.note.path
-                              ? outgoing
-                              : item,
-                          ),
-                        );
-                      activateTab(tab);
-                    })()
-              }
-              canCloseTab={(tab) =>
-                tab.kind !== 'note' || !isAgentTabProtected(tab, agentStatuses)
-              }
-              onClose={(tab) => {
-                void closeTab(tab);
-              }}
-              onNew={() => {
-                void createEmptyTab();
-              }}
-              groups={tabGroups}
-              assignments={tabGroupAssignments}
-              onGroupsChange={(groups) => {
-                setTabGroups(groups);
-                groupsRef.current = groups;
-                if (activeVaultId) {
-                  visitedVaults.current.add(activeVaultId);
-                  rememberCurrentSession(activeVaultId);
-                }
-              }}
-              onAssignmentsChange={(assignments) => {
-                setTabGroupAssignments(assignments);
-                assignmentsRef.current = assignments;
-                if (activeVaultId) {
-                  visitedVaults.current.add(activeVaultId);
-                  rememberCurrentSession(activeVaultId);
-                }
-              }}
-              onMoveTab={onMoveTab}
-              onMoveGroup={onMoveGroup}
+              vimMode={vimMode}
+              renameInProgress={renameInProgress}
+              appearance={appearance}
+              tabsVisible={hasOpenTabs(tabs)}
               vaultId={activeVaultId}
+              agentDocument={activeAgentAdapter}
+              agentStatus={activeAgentStatus}
+              agentWriting={matchingAgentStatuses.some(
+                (status) => status.state === 'writing',
+              )}
+              agentGenerationFinished={
+                matchingAgentStatuses.length > 0 &&
+                matchingAgentStatuses.every(
+                  (status) => status.state === 'finished',
+                )
+              }
+              onStopAgent={(sessionId) => {
+                window.stormAgent.cancel(sessionId, 'Stopped from editor');
+                setAgentStatuses((current) => ({
+                  ...current,
+                  [sessionId]: { ...current[sessionId], state: 'cancelled' },
+                }));
+              }}
+              onLayoutChange={() => {
+                const vaultId = activeVaultIdRef.current;
+                const latest = editorRef.current?.snapshot();
+                if (!vaultId || !latest) return;
+                visitedVaults.current.add(vaultId);
+                const currentTabs = tabsRef.current.map((tab) =>
+                  tab.kind === 'note' && tab.note.path === latest.note.path
+                    ? latest
+                    : tab,
+                );
+                sessions.current.set(vaultId, {
+                  tabs: currentTabs,
+                  activeId: activeIdRef.current,
+                  groups: groupsRef.current,
+                  assignments: assignmentsRef.current,
+                });
+                scheduleCheckpoint();
+              }}
+              tabs={
+                <TabBar
+                  commandHeld={commandHeld}
+                  tabs={tabs}
+                  activeId={activeId}
+                  onSelect={(tab) =>
+                    tab.kind === 'note'
+                      ? void selectNote(tab.note.path)
+                      : void (async () => {
+                          if (!(await editorRef.current?.flush())) return;
+                          const outgoing = editorRef.current?.snapshot();
+                          if (outgoing)
+                            setTabs((old) =>
+                              old.map((item) =>
+                                item.kind === 'note' &&
+                                item.note.path === outgoing.note.path
+                                  ? outgoing
+                                  : item,
+                              ),
+                            );
+                          activateTab(tab);
+                        })()
+                  }
+                  canCloseTab={(tab) =>
+                    tab.kind !== 'note' ||
+                    !isAgentTabProtected(tab, agentStatuses)
+                  }
+                  onClose={(tab) => {
+                    void closeTab(tab);
+                  }}
+                  onNew={() => {
+                    void createEmptyTab();
+                  }}
+                  groups={tabGroups}
+                  assignments={tabGroupAssignments}
+                  onGroupsChange={(groups) => {
+                    setTabGroups(groups);
+                    groupsRef.current = groups;
+                    if (activeVaultId) {
+                      visitedVaults.current.add(activeVaultId);
+                      rememberCurrentSession(activeVaultId);
+                    }
+                  }}
+                  onAssignmentsChange={(assignments) => {
+                    setTabGroupAssignments(assignments);
+                    assignmentsRef.current = assignments;
+                    if (activeVaultId) {
+                      visitedVaults.current.add(activeVaultId);
+                      rememberCurrentSession(activeVaultId);
+                    }
+                  }}
+                  onMoveTab={onMoveTab}
+                  onMoveGroup={onMoveGroup}
+                  vaultId={activeVaultId}
+                />
+              }
             />
-          }
-        />
+          </div>
+          {quizMounted && (
+            <div
+              aria-hidden={!quizOpen}
+              className="flex min-h-0 min-w-0 flex-1"
+              style={{ display: quizOpen ? 'flex' : 'none' }}
+            >
+              <QuizPane
+                vaultId={activeVaultId}
+                vaultName={
+                  vaults.find((vault) => vault.id === activeVaultId)?.name ?? ''
+                }
+                notePath={activePath}
+                visible={quizOpen}
+                onClose={() => setQuizOpen(false)}
+              />
+            </div>
+          )}
+        </div>
       </div>
       {pickerOpen && (
         <FilePicker

@@ -96,6 +96,9 @@ export interface AgentBrokerOptions {
   assertTargetRegistered?(target: AgentNoteTarget): Promise<void>;
   withVaultLifecycle?<T>(root: string, operation: () => Promise<T>): Promise<T>;
   renderer: AgentRendererTransport;
+  quiz?(
+    request: Extract<AgentRequest, { type: 'quiz' }>,
+  ): Promise<AgentResponse>;
   getContext?(): Promise<AgentContext>;
   discover?(
     vaultId: string,
@@ -224,6 +227,11 @@ export class AgentBroker {
       error: { code: code as never, message, retryable },
     });
     try {
+      if (request.type === 'quiz') {
+        if (!this.options.quiz)
+          return fail('CONTEXT_UNAVAILABLE', 'Quiz service is unavailable');
+        return await this.options.quiz(request);
+      }
       if (request.type === 'inspect') {
         const resolveExisting = this.options.resolveExistingTarget;
         if (!resolveExisting)
@@ -867,6 +875,116 @@ function failure(
     error: { code: code as never, message, retryable: false },
   };
 }
+function isQuizAgentRequest(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const r = value as Record<string, unknown>;
+  const common =
+    typeof r.sessionId === 'string' &&
+    r.sessionId.length > 0 &&
+    typeof r.agentToken === 'string' &&
+    r.agentToken.length > 0 &&
+    r.agentToken.length <= 512 &&
+    Number.isSafeInteger(r.expectedRevision) &&
+    Number(r.expectedRevision) >= 0 &&
+    typeof r.idempotencyKey === 'string' &&
+    r.idempotencyKey.length > 0 &&
+    r.idempotencyKey.length <= 128;
+  if (!common) return false;
+  if (r.type === 'attach') return true;
+  if (r.type === 'pose-question') {
+    if (
+      typeof r.question !== 'string' ||
+      r.question.length < 1 ||
+      r.question.length > 4000
+    )
+      return false;
+    const kind = r.kind ?? 'multiple-choice';
+    if (kind === 'short-answer' || kind === 'long-answer')
+      return (
+        r.choices === undefined &&
+        r.leftItems === undefined &&
+        r.rightItems === undefined
+      );
+    if (kind === 'matching') {
+      const validItems = (items: unknown) =>
+        Array.isArray(items) &&
+        items.length >= 2 &&
+        items.length <= 12 &&
+        items.every(
+          (item) =>
+            !!item &&
+            typeof item === 'object' &&
+            typeof (item as Record<string, unknown>).id === 'string' &&
+            !!(item as Record<string, unknown>).id &&
+            typeof (item as Record<string, unknown>).text === 'string' &&
+            !!(item as Record<string, unknown>).text,
+        );
+      const left = r.leftItems as Array<{ id: string }> | undefined;
+      const right = r.rightItems as Array<{ id: string }> | undefined;
+      return (
+        r.choices === undefined &&
+        validItems(left) &&
+        validItems(right) &&
+        left!.length === right!.length &&
+        new Set([...left!, ...right!].map((item) => item.id)).size ===
+          left!.length + right!.length
+      );
+    }
+    if (kind !== 'multiple-choice') return false;
+    return (
+      Array.isArray(r.choices) &&
+      r.choices.length >= 1 &&
+      r.choices.length <= 6 &&
+      r.choices.every(
+        (choice) =>
+          !!choice &&
+          typeof choice === 'object' &&
+          typeof (choice as Record<string, unknown>).id === 'string' &&
+          !!(choice as Record<string, unknown>).id &&
+          typeof (choice as Record<string, unknown>).text === 'string' &&
+          !!(choice as Record<string, unknown>).text,
+      ) &&
+      new Set((r.choices as Array<{ id: string }>).map((choice) => choice.id))
+        .size === r.choices.length
+    );
+  }
+  if (r.type === 'pose-prompt') {
+    return (
+      (r.kind === 'next-steps' || r.kind === 'clarification') &&
+      typeof r.prompt === 'string' &&
+      r.prompt.length > 0 &&
+      r.prompt.length <= 4000 &&
+      Array.isArray(r.choices) &&
+      r.choices.length >= 1 &&
+      r.choices.length <= 6 &&
+      r.choices.every(
+        (choice) =>
+          !!choice &&
+          typeof choice === 'object' &&
+          typeof (choice as Record<string, unknown>).id === 'string' &&
+          !!(choice as Record<string, unknown>).id &&
+          typeof (choice as Record<string, unknown>).text === 'string' &&
+          !!(choice as Record<string, unknown>).text,
+      ) &&
+      new Set((r.choices as Array<{ id: string }>).map((choice) => choice.id))
+        .size === r.choices.length &&
+      (r.promptId === undefined ||
+        (typeof r.promptId === 'string' &&
+          r.promptId.length > 0 &&
+          r.promptId.length <= 128))
+    );
+  }
+  if (r.type === 'feedback' || r.type === 'agent-message')
+    return (
+      typeof r.text === 'string' &&
+      r.text.length > 0 &&
+      r.text.length <= 10000 &&
+      (r.type !== 'feedback' ||
+        r.verdict === undefined ||
+        ['correct', 'incorrect', 'partial'].includes(String(r.verdict)))
+    );
+  return false;
+}
 function isRequest(v: unknown): v is AgentRequest {
   if (!v || typeof v !== 'object') return false;
   const r = v as Record<string, unknown>;
@@ -876,6 +994,41 @@ function isRequest(v: unknown): v is AgentRequest {
     r.requestId.length > 128
   )
     return false;
+  if (r.type === 'quiz') {
+    if (r.operation === 'list') return true;
+    if (r.operation === 'attach')
+      return (
+        typeof r.sessionId === 'string' &&
+        r.sessionId.length > 0 &&
+        typeof r.clientId === 'string' &&
+        r.clientId.length > 0 &&
+        r.clientId.length <= 128
+      );
+    if (r.operation === 'image-fetch' || r.operation === 'image-release')
+      return (
+        typeof r.sessionId === 'string' &&
+        r.sessionId.length > 0 &&
+        r.sessionId.length <= 128 &&
+        typeof r.agentToken === 'string' &&
+        r.agentToken.length > 0 &&
+        r.agentToken.length <= 512 &&
+        typeof r.imageId === 'string' &&
+        r.imageId.length > 0 &&
+        r.imageId.length <= 128
+      );
+    if (r.operation === 'snapshot')
+      return (
+        typeof r.sessionId === 'string' &&
+        r.sessionId.length > 0 &&
+        typeof r.agentToken === 'string' &&
+        r.agentToken.length > 0 &&
+        r.agentToken.length <= 512 &&
+        (r.after === undefined ||
+          (Number.isSafeInteger(r.after) && Number(r.after) >= 0))
+      );
+    if (r.operation === 'request') return isQuizAgentRequest(r.request);
+    return false;
+  }
   if (r.type === 'inspect') return typeof r.absolutePath === 'string';
   if (r.type === 'connect')
     return (

@@ -235,7 +235,12 @@ export async function runCli(
         arg !== '--source' &&
         arg !== '--target' &&
         arg !== '--depth' &&
-        arg !== '--include-source'
+        arg !== '--include-source' &&
+        arg !== '--client-id' &&
+        arg !== '--token' &&
+        arg !== '--after' &&
+        arg !== '--timeout' &&
+        arg !== '--image-id'
       ) {
         throw new CliUsageError(`Unknown option: ${arg}`);
       } else rest.push(arg);
@@ -248,7 +253,8 @@ export async function runCli(
     if (
       !knownCommands.includes(command) &&
       command !== 'list' &&
-      command !== 'search'
+      command !== 'search' &&
+      command !== 'quiz'
     )
       throw new CliUsageError(`Unknown command: ${command}`);
     const nameFlag = rest.indexOf('--name');
@@ -314,6 +320,245 @@ export async function runCli(
         throw new CliUsageError(
           `${command} requires SESSION --expected-version N --stdin`,
         );
+    }
+    let quizOperation:
+      | 'list'
+      | 'attach'
+      | 'detach'
+      | 'activity'
+      | 'status'
+      | 'wait'
+      | 'request'
+      | 'image'
+      | 'image-release'
+      | undefined;
+    let quizSession: string | undefined;
+    let quizImageId: string | undefined;
+    let quizToken: string | undefined;
+    let quizAfter: number | undefined;
+    let quizTimeout: number | undefined;
+    let quizClientId: string | undefined;
+    let quizPayload: any;
+    if (command === 'quiz') {
+      quizOperation = rest[1] as typeof quizOperation;
+      if (
+        ![
+          'list',
+          'attach',
+          'detach',
+          'activity',
+          'status',
+          'wait',
+          'request',
+          'image',
+          'image-release',
+        ].includes(quizOperation ?? '')
+      )
+        throw new CliUsageError(
+          'quiz requires list|attach|status|wait|request',
+        );
+      quizSession = rest[2] && !rest[2]!.startsWith('--') ? rest[2] : undefined;
+      const tail = rest.slice(quizSession ? 3 : 2);
+      for (let i = 0; i < tail.length; i++) {
+        const flag = tail[i]!;
+        const value = tail[++i];
+        if (flag === '--token') quizToken = value;
+        else if (flag === '--client-id') quizClientId = value;
+        else if (flag === '--state') quizPayload = value;
+        else if (flag === '--json' && quizOperation === 'image') continue;
+        else if (flag === '--image-id') quizImageId = value;
+        else if (flag === '--offset')
+          throw new CliUsageError(
+            '--offset is obsolete; quiz images are fetched whole',
+          );
+        else if (flag === '--timeout' && value && /^\d+(?:\.\d+)?$/.test(value))
+          quizTimeout = Number(value);
+        else if (
+          flag === '--after' &&
+          value &&
+          /^(0|[1-9]\d*)$/.test(value) &&
+          Number.isSafeInteger(Number(value))
+        )
+          quizAfter = Number(value);
+        else throw new CliUsageError(`Invalid quiz argument: ${flag}`);
+      }
+      if (quizOperation !== 'list' && !quizSession)
+        throw new CliUsageError(`quiz ${quizOperation} requires SESSION_ID`);
+      if (
+        quizOperation === 'wait' &&
+        quizTimeout !== undefined &&
+        (!Number.isFinite(quizTimeout) || quizTimeout < 0 || quizTimeout > 300)
+      )
+        throw new CliUsageError(
+          'quiz wait --timeout must be from 0 to 300 seconds',
+        );
+      if (quizOperation === 'wait' && quizAfter === undefined)
+        throw new CliUsageError('quiz wait requires --after CURSOR');
+      if (
+        ['image', 'image-release'].includes(quizOperation ?? '') &&
+        !quizImageId
+      )
+        throw new CliUsageError(`quiz ${quizOperation} requires --image-id ID`);
+      if (
+        [
+          'status',
+          'wait',
+          'detach',
+          'activity',
+          'image',
+          'image-release',
+        ].includes(quizOperation ?? '') &&
+        !(quizToken ?? process.env.STORM_QUIZ_TOKEN)
+      )
+        throw new CliUsageError(
+          `quiz ${quizOperation} requires --token TOKEN or STORM_QUIZ_TOKEN`,
+        );
+      if (quizOperation === 'activity') {
+        if (!quizToken && !process.env.STORM_QUIZ_TOKEN)
+          throw new CliUsageError('quiz activity requires --token TOKEN');
+        if (!quizPayload)
+          throw new CliUsageError(
+            'quiz activity requires --state idle|thinking|drafting',
+          );
+      }
+      if (quizOperation === 'request') {
+        let text = '';
+        for await (const chunk of (io.stdin ??
+          process.stdin) as AsyncIterable<Uint8Array>)
+          text += Buffer.from(chunk).toString('utf8');
+        try {
+          quizPayload = JSON.parse(text);
+        } catch {
+          throw new CliUsageError('quiz request stdin must be a JSON object');
+        }
+        if (
+          !quizPayload ||
+          typeof quizPayload !== 'object' ||
+          Array.isArray(quizPayload)
+        )
+          throw new CliUsageError('quiz request stdin must be a JSON object');
+        quizPayload = {
+          ...quizPayload,
+          sessionId: quizSession,
+          agentToken:
+            quizPayload.agentToken ?? quizToken ?? process.env.STORM_QUIZ_TOKEN,
+          idempotencyKey: quizPayload.idempotencyKey ?? randomUUID(),
+        };
+        if (!quizPayload.agentToken)
+          throw new CliUsageError(
+            'quiz request requires payload agentToken or --token TOKEN',
+          );
+        if (
+          ![
+            'pose-question',
+            'pose-prompt',
+            'feedback',
+            'agent-message',
+          ].includes(quizPayload.type)
+        )
+          throw new CliUsageError(
+            'quiz request type must be pose-question, pose-prompt, feedback, or agent-message',
+          );
+        if (
+          !Number.isSafeInteger(quizPayload.expectedRevision) ||
+          quizPayload.expectedRevision < 0
+        )
+          throw new CliUsageError(
+            'quiz request requires a nonnegative safe integer expectedRevision',
+          );
+        if (quizPayload.type === 'pose-prompt') {
+          const choices = quizPayload.choices;
+          const validChoices =
+            Array.isArray(choices) &&
+            choices.length >= 1 &&
+            choices.length <= 6 &&
+            choices.every(
+              (choice: any) =>
+                choice &&
+                typeof choice.id === 'string' &&
+                choice.id.trim() &&
+                typeof choice.text === 'string' &&
+                choice.text.trim(),
+            ) &&
+            new Set(choices.map((choice: { id: string }) => choice.id)).size ===
+              choices.length;
+          if (
+            !['next-steps', 'clarification'].includes(quizPayload.kind) ||
+            typeof quizPayload.prompt !== 'string' ||
+            !quizPayload.prompt.trim() ||
+            quizPayload.prompt.length > 4000 ||
+            !validChoices ||
+            (quizPayload.promptId !== undefined &&
+              (typeof quizPayload.promptId !== 'string' ||
+                !quizPayload.promptId.trim() ||
+                quizPayload.promptId.length > 128))
+          )
+            throw new CliUsageError(
+              'pose-prompt requires kind, prompt, and 1-6 choices with unique ids',
+            );
+        }
+        if (quizPayload.type === 'pose-question') {
+          const question = quizPayload.question;
+          const kind = quizPayload.kind ?? 'multiple-choice';
+          const validItems = (items: unknown) =>
+            Array.isArray(items) &&
+            items.length >= 2 &&
+            items.length <= 12 &&
+            items.every(
+              (item) =>
+                item &&
+                typeof item.id === 'string' &&
+                item.id.trim() &&
+                typeof item.text === 'string' &&
+                item.text.trim(),
+            ) &&
+            new Set(items.map((item: { id: string }) => item.id)).size ===
+              items.length;
+          const choices = quizPayload.choices;
+          const validChoices =
+            Array.isArray(choices) &&
+            choices.length >= 1 &&
+            choices.length <= 6 &&
+            choices.every(
+              (item: any) =>
+                item &&
+                typeof item.id === 'string' &&
+                item.id.trim() &&
+                typeof item.text === 'string' &&
+                item.text.trim(),
+            ) &&
+            new Set(choices.map((item: { id: string }) => item.id)).size ===
+              choices.length;
+          const validQuestion =
+            typeof question === 'string' &&
+            question.trim() &&
+            (kind === 'multiple-choice'
+              ? validChoices &&
+                quizPayload.leftItems === undefined &&
+                quizPayload.rightItems === undefined
+              : kind === 'matching'
+                ? choices === undefined &&
+                  validItems(quizPayload.leftItems) &&
+                  validItems(quizPayload.rightItems) &&
+                  quizPayload.leftItems.length ===
+                    quizPayload.rightItems.length &&
+                  new Set(
+                    [...quizPayload.leftItems, ...quizPayload.rightItems].map(
+                      (item: { id: string }) => item.id,
+                    ),
+                  ).size ===
+                    quizPayload.leftItems.length + quizPayload.rightItems.length
+                : kind === 'short-answer' || kind === 'long-answer'
+                  ? choices === undefined &&
+                    quizPayload.leftItems === undefined &&
+                    quizPayload.rightItems === undefined
+                  : false);
+          if (!validQuestion)
+            throw new CliUsageError(
+              'pose-question requires valid question fields for its kind: multiple-choice (1-6 choices), matching (2-12 unique pairs), or short-answer/long-answer (no choices/items)',
+            );
+        }
+      }
     }
     let discoveryVaultId: string | undefined;
     let discoveryQuery: string | undefined;
@@ -466,8 +711,107 @@ export async function runCli(
         );
       }
     };
+    if (command === 'quiz' && quizOperation === 'wait') {
+      const deadline =
+        quizTimeout === undefined ? undefined : Date.now() + quizTimeout * 1000;
+      let cursor = quizAfter!;
+      let latest: any;
+      while (true) {
+        latest = await request({
+          type: 'quiz',
+          operation: 'snapshot',
+          sessionId: quizSession!,
+          agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN!,
+          after: cursor,
+        } as any);
+        const value = latest?.snapshot;
+        if (!latest?.ok)
+          throw new Error(latest?.error ?? 'Quiz snapshot request failed');
+        if (!value?.session)
+          throw new Error('Quiz snapshot did not include a session');
+        const events = Array.isArray(value.events) ? value.events : [];
+        cursor = Math.max(
+          cursor,
+          ...events.map((event: any) => Number(event.cursor) || 0),
+        );
+        const learnerEvents = events.filter(
+          (event: any) =>
+            typeof event.type === 'string' &&
+            (/^(answer|message|continue|respond-prompt)$/.test(event.type) ||
+              event.type.startsWith('learner-')),
+        );
+        if (learnerEvents.length) {
+          out(
+            `${JSON.stringify({ ...latest, timedOut: false, after: cursor })}\n`,
+          );
+          return 0;
+        }
+        if (value.session.status === 'disconnected') {
+          out(
+            `${JSON.stringify({ ...latest, timedOut: false, disconnected: true, after: cursor, message: 'Quiz session is disconnected.' })}\n`,
+          );
+          return 0;
+        }
+        if (value.session.status === 'complete') {
+          out(
+            `${JSON.stringify({ ...latest, timedOut: false, after: cursor })}\n`,
+          );
+          return 0;
+        }
+        const remaining = deadline === undefined ? 1000 : deadline - Date.now();
+        if (remaining <= 0) {
+          out(
+            `${JSON.stringify({ ...latest, timedOut: true, after: cursor, message: 'Timed out waiting for learner activity; call quiz wait again to continue.' })}\n`,
+          );
+          return 0;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(1000, remaining)),
+        );
+      }
+    }
     let result: any;
-    if (command === 'context') result = await request({ type: 'context' });
+    if (command === 'quiz') {
+      const operation =
+        quizOperation === 'status' || quizOperation === 'wait'
+          ? 'snapshot'
+          : quizOperation === 'image'
+            ? 'image-fetch'
+            : quizOperation === 'image-release'
+              ? 'image-release'
+              : quizOperation!;
+      result = await request({
+        type: 'quiz',
+        operation,
+        ...(quizSession ? { sessionId: quizSession } : {}),
+        ...(operation === 'attach'
+          ? { clientId: quizClientId ?? 'storm-cli' }
+          : {}),
+        ...(operation === 'detach'
+          ? { agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN! }
+          : {}),
+        ...(operation === 'snapshot'
+          ? {
+              agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN!,
+              ...(quizAfter !== undefined ? { after: quizAfter } : {}),
+            }
+          : {}),
+        ...(operation === 'activity'
+          ? {
+              agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN!,
+              state: quizPayload,
+            }
+          : {}),
+        ...(operation === 'image-fetch' || operation === 'image-release'
+          ? {
+              agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN!,
+              imageId: quizImageId,
+            }
+          : {}),
+        ...(operation === 'request' ? { request: quizPayload } : {}),
+      } as any);
+    } else if (command === 'context')
+      result = await request({ type: 'context' });
     else if (command === 'resolve-link')
       result = await request({
         type: 'resolve-link',

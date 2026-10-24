@@ -23,7 +23,7 @@ import { BsPinFill } from 'react-icons/bs';
 import { TbLayoutSidebarRightFilled } from 'react-icons/tb';
 import { FaPlus } from 'react-icons/fa';
 import { FaFolderTree } from 'react-icons/fa6';
-import { IoIosSettings } from 'react-icons/io';
+import { IoIosSettings, IoMdSchool } from 'react-icons/io';
 
 type Props = {
   vaults: RegisteredVault[];
@@ -48,6 +48,8 @@ type Props = {
   commandHeld: boolean;
   vimMode: boolean;
   onOpenSettings: () => void;
+  onToggleQuiz: () => void;
+  quizOpen: boolean;
 };
 
 export default function VaultSidebar({
@@ -69,6 +71,8 @@ export default function VaultSidebar({
   commandHeld,
   vimMode,
   onOpenSettings,
+  onToggleQuiz,
+  quizOpen,
 }: Props) {
   const [groupForm, setGroupForm] = useState<{
     id?: string;
@@ -849,7 +853,7 @@ export default function VaultSidebar({
           Add a vault to get started.
         </p>
       ) : null}
-      <div className="mt-2 shrink-0 border-t border-white/10 pt-2">
+      <div className="mt-2 flex shrink-0 items-center gap-1 border-t border-white/10 pt-2">
         <button
           type="button"
           onClick={onOpenSettings}
@@ -869,6 +873,16 @@ export default function VaultSidebar({
                 : 'Ctrl+,'}
             </span>
           )}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleQuiz}
+          aria-label="Toggle Quiz pane"
+          aria-pressed={quizOpen}
+          title="Quiz"
+          className={`app-icon-button relative focus-visible:ring-2 focus-visible:ring-white/60 ${quizOpen ? '!text-white' : 'text-white/70 hover:bg-transparent hover:text-white'}`}
+        >
+          <IoMdSchool aria-hidden="true" className="h-3.5 w-3.5" />
         </button>
       </div>
     </aside>

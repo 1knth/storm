@@ -1,0 +1,449 @@
+// Reconstructed after accidental truncation; this is not an exact recovery of the original file.
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { mock } from 'bun:test';
+
+// The production extension is imported below with only its Typebox schema
+// builder replaced. Extension registration, command/tool handlers, wait loop,
+// subprocess transport, and lifecycle behavior remain production code.
+const type =
+  (kind: string) =>
+  (...args: unknown[]) => ({ kind, args });
+mock.module('typebox', () => ({
+  Type: {
+    Object: type('object'),
+    Union: type('union'),
+    Literal: type('literal'),
+    Optional: type('optional'),
+    String: type('string'),
+    Array: type('array'),
+  },
+}));
+const { default: extension } = await import('./storm-quiz');
+
+type Call = { command: string; options: any };
+type Harness = ReturnType<typeof makePi>;
+let dir = '';
+let oldEnv: Record<string, string | undefined> = {};
+
+function makePi() {
+  const commands = new Map<string, any>();
+  const tools = new Map<string, any>();
+  const listeners = new Map<string, Function[]>();
+  const calls: Call[] = [];
+  const notices: any[] = [];
+  let activeTools = ['read', 'custom'];
+  let idle = true;
+  const pi: any = {
+    registerCommand: (name: string, options: any) =>
+      commands.set(name, options),
+    registerTool: (tool: any) => tools.set(tool.name, tool),
+    on: (event: string, fn: Function) =>
+      listeners.set(event, [...(listeners.get(event) ?? []), fn]),
+    getActiveTools: () => activeTools,
+    setActiveTools: (value: string[]) => {
+      activeTools = value;
+    },
+    sendUserMessage: (message: string, options?: unknown) =>
+      calls.push({ command: message, options }),
+  };
+  extension(pi);
+  const ctx = {
+    isIdle: () => idle,
+    ui: {
+      notify: (message: string, level: string) =>
+        notices.push({ message, level }),
+    },
+  };
+  return {
+    commands,
+    tools,
+    calls,
+    notices,
+    ctx,
+    pi,
+    setIdle(value: boolean) {
+      idle = value;
+    },
+    getActiveTools: () => activeTools,
+    async command(input: string) {
+      await commands.get('storm-quiz').handler(input, ctx);
+    },
+    async emit(event: string, value?: any) {
+      for (const fn of listeners.get(event) ?? []) await fn(value);
+    },
+    async shutdown() {
+      for (const fn of listeners.get('session_shutdown') ?? []) await fn();
+    },
+  };
+}
+
+async function fixture(options: Record<string, unknown> = {}) {
+  dir = await mkdtemp(join(tmpdir(), 'storm-quiz-integration-'));
+  const stateFile = join(dir, 'state.json');
+  await writeFile(
+    stateFile,
+    JSON.stringify({
+      revision: 8,
+      cursor: 3,
+      status: 'waiting',
+      events: [],
+      requests: [],
+      activity: [],
+      image: { path: join(dir, 'learner.png'), mimeType: 'image/png' },
+      ...options,
+    }),
+  );
+  // Synthetic-only fake CLI: every response is constructed from this test's
+  // state file. wait deliberately blocks until the registered extension kills it.
+  const executable = join(dir, 'fake-cli.cjs');
+  await writeFile(
+    executable,
+    `
+const fs=require('node:fs'); const p=process.env.QUIZ_FIXTURE;
+const s=JSON.parse(fs.readFileSync(p,'utf8')); const a=process.argv.slice(2);
+const op=a[1], id=a[2]; const arg=(n)=>a[a.indexOf(n)+1];
+function save(){fs.writeFileSync(p,JSON.stringify(s));}
+function ok(value){process.stdout.write(JSON.stringify({ok:true,result:{ok:true,value}}));}
+if(op==='list'){ok(s.list ?? [{id:'quiz-test',status:s.listStatus ?? s.status}]);}
+else if(op==='attach'){ok({agentToken:'synthetic-capability',snapshot:{session:{id,revision:s.revision,eventCursor:s.cursor,status:s.status,scope:'synthetic'},events:[]}});}
+else if(op==='wait'){if(s.waitError){process.stderr.write(JSON.stringify({error:{code:s.waitError}}));process.exitCode=1;}else if(s.waitSnapshot){process.stdout.write(JSON.stringify({ok:true,snapshot:s.waitSnapshot,after:s.waitSnapshot.session.eventCursor,timedOut:false}));}else {process.stdin.resume();setInterval(()=>{},1000);}}
+else if(op==='status'){process.stdout.write(JSON.stringify({ok:true,operation:'snapshot',snapshot:{session:{id,revision:s.statusRevision ?? s.revision,eventCursor:s.statusCursor ?? s.cursor,status:s.status},events:[]}}));}
+else if(op==='request'){let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{s.requests.push(JSON.parse(b));s.revision++;save();ok({revision:s.revision,currentQuestion:null});});}
+else if(op==='activity'){s.activity.push(arg('--state'));save();ok({});}
+else if(op==='image'){ok(s.image);}
+else if(op==='image-release'){if(s.imageReleaseFails){s.imageReleaseFails--;save();process.stderr.write(JSON.stringify({error:{code:'TEMPORARY'}}));process.exitCode=1;}else{s.released=(s.released||[]).concat(arg('--image-id'));save();ok({});}}
+else if(op==='detach'){s.detached=true;save();ok({});}
+else {ok({});}
+`,
+  );
+  const bun = process.execPath;
+  process.env.STORM_QUIZ_CLI = bun;
+  process.env.STORM_QUIZ_CLI_ARGS = JSON.stringify([executable]);
+  process.env.QUIZ_FIXTURE = stateFile;
+  return { stateFile, cli: bun };
+}
+async function state(path: string) {
+  return JSON.parse(await readFile(path, 'utf8'));
+}
+async function flush() {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
+beforeEach(async () => {
+  oldEnv = Object.fromEntries(
+    ['STORM_QUIZ_CLI', 'STORM_QUIZ_CLI_ARGS', 'QUIZ_FIXTURE'].map((key) => [
+      key,
+      process.env[key],
+    ]),
+  );
+});
+afterEach(async () => {
+  for (const [key, value] of Object.entries(oldEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  if (dir) await rm(dir, { recursive: true, force: true });
+  dir = '';
+});
+
+async function attach(pi: Harness) {
+  await pi.command('attach quiz-test');
+}
+
+describe('registered Storm quiz extension integration (synthetic CLI only)', () => {
+  test('registers the production command and private capability tool; attach preserves tools and never exposes capability', async () => {
+    await fixture();
+    const pi = makePi();
+    await attach(pi);
+    expect(pi.commands.has('storm-quiz')).toBe(true);
+    expect(pi.tools.has('storm_quiz')).toBe(true);
+    expect(pi.getActiveTools()).toEqual(['read', 'custom', 'storm_quiz']);
+    expect(pi.calls[0].command).not.toContain('synthetic-capability');
+    expect(pi.tools.get('storm_quiz').description).not.toContain(
+      'synthetic-capability',
+    );
+    expect(pi.notices[0].message).toContain('Attached');
+    await pi.shutdown();
+  });
+
+  test('status uses top-level snapshot revision without advancing learner cursor', async () => {
+    const { stateFile } = await fixture({
+      statusRevision: 11,
+      statusCursor: 9,
+      events: [{ cursor: 7, type: 'answer' }],
+    });
+    const pi = makePi();
+    await attach(pi);
+    const result = await pi.tools
+      .get('storm_quiz')
+      .execute('call', { action: 'status' });
+    expect(JSON.parse(result.content[0].text).revision).toBe(11);
+    expect((await state(stateFile)).requests).toEqual([]);
+    await pi.shutdown();
+  });
+
+  test('tool question, feedback, and chat preserve structured payloads and nested response handling', async () => {
+    const { stateFile } = await fixture();
+    const pi = makePi();
+    await attach(pi);
+    const tool = pi.tools.get('storm_quiz');
+    await tool.execute('q', {
+      action: 'question',
+      text: 'Match',
+      kind: 'matching',
+      leftItems: [{ id: 'a', text: 'A' }],
+      rightItems: [{ id: 'b', text: 'B' }],
+    });
+    await tool.execute('f', {
+      action: 'feedback',
+      text: 'Correct',
+      verdict: 'correct',
+    });
+    await tool.execute('p', {
+      action: 'prompt',
+      text: 'What next?',
+      kind: 'next-steps',
+      choices: [
+        { id: 'review', text: 'Review' },
+        { id: 'continue', text: 'Continue' },
+      ],
+      promptId: 'prompt-1',
+    });
+    await tool.execute('m', { action: 'message', text: 'Explain' });
+    const requests = (await state(stateFile)).requests;
+    expect(requests.map((r: any) => r.type)).toEqual([
+      'pose-question',
+      'feedback',
+      'pose-prompt',
+      'agent-message',
+    ]);
+    expect(requests[0].leftItems).toEqual([{ id: 'a', text: 'A' }]);
+    expect(requests[1].text).toBe('Correct');
+    expect(requests[1].verdict).toBe('correct');
+    expect(requests[2]).toMatchObject({
+      kind: 'next-steps',
+      prompt: 'What next?',
+      promptId: 'prompt-1',
+      choices: [
+        { id: 'review', text: 'Review' },
+        { id: 'continue', text: 'Continue' },
+      ],
+    });
+    expect(requests[3].text).toBe('Explain');
+    expect(requests.every((r: any) => r.expectedRevision >= 8)).toBe(true);
+    await pi.shutdown();
+  });
+
+  test('learner activity preserves exact multiline text and only sends newly delivered event once', async () => {
+    const { stateFile } = await fixture();
+    const pi = makePi();
+    await attach(pi);
+    const s = await state(stateFile);
+    s.waitSnapshot = {
+      session: {
+        id: 'quiz-test',
+        revision: 8,
+        eventCursor: 4,
+        status: 'connected',
+        currentQuestion: { id: 'q1' },
+      },
+      events: [
+        {
+          cursor: 4,
+          type: 'answer',
+          data: { answer: 'Exact café\nsecond line', reasoning: 'because' },
+        },
+      ],
+    };
+    await writeFile(stateFile, JSON.stringify(s));
+    await pi.command('disconnect');
+    await attach(pi);
+    await flush();
+    await flush();
+    expect(
+      pi.calls.some((call: any) =>
+        call.command.includes('Exact café\\nsecond line'),
+      ),
+    ).toBe(true);
+    await pi.shutdown();
+    await flush();
+    expect((await state(stateFile)).activity).toContain('idle');
+  });
+
+  test('GUI stop reconciliation removes tool once, reports once, and permits fresh attachment', async () => {
+    const { stateFile } = await fixture({
+      waitError: 'INVALID_REQUEST',
+      listStatus: 'disconnected',
+    });
+    const pi = makePi();
+    await attach(pi);
+    await flush();
+    await flush();
+    expect(pi.getActiveTools()).not.toContain('storm_quiz');
+    expect(
+      pi.notices.filter(
+        (n: any) => n.message === 'Storm stopped the quiz; Pi detached.',
+      ),
+    ).toHaveLength(1);
+    const saved = await state(stateFile);
+    saved.waitError = undefined;
+    saved.status = 'waiting';
+    await writeFile(stateFile, JSON.stringify(saved));
+    await attach(pi);
+    expect(pi.getActiveTools()).toContain('storm_quiz');
+    await pi.shutdown();
+  });
+
+  test('transient wait transport errors do not claim ownership was revoked', async () => {
+    const { stateFile } = await fixture({ waitError: 'TEMPORARY' });
+    const pi = makePi();
+    await attach(pi);
+    await flush();
+    await flush();
+    expect(pi.getActiveTools()).toContain('storm_quiz');
+    expect(
+      pi.notices.some(
+        (n: any) => n.message === 'Storm stopped the quiz; Pi detached.',
+      ),
+    ).toBe(false);
+    expect((await state(stateFile)).detached).toBeUndefined();
+    await pi.shutdown();
+  });
+
+  test('learner image is delivered as a temporary path and released after successful Pi reply', async () => {
+    const { stateFile } = await fixture();
+    const pi = makePi();
+    await attach(pi);
+    const s = await state(stateFile);
+    s.waitSnapshot = {
+      session: {
+        id: 'quiz-test',
+        revision: 8,
+        eventCursor: 4,
+        status: 'connected',
+      },
+      events: [
+        {
+          cursor: 4,
+          type: 'answer',
+          data: { answer: 'see image', attachments: [{ id: 'img-1' }] },
+        },
+      ],
+    };
+    await writeFile(stateFile, JSON.stringify(s));
+    await pi.command('disconnect');
+    await attach(pi);
+    await flush();
+    const delivered = pi.calls.find((call) =>
+      call.command.includes('Attached images:'),
+    );
+    expect(delivered?.command).toContain(join(dir, 'learner.png'));
+    expect(delivered?.command).not.toMatch(/base64|data:image/);
+    expect((await state(stateFile)).released).toBeUndefined();
+    await pi.tools.get('storm_quiz').execute('reply', {
+      action: 'message',
+      text: 'I inspected the image.',
+    });
+    expect((await state(stateFile)).released).toEqual(['img-1']);
+    await pi.shutdown();
+  });
+
+  test('failed image release retains image for retry on later successful reply', async () => {
+    const { stateFile } = await fixture({ imageReleaseFails: 1 });
+    const pi = makePi();
+    await attach(pi);
+    const s = await state(stateFile);
+    s.waitSnapshot = {
+      session: {
+        id: 'quiz-test',
+        revision: 8,
+        eventCursor: 4,
+        status: 'connected',
+      },
+      events: [
+        { cursor: 4, type: 'answer', data: { attachments: ['img-retry'] } },
+      ],
+    };
+    await writeFile(stateFile, JSON.stringify(s));
+    await pi.command('disconnect');
+    await attach(pi);
+    await flush();
+    await pi.tools.get('storm_quiz').execute('reply', {
+      action: 'feedback',
+      text: 'I reviewed the image.',
+    });
+    expect((await state(stateFile)).released).toBeUndefined();
+    await pi.tools.get('storm_quiz').execute('reply-again', {
+      action: 'message',
+      text: 'Follow-up.',
+    });
+    expect((await state(stateFile)).released).toEqual(['img-retry']);
+    await pi.shutdown();
+  });
+
+  test('duplicate wait cursor does not resend learner message', async () => {
+    const { stateFile } = await fixture();
+    const pi = makePi();
+    await attach(pi);
+    const s = await state(stateFile);
+    s.waitSnapshot = {
+      session: {
+        id: 'quiz-test',
+        revision: 8,
+        eventCursor: 4,
+        status: 'connected',
+      },
+      events: [{ cursor: 4, type: 'message', data: { text: 'once only' } }],
+    };
+    await writeFile(stateFile, JSON.stringify(s));
+    await pi.command('disconnect');
+    await attach(pi);
+    await flush();
+    await flush();
+    expect(
+      pi.calls.filter((call) => call.command.includes('once only')),
+    ).toHaveLength(1);
+    await pi.shutdown();
+  });
+
+  test('busy-turn learner delivery queues follow-up and preserves thinking until its actual turn ends', async () => {
+    // Regression contract for the production event handlers: a queued learner turn
+    // must survive the preceding agent_end and become idle only after next end.
+    const { stateFile } = await fixture();
+    const pi = makePi();
+    pi.setIdle(false);
+    await attach(pi);
+    const s = await state(stateFile);
+    s.waitSnapshot = {
+      session: {
+        id: 'quiz-test',
+        revision: 8,
+        eventCursor: 4,
+        status: 'connected',
+      },
+      events: [
+        { cursor: 4, type: 'message', data: { text: 'queued learner turn' } },
+      ],
+    };
+    await writeFile(stateFile, JSON.stringify(s));
+    await pi.command('disconnect');
+    await attach(pi);
+    await flush();
+    await flush();
+    expect(pi.calls.at(-1)?.options).toEqual({ deliverAs: 'followUp' });
+    await pi.emit('agent_start');
+    await flush();
+    await pi.emit('agent_end');
+    await flush();
+    expect((await state(stateFile)).activity.at(-1)).toBe('thinking');
+    await pi.emit('agent_start');
+    await flush();
+    await pi.emit('agent_end');
+    await flush();
+    expect((await state(stateFile)).activity.at(-1)).toBe('idle');
+    await pi.shutdown();
+  });
+});

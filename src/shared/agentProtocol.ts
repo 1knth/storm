@@ -1,6 +1,12 @@
 /** Local StormCLI ↔ Storm-main-process protocol. No renderer or disk paths cross this
  * boundary; the main process resolves and validates vault membership before use.
  */
+import type {
+  QuizAgentRequest,
+  QuizResult,
+  QuizSession,
+  QuizSnapshot,
+} from './quizProtocol';
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 
 export type AgentSessionId = string;
@@ -145,7 +151,81 @@ export type AgentRequest =
       requestId: string;
       type: 'disconnect';
       sessionId: AgentSessionId;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      operation: 'list';
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      operation: 'attach';
+      sessionId: string;
+      clientId: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      operation: 'detach';
+      sessionId: string;
+      agentToken: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      operation: 'activity';
+      sessionId: string;
+      agentToken: string;
+      state: 'idle' | 'thinking' | 'drafting';
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      operation: 'image-fetch';
+      sessionId: string;
+      agentToken: string;
+      imageId: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      operation: 'image-release';
+      sessionId: string;
+      agentToken: string;
+      imageId: string;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      operation: 'snapshot';
+      sessionId: string;
+      agentToken: string;
+      after?: number;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      operation: 'request';
+      request: QuizAgentRequest;
     };
+
+export type AgentQuizSession = Omit<QuizSession, 'agentToken'>;
+export type AgentQuizSnapshot = Omit<QuizSnapshot, 'session'> & {
+  session: AgentQuizSession;
+};
+export type AgentQuizAttachResult = {
+  agentToken: string;
+  snapshot: AgentQuizSnapshot;
+};
 
 export type AgentSessionState =
   | 'connected'
@@ -284,6 +364,75 @@ export type AgentResponse =
       ok: true;
       type: 'closed';
       session: AgentSessionStatus;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'list';
+      result: QuizResult<AgentQuizSession[]>;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'attach';
+      result: QuizResult<AgentQuizAttachResult>;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'detach';
+      result: QuizResult<AgentQuizSession>;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'activity';
+      result: QuizResult<AgentQuizSession>;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'image-fetch';
+      result: QuizResult<{
+        id: string;
+        mimeType: string;
+        size: number;
+        path: string;
+      }>;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'image-release';
+      result: QuizResult<{ id: string; released: true }>;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'snapshot';
+      snapshot: AgentQuizSnapshot | null;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'request';
+      result: QuizResult<AgentQuizSession>;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;

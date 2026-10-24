@@ -2,10 +2,63 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   bindAgentBrokerIpc,
+  isTrustedRenderer,
   registerAgentIpc,
   type AgentIpcEvent,
 } from './registerAgentIpc';
 import type { AgentRendererRequest } from './agentBroker';
+
+test('quiz renderer authorization accepts configured dev and packaged URLs only in the main window and frame', () => {
+  const sender = {};
+  const mainFrame = { url: 'http://localhost:5173/quiz/index.html' };
+  const authorize = (
+    url: string,
+    acceptedUrl = 'http://localhost:5173/quiz/index.html',
+    options: {
+      windowAlive?: boolean;
+      contentsAlive?: boolean;
+      otherSender?: boolean;
+      subframe?: boolean;
+    } = {},
+  ) => {
+    const frame = options.subframe ? { url } : { ...mainFrame, url };
+    return isTrustedRenderer(
+      options.windowAlive ?? true,
+      options.contentsAlive ?? true,
+      options.otherSender ? {} : sender,
+      sender,
+      frame,
+      options.subframe ? mainFrame : frame,
+      acceptedUrl,
+    );
+  };
+
+  assert.equal(authorize('http://localhost:5173/quiz/index.html'), true);
+  assert.equal(
+    authorize('file:///app/dist/index.html', 'file:///app/dist/index.html'),
+    true,
+  );
+  assert.equal(authorize('http://localhost:5173/other.html'), false);
+  assert.equal(authorize('http://evil.test/quiz/index.html'), false);
+  assert.equal(
+    authorize('http://localhost:5173/quiz/index.html', undefined, {
+      otherSender: true,
+    }),
+    false,
+  );
+  assert.equal(
+    authorize('http://localhost:5173/quiz/index.html', undefined, {
+      subframe: true,
+    }),
+    false,
+  );
+  assert.equal(
+    authorize('http://localhost:5173/quiz/index.html', undefined, {
+      windowAlive: false,
+    }),
+    false,
+  );
+});
 
 test('renderer dispatch accepts only trusted main-frame responses and cancellation', async () => {
   const handlers = new Map<string, (...args: any[]) => void>();

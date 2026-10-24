@@ -187,6 +187,41 @@ function isAgentStatus(value: unknown): value is AgentBridgeStatusEvent {
   );
 }
 
+contextBridge.exposeInMainWorld('stormMenu', {
+  onToggleQuiz(callback: () => void) {
+    const listener = () => callback();
+    ipcRenderer.on('quiz:toggle', listener);
+    return () => ipcRenderer.removeListener('quiz:toggle', listener);
+  },
+});
+
+contextBridge.exposeInMainWorld('stormQuiz', {
+  createSession: (scope?: import('./shared/quizProtocol').QuizScope) =>
+    ipcRenderer.invoke('quiz:create', scope),
+  listSessions: () => ipcRenderer.invoke('quiz:list'),
+  deleteSession: (sessionId: string) =>
+    ipcRenderer.invoke('quiz:delete', sessionId),
+  stopAgent: (sessionId: string) =>
+    ipcRenderer.invoke('quiz:stop-agent', sessionId),
+  renameSession: (sessionId: string, name: string) =>
+    ipcRenderer.invoke('quiz:rename', sessionId, name),
+  getSnapshot: (sessionId: string, after = 0) =>
+    ipcRenderer.invoke('quiz:snapshot', sessionId, after),
+  request: (request: import('./shared/quizProtocol').QuizLearnerRequest) =>
+    ipcRenderer.invoke('quiz:learner-request', request),
+  addImage: (
+    sessionId: string,
+    image: { mimeType: string; data: Uint8Array },
+  ) => ipcRenderer.invoke('quiz:image-add', sessionId, image),
+  removeImage: (sessionId: string, imageId: string) =>
+    ipcRenderer.invoke('quiz:image-remove', sessionId, imageId),
+  saveDraft: (
+    sessionId: string,
+    expectedRevision: number,
+    draft: import('./shared/quizProtocol').QuizDraft,
+  ) => ipcRenderer.invoke('quiz:draft', sessionId, expectedRevision, draft),
+});
+
 contextBridge.exposeInMainWorld('vault', {
   cliAvailable: (): Promise<boolean> => ipcRenderer.invoke('cli:available'),
   canOpenFilesAndFoldersSettings: (): Promise<boolean> =>

@@ -649,8 +649,11 @@ test('standalone CLI works from a spaced path without development tools or an in
         assert.match(result.stdout, /\[\[note\]\]/);
         assert.match(result.stdout, /\[\[folder\/note\]\]/);
         assert.match(result.stdout, /\[\[note\|label\]\]/);
-        assert.match(result.stdout, /Use list --vault ID/);
+        assert.match(result.stdout, /list --vault VAULT_ID/);
+        assert.match(result.stdout, /search QUERY --vault VAULT_ID/);
         assert.match(result.stdout, /resolve-link --vault/);
+        assert.match(result.stdout, /pose-prompt/);
+        assert.match(result.stdout, /image-release/);
         assert.match(result.stdout, /inspect ABS_PATH --json/);
         assert.match(result.stdout, /Never use connect as an existence check/);
         assert.match(result.stdout, /Heading\s+fragments are\s+unsupported/);
@@ -1538,6 +1541,408 @@ test('CLI stream finishes on stdin EOF and cancellation failure exits nonzero', 
     assert.match(errors.join(''), /cancel rejected/);
   } finally {
     cancelFails = false;
+    await endpoint.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('quiz CLI round-trips authenticated agent actions and UI learner events', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'storm-cli-quiz-'));
+  const requests: any[] = [];
+  const events: any[] = [];
+  let revision = 1;
+  const session = {
+    id: 'quiz-1',
+    revision,
+    status: 'connected',
+    agentToken: 'secret-token',
+    transcript: [],
+    currentQuestion: null,
+  };
+  const endpoint = await startAgentEndpoint({
+    userDataPath: directory,
+    broker: {
+      async handle(request: any) {
+        requests.push(request);
+        if (request.type !== 'quiz')
+          return {
+            protocol: 1,
+            requestId: request.requestId,
+            ok: false,
+            error: { code: 'INVALID_REQUEST', message: 'Unexpected' },
+          };
+        if (request.operation === 'list')
+          return {
+            protocol: 1,
+            requestId: request.requestId,
+            ok: true,
+            type: 'quiz',
+            operation: 'list',
+            result: {
+              ok: true,
+              value: [{ ...session, agentToken: undefined }],
+            },
+          };
+        if (request.operation === 'attach')
+          return {
+            protocol: 1,
+            requestId: request.requestId,
+            ok: true,
+            type: 'quiz',
+            operation: 'attach',
+            result: {
+              ok: true,
+              value: {
+                agentToken: 'secret-token',
+                snapshot: {
+                  session: { ...session, agentToken: undefined },
+                  events,
+                },
+              },
+            },
+          };
+        if (request.operation === 'snapshot')
+          return {
+            protocol: 1,
+            requestId: request.requestId,
+            ok: true,
+            type: 'quiz',
+            operation: 'snapshot',
+            snapshot: {
+              session: { ...session, agentToken: undefined },
+              events: events.filter((event) => event.cursor > request.after),
+            },
+          };
+        if (request.operation === 'image-release')
+          return {
+            protocol: 1,
+            requestId: request.requestId,
+            ok: true,
+            type: 'quiz',
+            operation: 'image-release',
+            result: {
+              ok: true,
+              value: { id: request.imageId, released: true },
+            },
+          };
+        if (request.operation === 'image-fetch')
+          return {
+            protocol: 1,
+            requestId: request.requestId,
+            ok: true,
+            type: 'quiz',
+            operation: 'image-fetch',
+            result: {
+              ok: true,
+              value: {
+                id: request.imageId,
+                mimeType: 'image/png',
+                size: 3,
+                path: '/tmp/storm-cli-image-fixture.png',
+              },
+            },
+          };
+        const action = request.request;
+        assert.equal(action.agentToken, 'secret-token');
+        if (action.type === 'pose-question')
+          session.currentQuestion = {
+            prompt: action.question,
+            choices: action.choices,
+          };
+        revision++;
+        session.revision = revision;
+        events.push({
+          cursor: events.length + 1,
+          revision,
+          type: action.type,
+          data: action,
+        });
+        return {
+          protocol: 1,
+          requestId: request.requestId,
+          ok: true,
+          type: 'quiz',
+          operation: 'request',
+          result: { ok: true, value: { ...session, agentToken: undefined } },
+        };
+      },
+    },
+  });
+  const invoke = async (args: string[], stdin?: string) => {
+    let output = '',
+      error = '';
+    const code = await runCli(['--endpoint', endpoint.metadataPath, ...args], {
+      home: directory,
+      stdin: Readable.from(stdin === undefined ? [] : [Buffer.from(stdin)]),
+      stdout: (text) => (output += text),
+      stderr: (text) => (error += text),
+    });
+    return { code, output, error };
+  };
+  try {
+    const help = await invoke(['quiz', '--help']);
+    assert.equal(help.code, 0);
+    assert.match(help.output, /answer.*message.*continue/s);
+    assert.match(help.output, /UI only/);
+    const list = await invoke(['quiz', 'list']);
+    assert.equal(list.code, 0, list.error);
+    assert.doesNotMatch(list.output, /secret-token/);
+    assert.equal(requests.at(-1).operation, 'list');
+    const attached = await invoke([
+      'quiz',
+      'attach',
+      'quiz-1',
+      '--client-id',
+      'test-agent',
+    ]);
+    assert.equal(attached.code, 0, attached.error);
+    const attachedJson = JSON.parse(attached.output);
+    assert.deepEqual(Object.keys(attachedJson).sort(), [
+      'ok',
+      'operation',
+      'protocol',
+      'requestId',
+      'result',
+      'type',
+    ]);
+    assert.deepEqual(Object.keys(attachedJson.result).sort(), ['ok', 'value']);
+    assert.equal(attachedJson.result.value.agentToken, 'secret-token');
+    assert.equal(attachedJson.result.value.snapshot.session.id, 'quiz-1');
+    assert.equal(requests.at(-1).clientId, 'test-agent');
+    const status = await invoke([
+      'quiz',
+      'status',
+      'quiz-1',
+      '--token',
+      'secret-token',
+      '--after',
+      '1',
+    ]);
+    assert.equal(status.code, 0, status.error);
+    assert.equal(requests.at(-1).after, 1);
+    assert.equal(requests.at(-1).agentToken, 'secret-token');
+    const image = await invoke([
+      'quiz',
+      'image',
+      'quiz-1',
+      '--image-id',
+      'image-1',
+      '--token',
+      'secret-token',
+      '--json',
+    ]);
+    assert.equal(image.code, 0, image.error);
+    assert.equal(requests.at(-1).operation, 'image-fetch');
+    assert.equal(requests.at(-1).imageId, 'image-1');
+    assert.equal(requests.at(-1).agentToken, 'secret-token');
+    assert.deepEqual(JSON.parse(image.output).result.value, {
+      id: 'image-1',
+      mimeType: 'image/png',
+      size: 3,
+      path: '/tmp/storm-cli-image-fixture.png',
+    });
+    assert.equal(
+      (await invoke(['quiz', 'image', 'quiz-1', '--token', 'secret-token']))
+        .code,
+      2,
+    );
+    const obsoleteOffset = await invoke([
+      'quiz',
+      'image',
+      'quiz-1',
+      '--image-id',
+      'x',
+      '--token',
+      'secret-token',
+      '--offset',
+      '1',
+    ]);
+    assert.equal(obsoleteOffset.code, 2);
+    assert.match(obsoleteOffset.error, /offset|Unknown option/i);
+    const released = await invoke([
+      'quiz',
+      'image-release',
+      'quiz-1',
+      '--image-id',
+      'image-1',
+      '--token',
+      'secret-token',
+    ]);
+    assert.equal(released.code, 0, released.error);
+    assert.equal(requests.at(-1).operation, 'image-release');
+    assert.equal(requests.at(-1).imageId, 'image-1');
+    assert.equal(requests.at(-1).agentToken, 'secret-token');
+    assert.deepEqual(JSON.parse(released.output).result.value, {
+      id: 'image-1',
+      released: true,
+    });
+    const missingImageToken = await invoke([
+      'quiz',
+      'image',
+      'quiz-1',
+      '--image-id',
+      'image-1',
+    ]);
+    assert.equal(missingImageToken.code, 2);
+    assert.doesNotMatch(missingImageToken.error, /secret-token/);
+    const pose = await invoke(
+      ['quiz', 'request', 'quiz-1', '--token', 'secret-token'],
+      JSON.stringify({
+        type: 'pose-question',
+        expectedRevision: 1,
+        question: 'Why?',
+        choices: [
+          { id: 'a', text: 'A' },
+          { id: 'b', text: 'B' },
+        ],
+        idempotencyKey: 'pose-1',
+      }),
+    );
+    assert.equal(pose.code, 0, pose.error);
+    assert.equal(requests.at(-1).request.sessionId, 'quiz-1');
+    assert.equal(requests.at(-1).request.agentToken, 'secret-token');
+    assert.equal(requests.at(-1).request.idempotencyKey, 'pose-1');
+    assert.equal(requests.at(-1).request.expectedRevision, 1);
+    assert.equal(requests.at(-1).request.question, 'Why?');
+    assert.equal(
+      (
+        await invoke(
+          ['quiz', 'request', 'quiz-1', '--token', 'secret-token'],
+          JSON.stringify({
+            type: 'feedback',
+            expectedRevision: 2,
+            text: 'Correct',
+          }),
+        )
+      ).code,
+      0,
+    );
+    // Learner actions are generated by UI interactions and are only observed in status events.
+    for (const data of [
+      { type: 'answer', choiceId: 'a', reasoning: 'because' },
+      { type: 'message', text: 'A note' },
+      { type: 'continue' },
+    ])
+      events.push({
+        cursor: events.length + 1,
+        revision: ++revision,
+        type: data.type,
+        data,
+      });
+    const refreshed = await invoke([
+      'quiz',
+      'status',
+      'quiz-1',
+      '--token',
+      'secret-token',
+      '--after',
+      '0',
+    ]);
+    const snapshot = JSON.parse(refreshed.output);
+    assert.ok(
+      snapshot.snapshot.events.some(
+        (event: any) =>
+          event.data.type === 'answer' &&
+          event.data.choiceId === 'a' &&
+          event.data.reasoning === 'because',
+      ),
+    );
+    assert.ok(
+      snapshot.snapshot.events.some(
+        (event: any) =>
+          event.data.type === 'message' && event.data.text === 'A note',
+      ),
+    );
+    assert.ok(
+      snapshot.snapshot.events.some(
+        (event: any) => event.data.type === 'continue',
+      ),
+    );
+    const nextQuestion = await invoke(
+      ['quiz', 'request', 'quiz-1', '--token', 'secret-token'],
+      JSON.stringify({
+        type: 'pose-question',
+        expectedRevision: 3,
+        question: 'Next?',
+        choices: [
+          { id: 'x', text: 'X' },
+          { id: 'y', text: 'Y' },
+        ],
+      }),
+    );
+    assert.equal(nextQuestion.code, 0, nextQuestion.error);
+    assert.deepEqual(
+      requests
+        .filter((request) => request.operation === 'request')
+        .map((request) => request.request.type),
+      ['pose-question', 'feedback', 'pose-question'],
+    );
+    for (const bad of [
+      { type: 'answer', expectedRevision: 1, choiceId: 'a', reasoning: 'x' },
+      { type: 'continue', expectedRevision: 1 },
+      { type: 'message', expectedRevision: 1, text: 'x' },
+      { type: 'detach', expectedRevision: 1 },
+      { type: 'pose-question' },
+    ]) {
+      const result = await invoke(
+        ['quiz', 'request', 'quiz-1', '--token', 'secret-token'],
+        JSON.stringify(bad),
+      );
+      assert.equal(result.code, 2);
+    }
+    assert.equal((await invoke(['quiz', 'status', 'quiz-1'])).code, 2);
+    assert.equal(
+      (
+        await invoke(
+          ['quiz', 'request', 'quiz-1'],
+          JSON.stringify({ type: 'pose-question', expectedRevision: 1 }),
+        )
+      ).code,
+      2,
+    );
+    assert.equal(
+      (
+        await invoke(
+          ['quiz', 'request', 'quiz-1', '--token', 'secret-token'],
+          '{',
+        )
+      ).code,
+      2,
+    );
+    assert.equal((await invoke(['quiz', 'wat'])).code, 2);
+    // Protocol failures are meaningful nonzero exits, not success-shaped output.
+    const failingEndpoint = await startAgentEndpoint({
+      userDataPath: path.join(directory, 'failure'),
+      broker: {
+        async handle(request: any) {
+          return {
+            protocol: 1,
+            requestId: request.requestId,
+            ok: false,
+            error: {
+              code: 'INVALID_REQUEST',
+              message: 'Quiz token is invalid',
+            },
+          };
+        },
+      },
+    });
+    try {
+      const denied = await invoke([
+        '--endpoint',
+        failingEndpoint.metadataPath,
+        'quiz',
+        'status',
+        'quiz-1',
+        '--token',
+        'wrong',
+      ]);
+      assert.equal(denied.code, 1);
+      assert.match(denied.error, /Quiz token is invalid/);
+    } finally {
+      await failingEndpoint.close();
+    }
+  } finally {
     await endpoint.close();
     await rm(directory, { recursive: true, force: true });
   }
