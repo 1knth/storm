@@ -600,7 +600,8 @@ export default function QuizPane({
         }),
       );
     } else if (type === 'message' && (draft.trim() || sessionImages.length)) {
-      const sent = draft.trim();
+      const submittedDraft = draft;
+      const sent = submittedDraft.trim();
       const images = sessionImages;
       void update(async () => {
         const result = await bridge.request({
@@ -612,7 +613,7 @@ export default function QuizPane({
             : {}),
         });
         if (result.ok && !deletedSessions.current.has(session.id)) {
-          if (draftRef.current === sent) setDraft('');
+          if (draftRef.current === submittedDraft) setDraft('');
           setSentImages((current) => ({
             ...current,
             [session.id]: [...(current[session.id] ?? []), ...images],
@@ -958,7 +959,7 @@ export default function QuizPane({
                             )}
                           </div>
                         ) : m.role === 'learner' ? (
-                          <div className="quiz-learner-markdown w-fit max-w-[85%] whitespace-pre-wrap break-words rounded-xl bg-[#0a84ff] px-2 py-0.5 text-left text-[0.95rem] leading-[1.35] text-white shadow-sm">
+                          <div className="quiz-learner-markdown w-fit max-w-[85%] whitespace-pre-wrap break-words rounded-xl bg-[#0a84ff] p-2 text-left text-[0.95rem] leading-[1.35] text-white shadow-sm">
                             <QuizMarkdown>{displayedText}</QuizMarkdown>
                             {m.attachments?.map((attachment) => {
                               const preview = Object.values(sentImages)
