@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import React from 'react';
+import { DEFAULT_APPEARANCE } from '../appearance';
+import type { Appearance } from '../appearance';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   getMatchingItemLabel,
@@ -10,9 +12,9 @@ import {
   QuizVerdict,
 } from './QuizPane';
 
-function render(markdown: string) {
+function render(markdown: string, appearance?: Appearance) {
   return renderToStaticMarkup(
-    React.createElement(QuizMarkdown, null, markdown),
+    React.createElement(QuizMarkdown, { children: markdown, appearance }),
   );
 }
 
@@ -81,6 +83,17 @@ describe('quiz verdict renderer', () => {
 });
 
 describe('quiz Markdown renderer', () => {
+  it('styles only nested list markers when a marker color is configured', () => {
+    const html = render(
+      '- Outer item\n  1. Nested ordered item\n     - Nested bullet',
+      { ...DEFAULT_APPEARANCE, listMarkerColor: '#654321' },
+    );
+    assert.match(html, /class="quiz-markdown"/);
+    assert.match(html, /--preview-list-marker-color:#654321/);
+    assert.match(html, /<ul>[\s\S]*<ol>[\s\S]*<ul>/);
+    assert.match(html, /<li>Outer item/);
+    assert.doesNotMatch(html, /<li[^>]*style=/);
+  });
   it('renders inline and display math used in quiz prompts and choices', () => {
     const html = render('Solve $x^2=4$.\n\n$$\nx=\\pm 2\n$$');
     assert.match(html, /class="katex"/);
@@ -102,6 +115,28 @@ describe('quiz Markdown renderer', () => {
     );
     assert.match(html, /<strong>circumstance<\/strong>/);
     assert.match(html, /<br\s*\/?\s*>/);
+  });
+
+  it('routes Mermaid fences to MermaidBlock and preserves ordinary fenced code', () => {
+    const mermaid = render('```mermaid\ngraph TD\n  A --> B\n```');
+    assert.match(mermaid, /<div[^>]*>/);
+    assert.doesNotMatch(mermaid, /<code[^>]*language-mermaid/);
+
+    const ordinary = render('```text\nplain text\n```');
+    assert.match(ordinary, /<code class="language-text">plain text/);
+  });
+
+  it('applies configured heading, bold, and italic colors', () => {
+    const appearance = {
+      ...DEFAULT_APPEARANCE,
+      headings: ['#101010', ...DEFAULT_APPEARANCE.headings.slice(1)],
+      previewBoldColor: '#202020',
+      previewItalicColor: '#303030',
+    };
+    const html = render('# heading\\n\\n**bold** *italic*', appearance);
+    assert.match(html, /<h1 style="color:#101010">heading/);
+    assert.match(html, /<strong style="color:#202020">bold<\/strong>/);
+    assert.match(html, /<em style="color:#303030">italic<\/em>/);
   });
 
   it('renders learner answers and multiline reasoning through the same safe renderer', () => {

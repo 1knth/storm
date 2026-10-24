@@ -18,6 +18,11 @@ describe('appearance preferences', () => {
       headings: ['#abcdef'],
     });
     strictEqual(result.selection, DEFAULT_APPEARANCE.selection);
+    strictEqual(result.listMarkerColor, null);
+    strictEqual(
+      validateAppearance({ listMarkerColor: 'red' }).listMarkerColor,
+      null,
+    );
     strictEqual(result.folderIcon, DEFAULT_APPEARANCE.folderIcon);
     strictEqual(
       validateAppearance({ folderIcon: 'blue' }).folderIcon,
@@ -69,7 +74,8 @@ describe('appearance preferences', () => {
       getItem: (key: string) => memory.get(key) ?? null,
       setItem: (key: string, value: string) => memory.set(key, value),
     };
-    saveAppearance(storage, custom);
+    saveAppearance(storage, { ...custom, listMarkerColor: '#654321' });
+    strictEqual(loadAppearance(storage).listMarkerColor, '#654321');
     strictEqual(loadAppearance(storage).previewBoldColor, '#123456');
     strictEqual(loadAppearance(storage).previewItalicColor, '#abcdef');
     saveAppearance(storage, {

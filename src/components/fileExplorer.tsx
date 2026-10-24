@@ -883,6 +883,7 @@ export default function FileExplorer({
                         [
                           ['Bold text color', 'previewBoldColor'],
                           ['Italic text color', 'previewItalicColor'],
+                          ['List marker color', 'listMarkerColor'],
                         ] as const
                       ).map(([label, key]) => (
                         <div

@@ -6,6 +6,9 @@ import {
   useState,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
+import MermaidBlock from './Editor/MermaidBlock';
+import { DEFAULT_APPEARANCE } from '../appearance';
+import type { Appearance } from '../appearance';
 import remarkGfm from 'remark-gfm';
 import 'katex/dist/katex.min.css';
 import {
@@ -154,14 +157,44 @@ export function QuizVerdict({
   );
 }
 
-export function QuizMarkdown({ children }: { children: string }) {
+export function QuizMarkdown({
+  children,
+  appearance = DEFAULT_APPEARANCE,
+}: {
+  children: string;
+  appearance?: Appearance;
+}) {
   return (
+    <div
+      className="quiz-markdown"
+      style={
+        {
+          '--preview-list-marker-color': appearance.listMarkerColor ?? undefined,
+        } as React.CSSProperties
+      }
+    >
     <ReactMarkdown
       remarkPlugins={quizMarkdownRemarkPlugins}
       rehypePlugins={quizMarkdownRehypePlugins}
+      components={{
+        h1: ({ children, node: _node, ...props }) => <h1 {...props} style={{ color: appearance.headings[0] }}>{children}</h1>,
+        h2: ({ children, node: _node, ...props }) => <h2 {...props} style={{ color: appearance.headings[1] }}>{children}</h2>,
+        h3: ({ children, node: _node, ...props }) => <h3 {...props} style={{ color: appearance.headings[2] }}>{children}</h3>,
+        h4: ({ children, node: _node, ...props }) => <h4 {...props} style={{ color: appearance.headings[3] }}>{children}</h4>,
+        h5: ({ children, node: _node, ...props }) => <h5 {...props} style={{ color: appearance.headings[4] }}>{children}</h5>,
+        h6: ({ children, node: _node, ...props }) => <h6 {...props} style={{ color: appearance.headings[5] }}>{children}</h6>,
+        strong: ({ children, node: _node, ...props }) => <strong {...props} style={{ color: appearance.previewBoldColor ?? undefined }}>{children}</strong>,
+        em: ({ children, node: _node, ...props }) => <em {...props} style={{ color: appearance.previewItalicColor ?? undefined }}>{children}</em>,
+        code({ className, children: code }) {
+          if (className?.split(/\\s+/).includes('language-mermaid'))
+            return <MermaidBlock source={String(code ?? '').replace(/\\n$/, '')} appearance={appearance} />;
+          return <code className={className}>{code}</code>;
+        },
+      }}
     >
       {children}
     </ReactMarkdown>
+    </div>
   );
 }
 

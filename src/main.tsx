@@ -2795,6 +2795,7 @@ function App() {
                 }
                 notePath={activePath}
                 visible={quizOpen}
+                appearance={appearance}
                 onClose={() => setQuizOpen(false)}
               />
             </div>

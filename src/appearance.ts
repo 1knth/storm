@@ -8,6 +8,7 @@ export const DEFAULT_APPEARANCE = {
   folderIcon: '#9EE4FF',
   previewBoldColor: null as string | null,
   previewItalicColor: null as string | null,
+  listMarkerColor: null as string | null,
   headings: DEFAULT_HEADING_COLORS,
   mermaidBackground: '#ffffff',
   mermaidNodeFill: '#ECECFF',
@@ -80,6 +81,10 @@ export function validateAppearance(value: unknown): Appearance {
       input.previewItalicColor === undefined
         ? null
         : color(input.previewItalicColor, null),
+    listMarkerColor:
+      input.listMarkerColor === null || input.listMarkerColor === undefined
+        ? null
+        : color(input.listMarkerColor, null),
     headings: DEFAULT_HEADING_COLORS.map((fallback, index) =>
       color(headings[index], fallback),
     ),
