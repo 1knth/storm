@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  getMatchingItemLabel,
   getQuizComposerActions,
   QuizMarkdown,
   QuizThinkingIndicator,
@@ -124,3 +125,5 @@ describe('quiz Markdown renderer', () => {
     assert.doesNotMatch(currency, /class="katex"/);
   });
 });
+
+describe('matching labels', () => { it('uses alphabetic item and numbered option labels', () => { assert.equal(getMatchingItemLabel('left', 0), 'A'); assert.equal(getMatchingItemLabel('left', 3), 'D'); assert.equal(getMatchingItemLabel('right', 0), '1.'); }); });

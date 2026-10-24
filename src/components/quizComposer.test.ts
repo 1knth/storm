@@ -46,9 +46,12 @@ test('clipboard images use item data when files is empty and deduplicate fallbac
   assert.deepEqual(result, [file]);
 });
 
-test('composer prefers nonempty chat, then submits a selected answer', () => {
-  assert.equal(getQuizComposerIntent('  hello  ', true), 'message');
+test('answer takes priority over chat, then chat over prompt', () => {
+  assert.equal(getQuizComposerIntent('  hello  ', true), 'answer');
   assert.equal(getQuizComposerIntent('', true), 'answer');
+  assert.equal(getQuizComposerIntent('  hello  ', false), 'message');
+  assert.equal(getQuizComposerIntent('optional detail', false, 0, true), 'message');
+  assert.equal(getQuizComposerIntent('', false, 0, true), 'prompt');
   assert.equal(getQuizComposerIntent('  ', false), null);
 });
 

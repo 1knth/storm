@@ -30,9 +30,10 @@ export function getQuizComposerIntent(
   attachmentCount = 0,
   canRespondPrompt = false,
 ): 'message' | 'answer' | 'prompt' | null {
+  if (canSubmitAnswer) return 'answer';
   if (draft.trim() || attachmentCount > 0) return 'message';
   if (canRespondPrompt) return 'prompt';
-  return canSubmitAnswer ? 'answer' : null;
+  return null;
 }
 
 export function isCompleteQuestionAnswer(

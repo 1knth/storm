@@ -108,6 +108,10 @@ export function QuizThinkingIndicator({
   );
 }
 
+export function getMatchingItemLabel(side: 'left' | 'right', index: number) {
+  return side === 'left' ? String.fromCharCode(65 + index) : `${index + 1}.`;
+}
+
 export function getQuizComposerActions(
   questionStatus: 'open' | 'answered' | 'feedback' | undefined,
   connected: boolean,
@@ -915,15 +919,16 @@ export default function QuizPane({
                                 </ol>
                               )}
                             {m.question.kind === 'matching' && (
-                              <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
+                              <div className="mt-3 grid min-w-0 grid-cols-1 gap-4 text-sm">
                                 <div>
                                   <h4 className="mb-1 font-semibold text-white/70">
                                     Items
                                   </h4>
                                   <ul className="list-disc space-y-1 pl-5">
                                     {(m.question.leftItems ?? []).map(
-                                      (item) => (
+                                      (item, index) => (
                                         <li key={item.id}>
+                                          <span className="font-semibold text-white/70">{getMatchingItemLabel('left', index)} </span>
                                           <QuizMarkdown>
                                             {item.text}
                                           </QuizMarkdown>
@@ -938,8 +943,9 @@ export default function QuizPane({
                                   </h4>
                                   <ul className="list-disc space-y-1 pl-5">
                                     {(m.question.rightItems ?? []).map(
-                                      (item) => (
+                                      (item, index) => (
                                         <li key={item.id}>
+                                          <span className="font-semibold text-white/70">{getMatchingItemLabel('right', index)} </span>
                                           <QuizMarkdown>
                                             {item.text}
                                           </QuizMarkdown>
@@ -1146,19 +1152,18 @@ export default function QuizPane({
                                   <>
                                     {(
                                       session.currentQuestion.leftItems ?? []
-                                    ).map((item) => (
+                                    ).map((item, itemIndex) => (
                                       <label
                                         key={item.id}
-                                        className="mb-2 flex items-center gap-2"
+                                        className="mb-2 grid min-w-0 grid-cols-1 items-start gap-2 rounded-lg border border-white/10 bg-white/[0.04] p-2"
                                       >
-                                        <span className="quiz-agent-markdown min-w-0">
-                                          <QuizMarkdown>
-                                            {item.text}
-                                          </QuizMarkdown>
+                                        <span className="flex min-w-0 items-start gap-2">
+                                          <span className="shrink-0 rounded bg-white/10 px-2 py-1 font-semibold text-white/70">{getMatchingItemLabel('left', itemIndex)}</span>
+                                          <span className="quiz-agent-markdown min-w-0 break-words"><QuizMarkdown>{item.text}</QuizMarkdown></span>
                                         </span>
                                         <select
-                                          aria-label={`Match for ${item.text}`}
-                                          className="min-w-0 flex-1 rounded border border-white/20 bg-[#22252a] p-2"
+                                          aria-label={`Match for ${getMatchingItemLabel('left', itemIndex)} ${item.text}`}
+                                          className="w-full min-w-0 max-w-full truncate rounded border border-white/20 bg-[#22252a] p-2"
                                           value={
                                             session.currentQuestion!
                                               .matchesDraft?.[item.id] ?? ''
@@ -1190,7 +1195,7 @@ export default function QuizPane({
                                           {(
                                             session.currentQuestion!
                                               .rightItems ?? []
-                                          ).map((option) => (
+                                          ).map((option, optionIndex) => (
                                             <option
                                               key={option.id}
                                               value={option.id}
@@ -1203,7 +1208,7 @@ export default function QuizPane({
                                                   right === option.id,
                                               )}
                                             >
-                                              {option.text}
+                                              {`${getMatchingItemLabel('right', optionIndex)} ${option.text}`}
                                             </option>
                                           ))}
                                         </select>
@@ -1388,7 +1393,7 @@ export default function QuizPane({
                             },
                             connected &&
                               !busy &&
-                              (hasChatMessage || canSubmitAnswer),
+                              (hasChatMessage || canSubmitAnswer || canRespondPrompt),
                             sendComposer,
                           )
                         }
@@ -1407,13 +1412,13 @@ export default function QuizPane({
                         disabled={
                           !connected ||
                           busy ||
-                          (!hasChatMessage && !canSubmitAnswer)
+                          (!hasChatMessage && !canSubmitAnswer && !canRespondPrompt)
                         }
                         aria-label={
-                          hasChatMessage ? 'Send message' : 'Submit answer'
+                          hasChatMessage ? 'Send message' : canRespondPrompt ? 'Respond to prompt' : 'Submit answer'
                         }
                         title={
-                          hasChatMessage ? 'Send message' : 'Submit answer'
+                          hasChatMessage ? 'Send message' : canRespondPrompt ? 'Respond to prompt' : 'Submit answer'
                         }
                         className="absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-white/75 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                       >
