@@ -767,25 +767,18 @@ export class QuizService {
       )
         next.currentQuestion.textDraft = draft.textDraft;
     }
-    next.revision++;
-    next.eventCursor++;
+    const draftChanged =
+      next.freeChatDraft !== current.freeChatDraft ||
+      JSON.stringify(next.currentPrompt) !==
+        JSON.stringify(current.currentPrompt) ||
+      JSON.stringify(next.currentQuestion) !==
+        JSON.stringify(current.currentQuestion);
+    if (!draftChanged) return { ok: true, value: current };
     next.updatedAt = this.now();
     try {
       return {
         ok: true,
-        value: await this.store.update(
-          next,
-          current.revision,
-          {
-            cursor: next.eventCursor,
-            revision: next.revision,
-            type: 'draft',
-            data: draft,
-            createdAt: next.updatedAt,
-          },
-          `${sessionId}:draft:${next.revision}`,
-          JSON.stringify([draft, expectedRevision]),
-        ),
+        value: await this.store.updateDraft(next, current.revision),
       };
     } catch {
       return { ok: false, error: 'stale-revision' };

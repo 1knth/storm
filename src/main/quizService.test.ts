@@ -810,11 +810,21 @@ describe('QuizService', () => {
         freeChatDraft: 'chat draft',
       });
       assert.equal(draft.ok, true);
+      if (draft.ok) {
+        assert.equal(
+          draft.value.revision,
+          question.ok ? question.value.revision : -1,
+        );
+        assert.equal(
+          draft.value.eventCursor,
+          question.ok ? question.value.eventCursor : -1,
+        );
+      }
       const stopped = await f.service.stopAgent(f.session.id);
       assert.equal(stopped.ok, true);
       if (!stopped.ok) return;
       assert.equal(stopped.value.status, 'disconnected');
-      assert.equal(stopped.value.revision, 4);
+      assert.equal(stopped.value.revision, 3);
       assert.equal(stopped.value.transcript.length, 1);
       assert.equal(stopped.value.currentQuestion?.selectedChoiceId, 'b');
       assert.equal(stopped.value.currentQuestion?.reasoningDraft, 'draft');
@@ -838,7 +848,7 @@ describe('QuizService', () => {
       assert.equal(handoff.ok, true);
       if (!handoff.ok) return;
       assert.notEqual(handoff.value.agentToken, token);
-      assert.equal(handoff.value.snapshot.session.revision, 5);
+      assert.equal(handoff.value.snapshot.session.revision, 4);
       assert.equal(
         handoff.value.snapshot.session.currentQuestion?.id,
         stopped.value.currentQuestion?.id,
@@ -856,7 +866,7 @@ describe('QuizService', () => {
         type: 'agent-message',
         sessionId: f.session.id,
         agentToken: handoff.value.agentToken,
-        expectedRevision: 5,
+        expectedRevision: 4,
         idempotencyKey: 'fresh',
         text: 'fresh agent',
       });
@@ -1099,7 +1109,7 @@ describe('QuizService', () => {
       const message = await service.learnerRequest({
         type: 'message',
         sessionId: created.value.id,
-        expectedRevision: 2,
+        expectedRevision: 1,
         idempotencyKey: 'first-learner-message',
         text: 'Start our review',
       });

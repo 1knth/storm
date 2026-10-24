@@ -27,6 +27,41 @@ function sanitizeEvent(event: QuizEvent): QuizEvent {
   return { ...event, data: sanitize(event.data) };
 }
 
+function mergeDraftFields(
+  current: QuizSession,
+  incoming: QuizSession,
+): QuizSession {
+  const merged: QuizSession = {
+    ...current,
+    freeChatDraft: incoming.freeChatDraft,
+  };
+  if (
+    current.currentPrompt &&
+    incoming.currentPrompt &&
+    current.currentPrompt.id === incoming.currentPrompt.id
+  ) {
+    merged.currentPrompt = {
+      ...current.currentPrompt,
+      selectedChoiceId: incoming.currentPrompt.selectedChoiceId,
+      detailDraft: incoming.currentPrompt.detailDraft,
+    };
+  }
+  if (
+    current.currentQuestion &&
+    incoming.currentQuestion &&
+    current.currentQuestion.id === incoming.currentQuestion.id
+  ) {
+    merged.currentQuestion = {
+      ...current.currentQuestion,
+      selectedChoiceId: incoming.currentQuestion.selectedChoiceId,
+      reasoningDraft: incoming.currentQuestion.reasoningDraft,
+      matchesDraft: incoming.currentQuestion.matchesDraft,
+      textDraft: incoming.currentQuestion.textDraft,
+    };
+  }
+  return merged;
+}
+
 const emptyDatabase = (): QuizDatabase => ({
   version: 1,
   sessions: [],
@@ -276,6 +311,31 @@ export class QuizStore {
       db.sessions[index] = { ...db.sessions[index]!, activity };
       await this.write(db);
       return db.sessions[index];
+    });
+  }
+
+  async updateDraft(
+    session: QuizSession,
+    expectedRevision: number,
+  ): Promise<QuizSession> {
+    return this.serialize(async () => {
+      const draft = this.drafts.get(session.id);
+      if (draft) {
+        if (draft.session.revision !== expectedRevision)
+          throw new Error('Stale quiz revision');
+        draft.session = mergeDraftFields(draft.session, session);
+        return draft.session;
+      }
+      const db = await this.read();
+      const index = db.sessions.findIndex((item) => item.id === session.id);
+      if (index < 0) throw new Error('Quiz session disappeared');
+      const current = db.sessions[index]!;
+      if (current.revision !== expectedRevision)
+        throw new Error('Stale quiz revision');
+      const updated = mergeDraftFields(current, session);
+      db.sessions[index] = updated;
+      await this.write(db);
+      return updated;
     });
   }
 

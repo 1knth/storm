@@ -2,13 +2,41 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { QuizMarkdown, QuizThinkingIndicator, QuizVerdict } from './QuizPane';
+import {
+  getQuizComposerActions,
+  QuizMarkdown,
+  QuizThinkingIndicator,
+  QuizVerdict,
+} from './QuizPane';
 
 function render(markdown: string) {
   return renderToStaticMarkup(
     React.createElement(QuizMarkdown, null, markdown),
   );
 }
+
+describe('quiz composer feedback layout', () => {
+  it('keeps the input row and Continue action without a second disconnected-status row', () => {
+    assert.deepEqual(getQuizComposerActions('feedback', false), {
+      showContinue: true,
+      showDisconnectedStatus: false,
+    });
+  });
+
+  it('shows Continue without a disconnected status for connected feedback', () => {
+    assert.deepEqual(getQuizComposerActions('feedback', true), {
+      showContinue: true,
+      showDisconnectedStatus: false,
+    });
+  });
+
+  it('preserves the disconnected status for non-feedback states', () => {
+    assert.deepEqual(getQuizComposerActions('open', false), {
+      showContinue: false,
+      showDisconnectedStatus: true,
+    });
+  });
+});
 
 describe('quiz activity indicator', () => {
   it('renders a visible, accessible thinking status with a CSS spinner', () => {
