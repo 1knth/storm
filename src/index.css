@@ -10,6 +10,25 @@
   margin: 0;
   white-space: pre-wrap;
 }
+.quiz-learner-markdown :is(ul, ol) {
+  margin-block: 0.5em;
+  padding-left: 1.5em;
+}
+.quiz-learner-markdown ul {
+  list-style: disc;
+}
+.quiz-learner-markdown ol {
+  list-style: decimal;
+}
+.quiz-learner-markdown li + li {
+  margin-top: 0.35em;
+}
+.quiz-learner-markdown li > p {
+  margin-block: 0;
+}
+.quiz-learner-markdown li > p + p {
+  margin-block-start: 0.35em;
+}
 .quiz-learner-markdown .katex-display {
   margin: 0.25rem 0;
   overflow-x: auto;
@@ -495,6 +514,13 @@
   background-color: rgb(255 255 255 / 5%);
 }
 
+/* Keep the titlebar controls on the native drag region, but soften its backdrop
+   so it reads as a continuation of the glass panes rather than a separate band. */
+.window-pane-controls {
+  background-color: rgb(var(--ui-panel) / 30%);
+  backdrop-filter: brightness(1.15) saturate(1.2) blur(2px);
+}
+
 /* Pane rim samples the app backdrop before the pane fill. Tune these three
    values for a stronger/weaker glass glow; the rim itself stays neutral white. */
 .editor-pane-shell {
@@ -669,6 +695,7 @@
 }
 
 .quiz-composer-input {
+  align-self: center;
   background-color: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
