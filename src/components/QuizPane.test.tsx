@@ -302,6 +302,23 @@ describe('quiz word reveal', () => {
     assert.match(html, /<em style="color:#303030">italic<\/em>/);
   });
 
+  it('keeps learner list paragraphs as separate blocks, including nested ordered and unordered lists', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(
+        'div',
+        { className: 'quiz-learner-markdown' },
+        React.createElement(QuizMarkdown, {
+          children:
+            '- First paragraph\n\n  Second paragraph\n  - Nested unordered\n\n    Nested paragraph\n\n1. Ordered item\n\n   Continued ordered paragraph',
+        }),
+      ),
+    );
+
+    assert.match(html, /class="quiz-learner-markdown"><div class="quiz-markdown"><ul>/);
+    assert.match(html, /<li>\s*<p>First paragraph<\/p>\s*<p>Second paragraph<\/p>\s*<ul>\s*<li>\s*<p>Nested unordered<\/p>\s*<p>Nested paragraph<\/p>\s*<\/li>\s*<\/ul>\s*<\/li>/);
+    assert.match(html, /<ol>\s*<li>\s*<p>Ordered item<\/p>\s*<p>Continued ordered paragraph<\/p>\s*<\/li>\s*<\/ol>/);
+  });
+
   it('renders learner answers and multiline reasoning through the same safe renderer', () => {
     const answer = render('My answer is $x=2$.\n\nReasoning:\n\n$$\nx^2=4\n$$');
     assert.match(answer, /class="katex"/);
