@@ -695,7 +695,10 @@
 }
 
 .quiz-composer-input {
-  align-self: center;
+  box-sizing: border-box;
+  max-height: min(40cqh, 240px);
+  overflow-y: hidden;
+  line-height: 1.4;
   background-color: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;

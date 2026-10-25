@@ -384,6 +384,7 @@ export default function QuizPane({
   const [session, setSession] = useState<PublicQuizSession | null>(null);
   const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const [pendingImages, setPendingImages] = useState<
     Record<string, PendingImage[]>
   >({});
@@ -475,6 +476,33 @@ export default function QuizPane({
       });
     }
   }, [session]);
+  useLayoutEffect(() => {
+    const textarea = messageInputRef.current;
+    if (!textarea) return;
+
+    const resize = () => {
+      // Reset first so deleting text and narrower/wider wraps shrink as well as grow.
+      textarea.style.height = 'auto';
+      const maxHeight = Number.parseFloat(window.getComputedStyle(textarea).maxHeight);
+      const nextHeight = Number.isFinite(maxHeight)
+        ? Math.min(textarea.scrollHeight, maxHeight)
+        : textarea.scrollHeight;
+      textarea.style.height = `${nextHeight}px`;
+      textarea.style.overflowY = textarea.scrollHeight > nextHeight ? 'auto' : 'hidden';
+    };
+
+    resize();
+    let previousWidth = textarea.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const width = textarea.getBoundingClientRect().width;
+      if (width === previousWidth) return;
+      previousWidth = width;
+      resize();
+    });
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [draft]);
+
   draftRef.current = draft;
   busyRef.current = busy;
 
@@ -1500,6 +1528,7 @@ export default function QuizPane({
                         </div>
                       )}
                       <textarea
+                        ref={messageInputRef}
                         onPaste={(event) => {
                           const files = getClipboardImages(event.clipboardData);
                           if (!files.length || !session || !bridge) return;
@@ -1560,7 +1589,7 @@ export default function QuizPane({
                           );
                         }}
                         rows={1}
-                        className="quiz-composer-input min-h-8 min-w-0 flex-1 resize-y rounded-2xl border-0 py-1.5 pl-3 pr-10 text-[13px] outline-none"
+                        className="quiz-composer-input min-w-0 flex-1 rounded-2xl border-0 py-1.5 pl-3 pr-10 text-[13px] outline-none"
                         placeholder="Write a message"
                         aria-label="Write a message"
                         onKeyDown={(event) =>
