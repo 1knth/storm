@@ -29,8 +29,10 @@ function renderExplorer() {
       openFileShortcut={false}
       onOpenFileShortcutChange={() => {}}
       toggleExplorerShortcut={false}
+      toggleVaultsShortcut={false}
       commandHeld={false}
       onToggleExplorerShortcutChange={() => {}}
+      onToggleVaultsShortcutChange={() => {}}
       selectedPath={null}
       collapsed={false}
       onToggleCollapsed={() => {}}

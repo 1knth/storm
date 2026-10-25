@@ -100,6 +100,8 @@ type FileExplorerProps = {
   openFileShortcut: boolean;
   onOpenFileShortcutChange: (enabled: boolean) => void;
   toggleExplorerShortcut: boolean;
+  toggleVaultsShortcut: boolean;
+  onToggleVaultsShortcutChange: (enabled: boolean) => void;
   commandHeld: boolean;
   onToggleExplorerShortcutChange: (enabled: boolean) => void;
   selectedPath: string | null;
@@ -134,6 +136,8 @@ export default function FileExplorer({
   openFileShortcut,
   onOpenFileShortcutChange,
   toggleExplorerShortcut,
+  toggleVaultsShortcut,
+  onToggleVaultsShortcutChange,
   commandHeld,
   onToggleExplorerShortcutChange,
   selectedPath,
@@ -395,23 +399,6 @@ export default function FileExplorer({
                 {navigator.platform.toLowerCase().includes('mac')
                   ? '⌘N'
                   : 'Ctrl+N'}
-              </ShortcutHint>
-            </button>
-            <button
-              type="button"
-              aria-label="Hide file explorer"
-              title="Hide file explorer (⌘/Ctrl+S)"
-              onClick={onToggleCollapsed}
-              className="app-icon-button app-icon-button-no-hover-bg relative"
-            >
-              <TbLayoutSidebarRightFilled
-                aria-hidden="true"
-                className="!h-[14px] !w-[14px]"
-              />
-              <ShortcutHint visible={commandHeld && toggleExplorerShortcut}>
-                {navigator.platform.toLowerCase().includes('mac')
-                  ? '⌘S'
-                  : 'Ctrl+S'}
               </ShortcutHint>
             </button>
           </div>
@@ -857,6 +844,24 @@ export default function FileExplorer({
                           checked={toggleExplorerShortcut}
                           onChange={(event) =>
                             onToggleExplorerShortcutChange(event.target.checked)
+                          }
+                          className="h-4 w-4 accent-blue-500"
+                        />
+                      </label>
+                      <label className="flex cursor-pointer items-center justify-between gap-4">
+                        <span>
+                          <span className="block text-sm font-medium">
+                            Toggle vault sidebar shortcut
+                          </span>
+                          <span className="mt-1 block text-xs text-white/50">
+                            ⌘⇧S / Ctrl+Shift+S
+                          </span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={toggleVaultsShortcut}
+                          onChange={(event) =>
+                            onToggleVaultsShortcutChange(event.target.checked)
                           }
                           className="h-4 w-4 accent-blue-500"
                         />

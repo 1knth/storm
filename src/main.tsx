@@ -1,4 +1,6 @@
+import { isToggleVaultsShortcut } from './mainShortcuts';
 import React, { useEffect, useRef, useState } from 'react';
+import { TbLayoutSidebarLeftFilled, TbLayoutSidebarRightFilled } from 'react-icons/tb';
 import './index.css';
 import { createRoot } from 'react-dom/client';
 import FileExplorer from './components/fileExplorer';
@@ -570,6 +572,20 @@ function App() {
   };
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
+  const [vaultSidebarCollapsed, setVaultSidebarCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem('storm.vaultSidebarCollapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('storm.vaultSidebarCollapsed', String(vaultSidebarCollapsed));
+    } catch {
+      /* Optional preference. */
+    }
+  }, [vaultSidebarCollapsed]);
   const lastPane = useRef<'vaults' | 'explorer' | 'editor'>('editor');
   const lastPaneElement = useRef<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -718,6 +734,9 @@ function App() {
       return true;
     }
   });
+  const [toggleVaultsShortcut, setToggleVaultsShortcut] = useState(() => {
+    try { return window.localStorage.getItem('storm.shortcut.toggleVaults') !== 'false'; } catch { return true; }
+  });
   const [toggleExplorerShortcut, setToggleExplorerShortcut] = useState(() => {
     try {
       return (
@@ -744,12 +763,13 @@ function App() {
         'storm.shortcut.toggleExplorer',
         String(toggleExplorerShortcut),
       );
+      window.localStorage.setItem('storm.shortcut.toggleVaults', String(toggleVaultsShortcut));
     } catch {
       /* Optional preference. */
     }
     window.vault.setShortcutEnabled('openFile', openFileShortcut);
     window.vault.setShortcutEnabled('toggleExplorer', toggleExplorerShortcut);
-  }, [openFileShortcut, toggleExplorerShortcut]);
+  }, [openFileShortcut, toggleExplorerShortcut, toggleVaultsShortcut]);
   useEffect(() => {
     let showTimer: ReturnType<typeof setTimeout> | null = null;
     const setHeld = (held: boolean) => {
@@ -790,6 +810,22 @@ function App() {
       document.removeEventListener('visibilitychange', clearModifier);
     };
   }, []);
+  useEffect(() => {
+    const onToggleVaultSidebar = (event: KeyboardEvent) => {
+      if (
+        !isToggleVaultsShortcut(
+          event,
+          navigator.platform.toLowerCase().includes('mac'),
+          toggleVaultsShortcut,
+        )
+      )
+        return;
+      event.preventDefault();
+      setVaultSidebarCollapsed((collapsed) => !collapsed);
+    };
+    window.addEventListener('keydown', onToggleVaultSidebar);
+    return () => window.removeEventListener('keydown', onToggleVaultSidebar);
+  }, [toggleVaultsShortcut]);
   useEffect(() => {
     const unsubscribeOpen = window.vault.onOpenFile(() => {
       pickerInvokerRef.current = document.activeElement as HTMLElement;
@@ -1175,6 +1211,10 @@ function App() {
     if (explorerCollapsed && lastPane.current === 'explorer')
       editorRef.current?.focus();
   }, [explorerCollapsed]);
+  useEffect(() => {
+    if (vaultSidebarCollapsed && lastPane.current === 'vaults')
+      editorRef.current?.focus();
+  }, [vaultSidebarCollapsed]);
   const focusExplorerRow = (firstRow = false) => {
     const pane = document.querySelector<HTMLElement>('[data-pane="explorer"]');
     const rows = Array.from(
@@ -1209,6 +1249,15 @@ function App() {
         setExplorerCollapsed(false);
         return;
       }
+      if (paneName === 'vaults' && vaultSidebarCollapsed) {
+        setVaultSidebarCollapsed(false);
+        requestAnimationFrame(() => {
+          const pane = document.querySelector<HTMLElement>('[data-pane="vaults"]');
+          const vaultRow = pane?.querySelector<HTMLElement>('[data-vault-row]');
+          (vaultRow ?? pane)?.focus();
+        });
+        return;
+      }
       const pane = document.querySelector<HTMLElement>(
         `[data-pane="${paneName}"]`,
       );
@@ -1225,7 +1274,7 @@ function App() {
       if (hasOpenModal()) return;
       focusPane(paneName);
     });
-  }, [explorerCollapsed, activePath]);
+  }, [explorerCollapsed, vaultSidebarCollapsed, activePath]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2494,6 +2543,10 @@ function App() {
 
   return (
     <main className="flex h-screen min-h-0 w-full min-w-0 flex-col">
+      <div className="flex h-8 shrink-0 items-center gap-1 pl-20" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <button type="button" className="app-icon-button relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties} aria-label={vaultSidebarCollapsed ? 'Show vaults' : 'Hide vaults'} aria-expanded={!vaultSidebarCollapsed} title={`Toggle vaults (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧S' : 'Ctrl+Shift+S'})`} onClick={() => setVaultSidebarCollapsed((value) => !value)}><TbLayoutSidebarLeftFilled aria-hidden="true" className="!h-[14px] !w-[14px]" />{commandHeld && <span aria-hidden="true" className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white">{navigator.platform.toLowerCase().includes('mac') ? '⌘⇧S' : 'Ctrl+Shift+S'}</span>}</button>
+        <button type="button" className="app-icon-button relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties} aria-label={explorerCollapsed ? 'Show file explorer' : 'Hide file explorer'} aria-expanded={!explorerCollapsed} title={`Toggle file explorer (${navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'})`} onClick={() => setExplorerCollapsed((value) => !value)}><TbLayoutSidebarRightFilled aria-hidden="true" className="!h-[14px] !w-[14px]" />{commandHeld && <span aria-hidden="true" className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white">{navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'}</span>}</button>
+      </div>
       {shortcutHelpOpen && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
@@ -2563,6 +2616,11 @@ function App() {
                     'S — Toggle file explorer' +
                     (toggleExplorerShortcut ? '' : ' (disabled)'),
                   (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘⇧'
+                    : 'Ctrl+Shift+') +
+                    'S — Toggle vault sidebar' +
+                    (toggleVaultsShortcut ? '' : ' (disabled)'),
+                  (navigator.platform.toLowerCase().includes('mac')
                     ? '⌘'
                     : 'Ctrl') + ', — Settings',
                   (navigator.platform.toLowerCase().includes('mac')
@@ -2594,7 +2652,7 @@ function App() {
       )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-row">
         <div className="contents">
-          <VaultSidebar
+          {!vaultSidebarCollapsed && <VaultSidebar
             vaults={vaults}
             groups={vaultGroups}
             sidebarRootOrder={sidebarRootOrder}
@@ -2615,7 +2673,7 @@ function App() {
             onOpenSettings={() => setSettingsOpen(true)}
             onToggleQuiz={toggleQuiz}
             quizOpen={quizOpen}
-          />
+          />}
           <FileExplorer
             vaultPath={vaultPath}
             notes={notes}
@@ -2654,8 +2712,10 @@ function App() {
             openFileShortcut={openFileShortcut}
             onOpenFileShortcutChange={setOpenFileShortcut}
             toggleExplorerShortcut={toggleExplorerShortcut}
+            toggleVaultsShortcut={toggleVaultsShortcut}
             commandHeld={commandHeld}
             onToggleExplorerShortcutChange={setToggleExplorerShortcut}
+            onToggleVaultsShortcutChange={setToggleVaultsShortcut}
             selectedPath={activePath}
           />
         </div>

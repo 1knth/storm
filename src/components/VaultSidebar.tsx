@@ -20,7 +20,6 @@ import {
 } from '../shared/vaultSidebarDrag';
 import { GROUP_COLORS, groupColorForId } from '../shared/groupColors';
 import { BsPinFill } from 'react-icons/bs';
-import { TbLayoutSidebarRightFilled } from 'react-icons/tb';
 import { FaPlus } from 'react-icons/fa';
 import { FaFolderTree } from 'react-icons/fa6';
 import { IoIosSettings, IoMdSchool } from 'react-icons/io';
@@ -63,9 +62,6 @@ export default function VaultSidebar({
   activeVaultId,
   onActivate,
   onAdd,
-  collapsed,
-  onToggleExplorer,
-  toggleExplorerShortcut,
   onRemove,
   error,
   commandHeld,
@@ -649,31 +645,6 @@ export default function VaultSidebar({
           >
             <FaPlus aria-hidden="true" size={14} />
           </button>
-          {collapsed && (
-            <button
-              type="button"
-              onClick={onToggleExplorer}
-              aria-label="Show file explorer"
-              aria-expanded="false"
-              title={`Show file explorer${toggleExplorerShortcut ? ` (${navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'})` : ''}`}
-              className="app-icon-button app-icon-button-no-hover-bg relative"
-            >
-              <TbLayoutSidebarRightFilled
-                aria-hidden="true"
-                className="!h-[14px] !w-[14px]"
-              />
-              {commandHeld && toggleExplorerShortcut && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white"
-                >
-                  {navigator.platform.toLowerCase().includes('mac')
-                    ? '⌘S'
-                    : 'Ctrl+S'}
-                </span>
-              )}
-            </button>
-          )}
         </div>
       </div>
       {groupForm && (
