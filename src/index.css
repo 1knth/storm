@@ -593,10 +593,34 @@
   }
 }
 
+.quiz-transcript-pane {
+  /* Container-relative sizing follows the actual space below the quiz header. */
+  container-type: size;
+}
+
 .quiz-composer {
-  /* Keep the composer at its content height. A max-height here only clamps the
-     form box; with visible overflow, feedback and prompt content spill past it. */
-  overflow: visible;
+  box-sizing: border-box;
+  max-height: max(0px, calc(100cqh - 1.5rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-size: clamp(11px, 1.15cqh, 13px);
+  line-height: 1.4;
+}
+
+.quiz-composer * {
+  font-size: inherit;
+}
+
+.quiz-composer .quiz-agent-markdown {
+  font-size: inherit;
+  line-height: 1.5;
+}
+
+.quiz-composer .quiz-agent-markdown :is(h1, h2, h3, h4) {
+  font-size: inherit;
+}
+
+.quiz-composer {
   border: 1px solid rgb(255 255 255 / 12%);
   background-color: rgb(15 17 20 / 78%);
   -webkit-backdrop-filter: blur(16px);

@@ -1044,7 +1044,7 @@ export default function QuizPane({
         <>
           {session && !showSessionList ? (
             <>
-              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="quiz-transcript-pane relative flex min-h-0 flex-1 flex-col overflow-hidden">
                 <div
                   ref={transcriptRef}
                   className="min-h-[4rem] flex-1 overflow-y-auto px-4 pt-4"
