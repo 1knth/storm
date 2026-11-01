@@ -2,7 +2,7 @@ import {
   app,
   BrowserWindow,
   dialog,
-  ipcMain,
+  ipcMain as electronIpcMain,
   Menu,
   MenuItem,
   shell,
@@ -17,6 +17,10 @@ import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
 import { QuizStore } from './main/quizStore';
 import { QuizService } from './main/quizService';
+import { StudyContextService } from './main/studyContextService';
+import { StudyContextStore } from './main/studyContextStore';
+import { readStudySource } from './vault/studySourceReader';
+import { STUDY_LIMITS } from './shared/studyContext';
 import {
   classifyVaultListError,
   formatVaultListError,
@@ -47,11 +51,12 @@ import { registerVaultRegistryIpc } from './main/registerVaultRegistryIpc';
 import { AgentBroker } from './main/agentBroker';
 import { createQuizAgentHandler } from './main/quizAgentHandler';
 import { runVaultLifecycleExclusive } from './main/vaultLifecycle';
+import { bindAgentBrokerIpc, registerAgentIpc } from './main/registerAgentIpc';
 import {
-  bindAgentBrokerIpc,
-  isTrustedRenderer,
-  registerAgentIpc,
-} from './main/registerAgentIpc';
+  isAcceptedUrl,
+  rendererAuthorizer,
+  trustedIpc,
+} from './main/rendererSecurity';
 import {
   resolveAgentNoteTarget,
   resolveExistingAgentNoteTarget,
@@ -70,8 +75,11 @@ import {
 
 const vaultService = new VaultService();
 const vaultRegistry = new VaultRegistry(app.getPath('userData'));
+const quizStore = new QuizStore(
+  path.join(app.getPath('userData'), 'quiz-sessions.json'),
+);
 const quizService = new QuizService(
-  new QuizStore(path.join(app.getPath('userData'), 'quiz-sessions.json')),
+  quizStore,
   async (scope) => {
     const { vaults } = await vaultRegistry.list();
     const vault = vaults.find((entry) => entry.id === scope.vaultId);
@@ -122,6 +130,20 @@ const quizService = new QuizService(
       ).every(Boolean)
     );
   },
+  undefined,
+  (session, snapshotId, operationId) =>
+    studyContext.pinQuestion(
+      `pending:${session.id}:${operationId}`,
+      snapshotId,
+      session.scope,
+    ),
+  (sessionId, basis, operationId, revision) =>
+    studyStore.finalizeQuestion(
+      sessionId,
+      basis,
+      `pending:${sessionId}:${operationId}`,
+      revision,
+    ),
 );
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;
@@ -130,7 +152,7 @@ const vaultWriteBarrier = new VaultWriteBarrier();
 let activeWatchedVaultId: string | null = null;
 const agentVaults = new Map<
   string,
-  { service: VaultService; barrier: VaultWriteBarrier; vaultId: string }
+  { service: VaultService; vaultId: string }
 >();
 const vaultWatcher = new VaultWatcher((vaultId, revision) => {
   const window = BrowserWindow.getAllWindows().find(
@@ -160,8 +182,13 @@ function invalidateSelectedVault(vaultId: string): void {
 let agentWindow: BrowserWindow | undefined;
 let agentAcceptedUrl: string | undefined;
 let agentBroker: AgentBroker | undefined;
+const authorizeRenderer = rendererAuthorizer(
+  () => agentWindow,
+  () => agentAcceptedUrl,
+);
+const ipcMain = trustedIpc(electronIpcMain, authorizeRenderer);
 const agentTransport = registerAgentIpc(
-  ipcMain,
+  electronIpcMain,
   () => agentWindow,
   () => undefined,
   () => agentAcceptedUrl,
@@ -170,7 +197,46 @@ const agentTransport = registerAgentIpc(
     else agentBroker?.rendererUnavailable();
   },
 );
+const studyStore = new StudyContextStore(
+  path.join(app.getPath('userData'), 'study-context.json'),
+);
+const studyStartup = quizStore
+  .list()
+  .then((questions) => studyStore.reconcileQuestions(questions));
+// A failed context store must not tear down ordinary quiz/conversation recovery.
+void studyStartup.catch(() => {});
+const studyContext = new StudyContextService(studyStore, {
+  vaults: async () => (await vaultRegistry.list()).vaults,
+  entries: async (root) => {
+    const service = new VaultService();
+    await service.selectVault(root);
+    return service.listNotes({
+      previews: false,
+      limit: STUDY_LIMITS.entries + 1,
+    });
+  },
+  live: async (vaultId, relativePath) => {
+    const result = await agentTransport.dispatch({
+      type: 'inspect',
+      requestId: randomUUID(),
+      vaultId,
+      path: relativePath,
+    });
+    if (!result.ok || !('inspected' in result))
+      throw new Error('STUDY_RENDERER_UNAVAILABLE');
+    return result.open
+      ? { text: result.content, saveState: result.saveState }
+      : null;
+  },
+  capture: (root, operation) =>
+    runVaultLifecycleExclusive(root, () => vaultWriteBarrier.run(operation)),
+  read: readStudySource,
+});
 agentBroker = new AgentBroker({
+  study: async (request) => {
+    await studyStartup;
+    return studyContext.execute(request);
+  },
   resolveTarget: async (notePath) => {
     const { vaults } = await vaultRegistry.list();
     return resolveAgentNoteTarget(notePath, vaults);
@@ -218,12 +284,12 @@ agentBroker = new AgentBroker({
   },
 });
 const removeAgentBrokerIpc = bindAgentBrokerIpc(
-  ipcMain,
+  electronIpcMain,
   agentBroker,
   () => agentWindow,
   () => agentAcceptedUrl,
 );
-app.on('before-quit', () => {
+app.on('will-quit', () => {
   quizService.disposeImages();
   removeAgentBrokerIpc();
   agentTransport.dispose?.();
@@ -234,22 +300,7 @@ const quizPublicSession = (
   const { agentToken: _agentToken, ...publicSession } = session;
   return publicSession;
 };
-const isTrustedQuizRenderer = (event: Electron.IpcMainInvokeEvent) => {
-  const window = agentWindow;
-  const acceptedUrl = agentAcceptedUrl;
-  return isTrustedRenderer(
-    !!window && !window.isDestroyed(),
-    !!window && !window.webContents.isDestroyed(),
-    event.sender,
-    window?.webContents,
-    event.senderFrame,
-    event.sender.mainFrame,
-    acceptedUrl,
-  );
-};
 ipcMain.handle('quiz:create', async (event, scope?: unknown) => {
-  if (!isTrustedQuizRenderer(event))
-    return { ok: false, error: 'unauthorized' };
   if (
     scope !== undefined &&
     (!scope || typeof scope !== 'object' || Array.isArray(scope))
@@ -274,8 +325,6 @@ ipcMain.handle('quiz:create', async (event, scope?: unknown) => {
     : result;
 });
 ipcMain.handle('quiz:rename', async (event, id: unknown, name: unknown) => {
-  if (!isTrustedQuizRenderer(event))
-    return { ok: false, error: 'unauthorized' };
   if (
     typeof id !== 'string' ||
     id.length === 0 ||
@@ -291,8 +340,6 @@ ipcMain.handle('quiz:rename', async (event, id: unknown, name: unknown) => {
     : result;
 });
 ipcMain.handle('quiz:stop-agent', async (event, id: unknown) => {
-  if (!isTrustedQuizRenderer(event))
-    return { ok: false, error: 'unauthorized' };
   if (typeof id !== 'string' || id.length === 0 || id.length > 128)
     return { ok: false, error: 'invalid-input' };
   const result = await quizService.stopAgent(id);
@@ -301,19 +348,14 @@ ipcMain.handle('quiz:stop-agent', async (event, id: unknown) => {
     : result;
 });
 ipcMain.handle('quiz:delete', async (event, id: unknown) => {
-  if (!isTrustedQuizRenderer(event))
-    return { ok: false, error: 'unauthorized' };
   if (typeof id !== 'string' || id.length === 0 || id.length > 128)
     return { ok: false, error: 'invalid-input' };
   return { ok: true, value: await quizService.deleteSession(id) };
 });
-ipcMain.handle('quiz:list', async (event) =>
-  isTrustedQuizRenderer(event)
-    ? (await quizService.listSessions()).map(quizPublicSession)
-    : [],
+ipcMain.handle('quiz:list', async () =>
+  (await quizService.listSessions()).map(quizPublicSession),
 );
 ipcMain.handle('quiz:snapshot', async (event, id: unknown, after: unknown) => {
-  if (!isTrustedQuizRenderer(event)) return null;
   const snapshot =
     typeof id === 'string' &&
     (after === undefined || (Number.isSafeInteger(after) && Number(after) >= 0))
@@ -329,8 +371,6 @@ ipcMain.handle('quiz:snapshot', async (event, id: unknown, after: unknown) => {
 ipcMain.handle(
   'quiz:draft',
   async (event, id: unknown, revision: unknown, draft: unknown) => {
-    if (!isTrustedQuizRenderer(event))
-      return { ok: false, error: 'unauthorized' };
     if (
       typeof id !== 'string' ||
       id.length > 128 ||
@@ -395,8 +435,6 @@ ipcMain.handle(
 ipcMain.handle(
   'quiz:image-add',
   async (event, sessionId: unknown, input: unknown) => {
-    if (!isTrustedQuizRenderer(event))
-      return { ok: false, error: 'unauthorized' };
     if (
       typeof sessionId !== 'string' ||
       sessionId.length === 0 ||
@@ -421,16 +459,12 @@ ipcMain.handle(
 ipcMain.handle(
   'quiz:image-remove',
   async (event, sessionId: unknown, id: unknown) => {
-    if (!isTrustedQuizRenderer(event))
-      return { ok: false, error: 'unauthorized' };
     if (typeof sessionId !== 'string' || typeof id !== 'string')
       return { ok: false, error: 'invalid-input' };
     return { ok: true, value: await quizService.removeImage(sessionId, id) };
   },
 );
 ipcMain.handle('quiz:learner-request', async (event, value: unknown) => {
-  if (!isTrustedQuizRenderer(event))
-    return { ok: false, error: 'unauthorized' };
   if (!value || typeof value !== 'object' || Array.isArray(value))
     return { ok: false, error: 'invalid-input' };
   const request = value as Record<string, unknown>;
@@ -517,22 +551,22 @@ ipcMain.handle('agent:save-note', async (_event, request: unknown) => {
     typeof value.revision !== 'string'
   )
     throw new Error('Invalid save request');
-  const root = await realpath(value.vaultPath);
-  const { vaults } = await vaultRegistry.list();
-  const vault = vaults.find((entry) => entry.path === root);
-  if (!vault) throw new Error('Vault is not registered');
-  let owned = agentVaults.get(root);
-  if (!owned) {
-    const service = new VaultService();
-    await service.selectVault(root);
-    owned = { service, barrier: new VaultWriteBarrier(), vaultId: vault.id };
-    agentVaults.set(root, owned);
-  }
-  const result = await owned.barrier.run(() =>
-    owned!.service.saveNote({ ...value, vaultPath: root }),
-  );
-  invalidateSelectedVault(owned.vaultId);
-  return result;
+  return vaultWriteBarrier.run(async () => {
+    const root = await realpath(value.vaultPath as string);
+    const { vaults } = await vaultRegistry.list();
+    const vault = vaults.find((entry) => entry.path === root);
+    if (!vault) throw new Error('Vault is not registered');
+    let owned = agentVaults.get(root);
+    if (!owned) {
+      const service = new VaultService();
+      await service.selectVault(root);
+      owned = { service, vaultId: vault.id };
+      agentVaults.set(root, owned);
+    }
+    const result = await owned.service.saveNote({ ...value, vaultPath: root });
+    invalidateSelectedVault(owned.vaultId);
+    return result;
+  });
 });
 
 const closeAllowed = new WeakSet<BrowserWindow>();
@@ -623,8 +657,47 @@ const createWindow = () => {
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
     },
   });
+
+  const contents = mainWindow.webContents;
+  const guardNavigation = (event: Electron.Event, url: string) => {
+    if (!agentAcceptedUrl || !isAcceptedUrl(url, agentAcceptedUrl))
+      event.preventDefault();
+  };
+  contents.on('will-navigate', guardNavigation);
+  contents.on('will-frame-navigate', (event) => {
+    if (
+      !event.isMainFrame ||
+      !agentAcceptedUrl ||
+      !isAcceptedUrl(event.url, agentAcceptedUrl)
+    )
+      event.preventDefault();
+  });
+  contents.on('will-redirect', guardNavigation);
+  contents.on('will-attach-webview', (event) => event.preventDefault());
+  const allowClipboardWrite = (
+    requester: Electron.WebContents | null,
+    permission: string,
+    details: { isMainFrame: boolean; requestingUrl?: string },
+  ) =>
+    requester === contents &&
+    permission === 'clipboard-sanitized-write' &&
+    details.isMainFrame &&
+    !!details.requestingUrl &&
+    !!agentAcceptedUrl &&
+    isAcceptedUrl(details.requestingUrl, agentAcceptedUrl);
+  contents.session.setPermissionRequestHandler(
+    (requester, permission, callback, details) =>
+      callback(allowClipboardWrite(requester, permission, details)),
+  );
+  contents.session.setPermissionCheckHandler(
+    (requester, permission, _origin, details) =>
+      allowClipboardWrite(requester, permission, details),
+  );
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
@@ -679,22 +752,24 @@ const createWindow = () => {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 ipcMain.handle('vault:restore', async () => {
-  try {
-    const savedPath = await readLastVault(app.getPath('userData'));
-    if (!savedPath) return { path: null, error: null };
-    await vaultService.selectVault(savedPath);
-    await watchSelectedVault();
-    return { path: vaultService.getSelectedVaultPath(), error: null };
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') {
-      return { path: null, error: null };
+  return vaultWriteBarrier.run(async () => {
+    try {
+      const savedPath = await readLastVault(app.getPath('userData'));
+      if (!savedPath) return { path: null, error: null };
+      await vaultService.selectVault(savedPath);
+      await watchSelectedVault();
+      return { path: vaultService.getSelectedVaultPath(), error: null };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        return { path: null, error: null };
+      }
+      return {
+        path: null,
+        error: `Could not restore the last vault: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
-    return {
-      path: null,
-      error: `Could not restore the last vault: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
+  });
 });
 
 ipcMain.handle('vault:choose', async () => {
@@ -702,17 +777,19 @@ ipcMain.handle('vault:choose', async () => {
   if (result.canceled) return { path: null, warning: null };
   const selectedPath = result.filePaths[0];
   if (!selectedPath) return { path: null, warning: null };
-  await vaultService.selectVault(selectedPath);
-  const validatedPath = vaultService.getSelectedVaultPath()!;
-  try {
-    await watchSelectedVault();
-    return { path: validatedPath, warning: null };
-  } catch (error) {
-    return {
-      path: validatedPath,
-      warning: `Vault opened, but the vault selection could not be saved: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
+  return vaultWriteBarrier.run(async () => {
+    await vaultService.selectVault(selectedPath);
+    const validatedPath = vaultService.getSelectedVaultPath()!;
+    try {
+      await watchSelectedVault();
+      return { path: validatedPath, warning: null };
+    } catch (error) {
+      return {
+        path: validatedPath,
+        warning: `Vault opened, but the vault selection could not be saved: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  });
 });
 
 const pendingGroupFolders = new Map<
@@ -759,9 +836,8 @@ ipcMain.handle(
       throw new Error('Folder-based group creation is already in progress');
     groupFolderCreatesInFlight.add(selectionId);
     try {
-      const result = await vaultRegistry.createGroupFromFolder(
-        selection.directory,
-        name,
+      const result = await vaultWriteBarrier.run(() =>
+        vaultRegistry.createGroupFromFolder(selection.directory, name),
       );
       pendingGroupFolders.delete(selectionId);
       return result;
@@ -908,44 +984,31 @@ ipcMain.handle('vault:read-image', async (_event, request: unknown) => {
   }
 });
 
-ipcMain.handle('vault:create-note', async (_event, request: unknown) => {
-  if (!request || typeof request !== 'object' || Array.isArray(request))
-    throw new Error('Invalid creation request');
-  const { vaultId, parentRelativePath, name } = request as Record<
-    string,
-    unknown
-  >;
-  if (
-    typeof vaultId !== 'string' ||
-    typeof parentRelativePath !== 'string' ||
-    typeof name !== 'string'
-  )
-    throw new Error('Invalid creation request');
-  const vault = await vaultRegistry.getById(vaultId);
-  if (!vault) throw new Error('Unknown vault');
-  const entry = await createMarkdownNote(vault.path, parentRelativePath, name);
-  invalidateSelectedVault(vaultId);
-  return entry;
-});
-ipcMain.handle('vault:create-folder', async (_event, request: unknown) => {
-  if (!request || typeof request !== 'object' || Array.isArray(request))
-    throw new Error('Invalid creation request');
-  const { vaultId, parentRelativePath, name } = request as Record<
-    string,
-    unknown
-  >;
-  if (
-    typeof vaultId !== 'string' ||
-    typeof parentRelativePath !== 'string' ||
-    typeof name !== 'string'
-  )
-    throw new Error('Invalid creation request');
-  const vault = await vaultRegistry.getById(vaultId);
-  if (!vault) throw new Error('Unknown vault');
-  const entry = await createFolder(vault.path, parentRelativePath, name);
-  invalidateSelectedVault(vaultId);
-  return entry;
-});
+for (const [channel, create] of [
+  ['vault:create-note', createMarkdownNote],
+  ['vault:create-folder', createFolder],
+] as const)
+  ipcMain.handle(channel, async (_event, request: unknown) => {
+    if (!request || typeof request !== 'object' || Array.isArray(request))
+      throw new Error('Invalid creation request');
+    const { vaultId, parentRelativePath, name } = request as Record<
+      string,
+      unknown
+    >;
+    if (
+      typeof vaultId !== 'string' ||
+      typeof parentRelativePath !== 'string' ||
+      typeof name !== 'string'
+    )
+      throw new Error('Invalid creation request');
+    return vaultWriteBarrier.run(async () => {
+      const vault = await vaultRegistry.getById(vaultId);
+      if (!vault) throw new Error('Unknown vault');
+      const entry = await create(vault.path, parentRelativePath, name);
+      invalidateSelectedVault(vaultId);
+      return entry;
+    });
+  });
 
 ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
   if (!request || typeof request !== 'object' || Array.isArray(request))
@@ -981,10 +1044,14 @@ ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
   );
   if (choice.response !== 1)
     return { deleted: false, path: target.relativePath, kind: target.kind };
-  await assertDeletionTargetUnchanged(target);
-  await shell.trashItem(target.absolutePath);
-  invalidateSelectedVault(vaultId);
-  return { deleted: true, path: target.relativePath, kind: target.kind };
+  return vaultWriteBarrier.run(async () => {
+    if ((await vaultRegistry.getById(vaultId))?.path !== vault.path)
+      throw new Error('Vault is no longer registered');
+    await assertDeletionTargetUnchanged(target);
+    await shell.trashItem(target.absolutePath);
+    invalidateSelectedVault(vaultId);
+    return { deleted: true, path: target.relativePath, kind: target.kind };
+  });
 });
 
 ipcMain.handle('vault:list-notes', async () => {
@@ -1059,6 +1126,11 @@ ipcMain.handle('vault:save-note', async (_event, request: unknown) =>
 );
 
 let agentEndpoint: StartedAgentEndpoint | undefined;
+async function closeAgentEndpoint(): Promise<void> {
+  const endpoint = agentEndpoint;
+  agentEndpoint = undefined;
+  await endpoint?.close();
+}
 app.whenReady().then(async () => {
   agentEndpoint = await startAgentEndpoint({
     broker: agentBroker,
@@ -1398,23 +1470,13 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', (event) => {
-  if (shutdownAllowed) {
-    if (agentEndpoint) {
-      const endpoint = agentEndpoint;
-      agentEndpoint = undefined;
-      void endpoint.close();
-    }
-    return;
-  }
   // Closing the final window is already guarded by its close handler. Don't
   // show a second quit confirmation after that window has been destroyed.
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (shutdownAllowed || BrowserWindow.getAllWindows().length === 0) {
     shutdownAllowed = true;
-    if (agentEndpoint) {
-      const endpoint = agentEndpoint;
-      agentEndpoint = undefined;
-      void endpoint.close();
-    }
+    void closeAgentEndpoint().catch((error) =>
+      console.error('Unable to close agent endpoint', error),
+    );
     return;
   }
   event.preventDefault();
@@ -1438,11 +1500,7 @@ app.on('before-quit', (event) => {
       }, flushBeforeQuit);
       if (!proceed) return;
       shutdownAllowed = true;
-      if (agentEndpoint) {
-        const endpoint = agentEndpoint;
-        agentEndpoint = undefined;
-        await endpoint.close();
-      }
+      await closeAgentEndpoint();
       app.quit();
     } catch (error) {
       console.error('Unable to confirm or prepare application quit', error);

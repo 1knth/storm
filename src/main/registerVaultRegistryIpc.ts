@@ -3,6 +3,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import type { VaultRegistry } from '../vault/vaultRegistry';
 import type { VaultService } from '../vault/vaultService';
 import type { VaultWriteBarrier } from '../vault/writeBarrier';
+import { runVaultsLifecycleExclusive } from './vaultLifecycle';
 
 export interface IpcHandlerRegistrar {
   handle(channel: string, listener: (...args: unknown[]) => unknown): void;
@@ -189,24 +190,17 @@ export function registerVaultRegistryIpc(
       return registry.setGroupCollapsed(id, collapsed);
     },
   );
-  ipc.handle('vault:registry-add', async (_event, directory: unknown) => {
-    if (typeof directory !== 'string')
-      throw new Error('Invalid vault directory');
-    return registry.add(directory);
-  });
   ipc.handle('vault:registry-activate', async (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('Invalid vault ID');
-    const { vaults } = await registry.list();
-    const selected = vaults.find((vault) => vault.id === id);
-    if (!selected) throw new Error('Unknown vault');
-    await service.selectVault(selected.path);
-    await registry.setActive(id);
-    await dependencies.watchSelectedVault();
-    return { id, path: service.getSelectedVaultPath() };
-  });
-  ipc.handle('vault:registry-remove', (_event, id: unknown) => {
-    if (typeof id !== 'string') throw new Error('Invalid vault ID');
-    return registry.remove(id);
+    return writeBarrier.run(async () => {
+      const { vaults } = await registry.list();
+      const selected = vaults.find((vault) => vault.id === id);
+      if (!selected) throw new Error('Unknown vault');
+      await service.selectVault(selected.path);
+      await registry.setActive(id);
+      await dependencies.watchSelectedVault();
+      return { id, path: service.getSelectedVaultPath() };
+    });
   });
   ipc.handle('vault:registry-unload-one', async (_event, id: unknown) => {
     if (typeof id !== 'string' || !id) throw new Error('Invalid vault ID');
@@ -233,12 +227,26 @@ export function registerVaultRegistryIpc(
       }),
     );
   });
-  ipc.handle('vault:registry-unload-all', () =>
-    writeBarrier.close(async () => {
-      await registry.unloadAll();
-      dependencies.stopWatcher();
-      dependencies.clearWatchedVaultId();
-      service.clearSelectedVault();
-    }),
-  );
+  ipc.handle('vault:registry-unload-all', async () => {
+    const { vaults } = await registry.list();
+    return runVaultsLifecycleExclusive(
+      vaults.map((vault) => vault.path),
+      () =>
+        writeBarrier.close(async () => {
+          const current = await registry.list();
+          if (
+            current.vaults.some((vault) =>
+              dependencies.hasWritableAgentSession?.(vault.id),
+            )
+          )
+            throw new Error(
+              'Stop the connected agent sessions before unloading vaults.',
+            );
+          await registry.unloadAll();
+          dependencies.stopWatcher();
+          dependencies.clearWatchedVaultId();
+          service.clearSelectedVault();
+        }),
+    );
+  });
 }

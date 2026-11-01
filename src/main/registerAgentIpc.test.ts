@@ -2,14 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   bindAgentBrokerIpc,
-  isTrustedRenderer,
   registerAgentIpc,
   type AgentIpcEvent,
 } from './registerAgentIpc';
 import type { AgentRendererRequest } from './agentBroker';
+import { rendererAuthorizer } from './rendererSecurity';
 
 test('quiz renderer authorization accepts configured dev and packaged URLs only in the main window and frame', () => {
-  const sender = {};
   const mainFrame = { url: 'http://localhost:5173/quiz/index.html' };
   const authorize = (
     url: string,
@@ -22,15 +21,21 @@ test('quiz renderer authorization accepts configured dev and packaged URLs only 
     } = {},
   ) => {
     const frame = options.subframe ? { url } : { ...mainFrame, url };
-    return isTrustedRenderer(
-      options.windowAlive ?? true,
-      options.contentsAlive ?? true,
-      options.otherSender ? {} : sender,
-      sender,
-      frame,
-      options.subframe ? mainFrame : frame,
-      acceptedUrl,
-    );
+    const contents = {
+      id: 1,
+      isDestroyed: () => !(options.contentsAlive ?? true),
+      mainFrame: options.subframe ? mainFrame : frame,
+    };
+    return rendererAuthorizer(
+      () => ({
+        webContents: contents,
+        isDestroyed: () => !(options.windowAlive ?? true),
+      }),
+      () => acceptedUrl,
+    )({
+      sender: options.otherSender ? { id: 2 } : contents,
+      senderFrame: frame,
+    });
   };
 
   assert.equal(authorize('http://localhost:5173/quiz/index.html'), true);

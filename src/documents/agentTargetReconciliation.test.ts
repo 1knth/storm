@@ -1,8 +1,30 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { reconcileAgentTargetContent } from './agentTargetReconciliation';
+import {
+  reconcileAgentTargetContent,
+  agentTargetDiskRevision,
+} from './agentTargetReconciliation';
 
 describe('agent target content reconciliation', () => {
+  it('uses fresh disk revision when matching live text still has older snapshot metadata', () => {
+    const view = { content: 'saved update', revision: 'old-view-revision' };
+    const disk = {
+      content: 'saved update',
+      revision: 'acknowledged-disk-revision',
+    };
+    assert.equal(agentTargetDiskRevision(disk, view.content), disk.revision);
+    assert.notEqual(agentTargetDiskRevision(disk, view.content), view.revision);
+  });
+  it('rejects an edit arriving between reconciliation and the final snapshot', () => {
+    assert.throws(
+      () =>
+        agentTargetDiskRevision(
+          { content: 'saved', revision: 'r2' },
+          'new unsaved edit',
+        ),
+      /changed while opening/,
+    );
+  });
   it('accepts content already saved by an agent despite the old baseline', () => {
     assert.equal(
       reconcileAgentTargetContent({

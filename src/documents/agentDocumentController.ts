@@ -1,6 +1,16 @@
 import { EditorState, Transaction } from '@codemirror/state';
 import type { SaveNoteRequest, SaveNoteResult } from '../shared/types';
-import type { AgentActivity } from '../shared/agentProtocol';
+import type {
+  AgentActivity,
+  AgentEditPlan,
+  AgentEditFingerprints,
+  AgentPatchPreviewEdit,
+} from '../shared/agentProtocol';
+export type {
+  AgentEditPlan,
+  AgentEditFingerprints,
+  AgentPatchPreviewEdit,
+} from '../shared/agentProtocol';
 
 export type AgentDocumentStatus =
   | 'connected'
@@ -9,13 +19,35 @@ export type AgentDocumentStatus =
   | 'stopped'
   | 'disconnected';
 export type SaveNote = (request: SaveNoteRequest) => Promise<SaveNoteResult>;
-export type AgentEditPlan =
-  | { type: 'replace'; content: string }
-  | {
-      type: 'replaceText';
-      replacements: Array<{ find: string; replace: string }>;
-    };
-export type AgentEditPreview = { content: string; changed: boolean };
+export type AgentEditPreview = {
+  content: string;
+  changed: boolean;
+  edits: AgentPatchPreviewEdit[];
+};
+
+const PATCH_CONTEXT_LIMIT = 80;
+
+function lineAndColumn(
+  content: string,
+  offset: number,
+): { line: number; column: number } {
+  const before = content.slice(0, offset);
+  const lineStart = before.lastIndexOf('\n') + 1;
+  return {
+    line: (before.match(/\n/g)?.length ?? 0) + 1,
+    column: offset - lineStart + 1,
+  };
+}
+
+async function contentFingerprint(content: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(content),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
 /** UTF-16 source ranges accepted as new agent text; corrections are intentionally absent. */
 export type AgentRevealMetadata = {
   generation: number;
@@ -205,7 +237,11 @@ export class AgentDocumentController {
       throw new Error('Stale document version');
     const original = document.state.doc.toString();
     if (plan.type === 'replace')
-      return { content: plan.content, changed: plan.content !== original };
+      return {
+        content: plan.content,
+        changed: plan.content !== original,
+        edits: [],
+      };
     const matches = plan.replacements.map(({ find }) => {
       if (!find) throw new Error('Find text must not be empty');
       const first = original.indexOf(find);
@@ -218,6 +254,27 @@ export class AgentDocumentController {
     for (let index = 1; index < ordered.length; index++)
       if (ordered[index].from < ordered[index - 1].to)
         throw new Error('Replacement targets overlap');
+    const edits = matches.map((range, index) => {
+      const position = lineAndColumn(original, range.from);
+      const lineStart = original.lastIndexOf('\n', range.from - 1) + 1;
+      const headingLines = original.slice(0, lineStart).split(/\r?\n/);
+      const heading = [...headingLines]
+        .reverse()
+        .find((line) => /^#{1,6}\s+/.test(line));
+      return {
+        start: range.from,
+        end: range.to,
+        ...position,
+        ...(heading ? { heading: heading.slice(0, 200) } : {}),
+        contextBefore: original.slice(
+          Math.max(0, range.from - PATCH_CONTEXT_LIMIT),
+          range.from,
+        ),
+        contextAfter: original.slice(range.to, range.to + PATCH_CONTEXT_LIMIT),
+        find: plan.replacements[index].find,
+        replace: plan.replacements[index].replace,
+      };
+    });
     let content = original;
     for (let index = plan.replacements.length - 1; index >= 0; index--) {
       const range = matches[index];
@@ -226,15 +283,38 @@ export class AgentDocumentController {
         plan.replacements[index].replace +
         content.slice(range.to);
     }
-    return { content, changed: content !== original };
+    return { content, changed: content !== original, edits };
+  }
+
+  async fingerprints(
+    preview: AgentEditPreview,
+    baseContent: string,
+  ): Promise<AgentEditFingerprints> {
+    const [baseFingerprint, resultFingerprint] = await Promise.all([
+      contentFingerprint(baseContent),
+      contentFingerprint(preview.content),
+    ]);
+    return { baseFingerprint, resultFingerprint };
   }
 
   async applyEdit(
     document: AgentDocument,
     expectedVersion: number,
     plan: AgentEditPlan,
+    expectedFingerprints?: AgentEditFingerprints,
   ): Promise<{ version: number; content: string }> {
     const preview = this.previewEdit(document, expectedVersion, plan);
+    if (expectedFingerprints) {
+      const baseContent = document.state.doc.toString();
+      const actual = await this.fingerprints(preview, baseContent);
+      if (
+        actual.baseFingerprint !== expectedFingerprints.baseFingerprint ||
+        actual.resultFingerprint !== expectedFingerprints.resultFingerprint
+      )
+        throw new Error('Patch preview fingerprint mismatch');
+      if (document.acceptedVersion !== expectedVersion)
+        throw new Error('Stale document version');
+    }
     if (
       document.closed ||
       document.closing ||

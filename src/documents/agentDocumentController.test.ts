@@ -227,7 +227,32 @@ describe('AgentDocumentController', () => {
           { find: 'B', replace: '' },
         ],
       }),
-      { content: 'Aé\n  A', changed: true },
+      {
+        content: 'Aé\n  A',
+        changed: true,
+        edits: [
+          {
+            start: 1,
+            end: 3,
+            line: 1,
+            column: 2,
+            contextBefore: 'A',
+            contextAfter: ' B A',
+            find: '🙂',
+            replace: 'é\n',
+          },
+          {
+            start: 4,
+            end: 5,
+            line: 1,
+            column: 5,
+            contextBefore: 'A🙂 ',
+            contextAfter: ' A',
+            find: 'B',
+            replace: '',
+          },
+        ],
+      },
     );
     for (const plan of [
       {
@@ -256,6 +281,105 @@ describe('AgentDocumentController', () => {
     assert.deepEqual(document.reveal.ranges, []);
     assert.deepEqual(saved, ['']);
     assert.equal(document.acceptedVersion, 1);
+  });
+
+  it('returns bounded UTF-16 patch locations and verifies preview fingerprints before mutation', async () => {
+    const saved: string[] = [];
+    const controller = new AgentDocumentController(async ({ content }) => {
+      saved.push(content);
+      return { revision: 'r2' };
+    });
+    const initialState = EditorState.create({
+      doc:
+        '# Heading\r\nA🙂 target and more text\r\n' +
+        'padding line\r\n'.repeat(20),
+    });
+    const original = initialState.doc.toString();
+    const document = controller.attach(
+      'preview-details',
+      '/vault',
+      'a.md',
+      initialState,
+      'r1',
+    );
+    const plan = {
+      type: 'replaceText' as const,
+      replacements: [
+        { find: 'target', replace: 'changed' },
+        { find: 'more', replace: 'less' },
+      ],
+    };
+    const preview = controller.previewEdit(document, 0, plan);
+    assert.equal(preview.edits[0].start, original.indexOf('target'));
+    assert.equal(preview.edits[0].line, 2);
+    assert.equal(preview.edits[0].column, 5);
+    assert.equal(preview.edits[0].heading, '# Heading');
+    assert.ok(preview.edits[0].contextBefore.length <= 80);
+    assert.equal(preview.edits[0].find, 'target');
+    assert.equal(
+      preview.content,
+      original.replace('target', 'changed').replace('more', 'less'),
+    );
+    const fingerprints = await controller.fingerprints(preview, original);
+    await assert.rejects(
+      controller.applyEdit(document, 0, plan, {
+        ...fingerprints,
+        resultFingerprint: '0'.repeat(64),
+      }),
+      /fingerprint mismatch/,
+    );
+    assert.equal(document.state.doc.toString(), original);
+    assert.deepEqual(saved, []);
+    const applied = await controller.applyEdit(document, 0, plan, fingerprints);
+    assert.equal(applied.content, preview.content);
+    assert.deepEqual(saved, [preview.content]);
+  });
+
+  it('rechecks the document version after asynchronous fingerprinting before mutation', async () => {
+    const controller = new AgentDocumentController();
+    const document = controller.attach(
+      'fingerprint-race',
+      '/vault',
+      'a.md',
+      EditorState.create({ doc: 'before' }),
+      'r0',
+    );
+    let fingerprintingStarted!: () => void;
+    let resumeFingerprinting!: () => void;
+    const fingerprinting = new Promise<void>((resolve) => {
+      fingerprintingStarted = resolve;
+    });
+    const continueFingerprinting = new Promise<void>((resolve) => {
+      resumeFingerprinting = resolve;
+    });
+    const originalFingerprints = controller.fingerprints.bind(controller);
+    const plan = {
+      type: 'replaceText' as const,
+      replacements: [{ find: 'before', replace: 'after' }],
+    };
+    const expectedFingerprints = await originalFingerprints(
+      controller.previewEdit(document, 0, plan),
+      'before',
+    );
+    controller.fingerprints = async (...args) => {
+      fingerprintingStarted();
+      await continueFingerprinting;
+      return originalFingerprints(...args);
+    };
+    const applying = controller.applyEdit(
+      document,
+      0,
+      plan,
+      expectedFingerprints,
+    );
+    await fingerprinting;
+    controller.updateFromEditor(
+      'fingerprint-race',
+      EditorState.create({ doc: 'human edit' }),
+    );
+    resumeFingerprinting();
+    await assert.rejects(applying, /Stale document version/);
+    assert.equal(document.state.doc.toString(), 'human edit');
   });
 
   it('marks independent pure insertions from a matched edit as separate ranges', async () => {

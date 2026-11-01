@@ -1,5 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import {
+  isStudyRequest,
+  type StudyRequest,
+  type StudyValue,
+} from '../shared/studyContext';
 import { isAgentEditPlan } from '../shared/agentEditValidation';
+import type {
+  AgentBridgeRequest,
+  AgentBridgeResult,
+} from '../shared/agentBridge';
+import { PatchPreviewReceipts } from './patchPreviewReceipts';
 import type { AgentNoteTarget } from '../vault/agentNoteTarget';
 import { runVaultLifecycleExclusive } from './vaultLifecycle';
 import {
@@ -17,80 +27,10 @@ export interface AgentRendererTransport {
     listener: (sessionId: string, reason: string) => void,
   ): () => void;
 }
-export type AgentRendererRequest =
-  | {
-      type: 'snapshot';
-      requestId: string;
-      sessionId: string;
-      absolutePath: string;
-      vaultId: string;
-      vaultRoot: string;
-    }
-  | {
-      type: 'activity';
-      requestId: string;
-      sessionId: string;
-      activity: 'thinking' | 'drafting' | null;
-      activitySequence: number;
-      documentVersion: number;
-    }
-  | {
-      type: 'append';
-      requestId: string;
-      sessionId: string;
-      absolutePath: string;
-      operationId: string;
-      sequence: number;
-      text: string;
-    }
-  | { type: 'context'; requestId: string }
-  | { type: 'inspect'; requestId: string; vaultId: string; path: string }
-  | {
-      type: 'edit-preview' | 'edit-apply';
-      requestId: string;
-      sessionId: string;
-      expectedVersion: number;
-      plan: import('../shared/agentProtocol').AgentEditPlan;
-    }
-  | { type: 'finish' | 'cancel'; requestId: string; sessionId: string };
-export type AgentRendererResult =
-  | { ok: true; context: AgentContext }
-  | { ok: true; inspected: true; open: false }
-  | {
-      ok: true;
-      inspected: true;
-      open: true;
-      content: string;
-      documentVersion: number;
-      diskRevision: string;
-      saveState: 'pending' | 'saved' | 'failed';
-    }
-  | {
-      ok: true;
-      content?: string;
-      documentVersion: number;
-      diskRevision: string;
-      saveState?: 'pending' | 'saved' | 'failed';
-    }
-  | {
-      ok: true;
-      preview: true;
-      content: string;
-      changed: boolean;
-      documentVersion: number;
-      diskRevision: string;
-      saveState?: 'saved';
-    }
-  | {
-      ok: true;
-      edited: true;
-      content: string;
-      documentVersion: number;
-      diskRevision: string;
-      saveState: 'saved';
-    }
-  | { ok: false; code: string; message: string };
+export type AgentRendererRequest = AgentBridgeRequest;
+export type AgentRendererResult = AgentBridgeResult;
 export interface AgentBrokerOptions {
+  study?(request: StudyRequest): Promise<StudyValue>;
   resolveTarget(path: string): Promise<AgentNoteTarget>;
   resolveExistingTarget?(path: string): Promise<AgentNoteTarget>;
   assertTargetRegistered?(target: AgentNoteTarget): Promise<void>;
@@ -149,6 +89,7 @@ const MAX_REMEMBERED_OPERATIONS = 256;
 /** Per-session mutation queue preserves renderer order; operation results are retained up to a bounded count per session. */
 export class AgentBroker {
   private readonly sessions = new Map<string, Session>();
+  private readonly patchReceipts = new PatchPreviewReceipts();
   private readonly maintenanceVaults = new Set<string>();
   private resolvingConnects = 0;
   private rendererIsReady = true;
@@ -172,6 +113,7 @@ export class AgentBroker {
     this.rendererGeneration++;
     for (const session of this.sessions.values()) {
       if (session.state === 'connected' || session.state === 'writing') {
+        this.patchReceipts.revokeSession(session.id);
         session.state = 'disconnected';
         session.activity = undefined;
         if (session.pending > 0) session.outcomeUncertain = true;
@@ -227,6 +169,31 @@ export class AgentBroker {
       error: { code: code as never, message, retryable },
     });
     try {
+      if (request.type === 'study') {
+        if (!this.options.study)
+          return fail(
+            'CONTEXT_UNAVAILABLE',
+            'Study context is unavailable in this build',
+          );
+        try {
+          return {
+            protocol: AGENT_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            ok: true,
+            type: 'study',
+            result: {
+              ok: true,
+              value: await this.options.study(request.study),
+            },
+          };
+        } catch (e) {
+          const code =
+            e instanceof Error && /^STUDY_[A-Z_]+$/.test(e.message)
+              ? e.message
+              : 'STUDY_UNAVAILABLE';
+          return fail('CONTEXT_UNAVAILABLE', code);
+        }
+      }
       if (request.type === 'quiz') {
         if (!this.options.quiz)
           return fail('CONTEXT_UNAVAILABLE', 'Quiz service is unavailable');
@@ -452,6 +419,11 @@ export class AgentBroker {
             );
           return { ...(await previous.result), requestId: request.requestId };
         }
+        if (request.plan.type === 'replaceText' && !request.previewReceipt)
+          return fail(
+            'PREVIEW_REQUIRED',
+            'Patch apply requires a preview receipt',
+          );
       }
       if (
         session.state === 'cancelled' ||
@@ -644,12 +616,55 @@ export class AgentBroker {
             if (session.state !== 'connected' && session.state !== 'writing')
               return fail('SESSION_CLOSED', 'Session is not writable');
             const generation = this.rendererGeneration;
+            let expectedFingerprints:
+              | { baseFingerprint: string; resultFingerprint: string }
+              | undefined;
+            if (
+              request.type === 'edit-apply' &&
+              request.plan.type === 'replaceText'
+            ) {
+              const validated = this.patchReceipts.validate({
+                receiptId: request.previewReceipt!,
+                sessionId: session.id,
+                documentIdentity: session.target.absolutePath,
+                expectedVersion: String(request.expectedVersion),
+                plan: JSON.stringify(request.plan),
+                baseContentFingerprint: '',
+                resultContentFingerprint: '',
+              });
+              if (!validated.ok)
+                return fail(
+                  receiptErrorCode(validated.error),
+                  `Patch preview receipt rejected: ${validated.error}`,
+                );
+              expectedFingerprints = {
+                baseFingerprint: validated.value.baseContentFingerprint,
+                resultFingerprint: validated.value.resultContentFingerprint,
+              };
+              const claimed = this.patchReceipts.claim({
+                receiptId: request.previewReceipt!,
+                sessionId: session.id,
+                documentIdentity: session.target.absolutePath,
+                expectedVersion: String(request.expectedVersion),
+                plan: JSON.stringify(request.plan),
+                baseContentFingerprint: validated.value.baseContentFingerprint,
+                resultContentFingerprint:
+                  validated.value.resultContentFingerprint,
+                opId: request.operationId,
+              });
+              if (!claimed.ok)
+                return fail(
+                  receiptErrorCode(claimed.error),
+                  `Patch preview receipt rejected: ${claimed.error}`,
+                );
+            }
             const rendered = await this.options.renderer.dispatch({
               type: request.type,
               requestId: request.requestId,
               sessionId: session.id,
               expectedVersion: request.expectedVersion,
               plan: request.plan,
+              ...(expectedFingerprints ? { expectedFingerprints } : {}),
             });
             if (
               generation !== this.rendererGeneration ||
@@ -685,29 +700,66 @@ export class AgentBroker {
                 'SESSION_CLOSED',
                 'Session closed before acknowledgement',
               );
-            return 'preview' in rendered
-              ? {
-                  protocol: AGENT_PROTOCOL_VERSION,
-                  requestId: request.requestId,
-                  ok: true,
-                  type: 'preview',
-                  operationId: request.operationId,
-                  content: rendered.content,
-                  changed: rendered.changed,
-                  documentVersion: rendered.documentVersion,
-                  diskRevision: rendered.diskRevision,
-                }
-              : {
-                  protocol: AGENT_PROTOCOL_VERSION,
-                  requestId: request.requestId,
-                  ok: true,
-                  type: 'edited',
-                  operationId: request.operationId,
-                  content: rendered.content,
-                  documentVersion: rendered.documentVersion,
-                  diskRevision: rendered.diskRevision,
-                  saveState: 'saved',
+            if ('preview' in rendered) {
+              let receiptFields = {};
+              if (
+                request.type === 'edit-preview' &&
+                request.plan.type === 'replaceText'
+              ) {
+                if (
+                  !rendered.edits ||
+                  !rendered.baseFingerprint ||
+                  !rendered.resultFingerprint
+                )
+                  return fail(
+                    'INTERNAL',
+                    'Renderer omitted patch preview fingerprints',
+                  );
+                const receipt = this.patchReceipts.issue({
+                  sessionId: session.id,
+                  documentIdentity: session.target.absolutePath,
+                  expectedVersion: String(request.expectedVersion),
+                  plan: JSON.stringify(request.plan),
+                  baseContentFingerprint: rendered.baseFingerprint,
+                  resultContentFingerprint: rendered.resultFingerprint,
+                });
+                if (!receipt.ok)
+                  return fail(
+                    'INTERNAL',
+                    'Patch preview receipt capacity exhausted',
+                  );
+                receiptFields = {
+                  previewReceipt: receipt.value.receiptId,
+                  expiresAt: receipt.value.expiresAt,
+                  baseFingerprint: rendered.baseFingerprint,
+                  resultFingerprint: rendered.resultFingerprint,
+                  edits: rendered.edits,
                 };
+              }
+              return {
+                protocol: AGENT_PROTOCOL_VERSION,
+                requestId: request.requestId,
+                ok: true,
+                type: 'preview',
+                operationId: request.operationId,
+                ...receiptFields,
+                content: rendered.content,
+                changed: rendered.changed,
+                documentVersion: rendered.documentVersion,
+                diskRevision: rendered.diskRevision,
+              };
+            }
+            return {
+              protocol: AGENT_PROTOCOL_VERSION,
+              requestId: request.requestId,
+              ok: true,
+              type: 'edited',
+              operationId: request.operationId,
+              content: rendered.content,
+              documentVersion: rendered.documentVersion,
+              diskRevision: rendered.diskRevision,
+              saveState: 'saved',
+            };
           },
         ).catch((error) => fail('INTERNAL', errorMessage(error)));
         if (request.type === 'edit-apply') {
@@ -788,6 +840,7 @@ export class AgentBroker {
             throw new Error('Renderer returned an invalid response for finish');
           if (session.state !== 'connected' && session.state !== 'writing')
             throw new Error('SESSION_CLOSED');
+          this.patchReceipts.revokeSession(session.id);
           session.state = 'finished';
           session.activity = undefined;
           session.operations.clear();
@@ -818,6 +871,7 @@ export class AgentBroker {
     }
   }
   private fenceSession(session: Session, state: 'cancelled' | 'disconnected') {
+    this.patchReceipts.revokeSession(session.id);
     session.state = state;
     session.activity = undefined;
     session.operations.clear();
@@ -860,6 +914,12 @@ function hasControlCharacter(value: string): boolean {
     return code < 32 || (code >= 127 && code <= 159);
   });
 }
+function receiptErrorCode(
+  error: import('./patchPreviewReceipts').ReceiptErrorCode,
+): string {
+  if (error === 'expired') return 'PREVIEW_EXPIRED';
+  return error === 'version_mismatch' ? 'STALE_VERSION' : 'PREVIEW_REJECTED';
+}
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -889,9 +949,20 @@ function isQuizAgentRequest(value: unknown): boolean {
     typeof r.idempotencyKey === 'string' &&
     r.idempotencyKey.length > 0 &&
     r.idempotencyKey.length <= 128;
-  if (!common) return false;
+  if (
+    !common ||
+    (r.handledThroughCursor !== undefined &&
+      (!Number.isSafeInteger(r.handledThroughCursor) ||
+        Number(r.handledThroughCursor) < 0))
+  )
+    return false;
   if (r.type === 'attach') return true;
   if (r.type === 'pose-question') {
+    if (
+      r.studyBasis !== undefined &&
+      (typeof r.studyBasis !== 'string' || !/^[a-f0-9]{64}$/.test(r.studyBasis))
+    )
+      return false;
     if (
       typeof r.question !== 'string' ||
       r.question.length < 1 ||
@@ -994,10 +1065,23 @@ function isRequest(v: unknown): v is AgentRequest {
     r.requestId.length > 128
   )
     return false;
+  if (r.type === 'study') return isStudyRequest(r.study);
   if (r.type === 'quiz') {
     if (r.operation === 'list') return true;
+    if (r.operation === 'detach' || r.operation === 'activity')
+      return (
+        typeof r.sessionId === 'string' &&
+        r.sessionId.length > 0 &&
+        r.sessionId.length <= 128 &&
+        typeof r.agentToken === 'string' &&
+        r.agentToken.length > 0 &&
+        r.agentToken.length <= 512 &&
+        (r.operation !== 'activity' ||
+          ['idle', 'thinking', 'drafting'].includes(String(r.state)))
+      );
     if (r.operation === 'attach')
       return (
+        (r.compact === undefined || typeof r.compact === 'boolean') &&
         typeof r.sessionId === 'string' &&
         r.sessionId.length > 0 &&
         typeof r.clientId === 'string' &&
@@ -1016,8 +1100,26 @@ function isRequest(v: unknown): v is AgentRequest {
         r.imageId.length > 0 &&
         r.imageId.length <= 128
       );
+    if (r.operation === 'context')
+      return (
+        typeof r.sessionId === 'string' &&
+        r.sessionId.length > 0 &&
+        typeof r.agentToken === 'string' &&
+        r.agentToken.length > 0 &&
+        r.agentToken.length <= 512 &&
+        ['history', 'question', 'prompt', 'scope', 'event'].includes(
+          String(r.section),
+        ) &&
+        [r.before, r.offset].every(
+          (item) =>
+            item === undefined ||
+            (Number.isSafeInteger(item) && Number(item) >= 0),
+        )
+      );
     if (r.operation === 'snapshot')
       return (
+        (r.compact === undefined || typeof r.compact === 'boolean') &&
+        (r.recover === undefined || typeof r.recover === 'boolean') &&
         typeof r.sessionId === 'string' &&
         r.sessionId.length > 0 &&
         typeof r.agentToken === 'string' &&

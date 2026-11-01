@@ -24,6 +24,7 @@ export type QuizQuestionKind =
   | 'long-answer';
 export type QuizQuestion = {
   id: string;
+  studyBasis?: string;
   /** Missing kind denotes a historical multiple-choice question. */
   kind?: QuizQuestionKind;
   prompt: string;
@@ -54,6 +55,7 @@ export type QuizMessage = {
   attachments?: QuizImageReference[];
   question?: {
     id: string;
+    studyBasis?: string;
     kind?: QuizQuestionKind;
     prompt: string;
     choices: QuizChoice[];
@@ -81,11 +83,22 @@ export type QuizSession = {
   currentPrompt?: QuizChoicePrompt | null;
   freeChatDraft: string;
   activity?: { state: 'idle' | 'thinking' | 'drafting'; updatedAt: string };
+  /** True after accepted learner input until the agent commits a response. */
+  awaitingAgent?: boolean;
+  /** Durable learner work and response watermark; disconnect only clears UI activity. */
+  pendingLearnerCursor?: number;
+  respondedThroughCursor?: number;
   createdAt: string;
   updatedAt: string;
 };
 
-export type QuizAgentRequest =
+/** Picker metadata deliberately excludes capabilities, drafts and transcript history. */
+export type QuizSessionSummary = Pick<
+  QuizSession,
+  'id' | 'name' | 'scope' | 'status' | 'createdAt' | 'updatedAt'
+>;
+
+export type QuizAgentRequest = (
   | {
       type: 'attach';
       sessionId: string;
@@ -95,6 +108,7 @@ export type QuizAgentRequest =
     }
   | {
       type: 'pose-question';
+      studyBasis?: string;
       sessionId: string;
       agentToken: string;
       expectedRevision: number;
@@ -169,7 +183,8 @@ export type QuizAgentRequest =
       idempotencyKey: string;
       text: string;
       attachments?: string[];
-    };
+    }
+) & { handledThroughCursor?: number };
 
 export type QuizLearnerRequest =
   | {
@@ -234,5 +249,6 @@ export type QuizResult<T> =
         | 'stale-revision'
         | 'invalid-state'
         | 'invalid-input'
+        | 'study-unavailable'
         | 'unauthorized';
     };

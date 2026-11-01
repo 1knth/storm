@@ -45,7 +45,7 @@ import { loadAppearance, saveAppearance } from './appearance';
 import type { Appearance } from './appearance';
 import { createAgentDocumentHost } from './documents/agentDocumentHost';
 import { createAgentContext } from './documents/agentContext';
-import { reconcileAgentTargetContent } from './documents/agentTargetReconciliation';
+import { reconcileAgentTargetContent, agentTargetDiskRevision } from './documents/agentTargetReconciliation';
 import { isAgentTabProtected } from './documents/agentTabProtection';
 import {
   STARTUP_VAULT_ERROR,
@@ -191,7 +191,7 @@ function App() {
           vaultPath: tab.vaultPath,
           path,
           state: snapshot.state,
-          revision: snapshot.note.revision,
+          revision: agentTargetDiskRevision(note, snapshot.state.doc.toString()),
         };
       },
       openDocument: async ({ absolutePath, vaultId, vaultRoot }) => {
@@ -2451,10 +2451,11 @@ function App() {
         cancelVaultChange();
         return;
       }
-      const { vault } = await window.vault.registryAdd(selection.path);
-      setVaults((old) =>
-        old.some((item) => item.id === vault.id) ? old : [...old, vault],
-      );
+      const { vaults: registered } = await window.vault.registryList();
+      const vault = registered.find((item) => item.path === selection.path);
+      if (!vault)
+        throw new Error(selection.warning ?? 'Unable to register vault');
+      setVaults(registered);
       navigationBusy.current = false;
       cancelVaultChange();
       await activateVault(vault.id);

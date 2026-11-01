@@ -778,6 +778,193 @@ describe('AgentBroker', () => {
     );
   });
 
+  it('requires a preview receipt for patch apply, binds exact plan, and replays a completed operation before claiming again', async () => {
+    const calls: AgentRendererRequest[] = [];
+    let content = 'before';
+    let writes = 0;
+    const broker = new AgentBroker({
+      resolveTarget: async (absolutePath) => ({
+        absolutePath,
+        vaultId: 'v',
+        vaultRoot: '/v',
+        relativePath: 'n.md',
+        content,
+        diskRevision: 'r0',
+      }),
+      renderer: {
+        dispatch: async (request) => {
+          calls.push(request);
+          if (request.type === 'snapshot')
+            return { ok: true, documentVersion: 1, diskRevision: 'r0' };
+          if (request.type === 'edit-preview')
+            return {
+              ok: true,
+              preview: true,
+              content: 'after',
+              changed: true,
+              edits: [],
+              baseFingerprint: 'base-sha',
+              resultFingerprint: 'result-sha',
+              documentVersion: 1,
+              diskRevision: 'r0',
+            };
+          if (request.type === 'edit-apply') {
+            assert.deepEqual(request.expectedFingerprints, {
+              baseFingerprint: 'base-sha',
+              resultFingerprint: 'result-sha',
+            });
+            writes++;
+            content = 'after';
+            return {
+              ok: true,
+              edited: true,
+              content,
+              documentVersion: 2,
+              diskRevision: 'r1',
+              saveState: 'saved',
+            };
+          }
+          return { ok: false, code: 'INTERNAL', message: 'unexpected request' };
+        },
+      },
+    });
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/v/n.md' }),
+    )) as any;
+    const sessionId = connected.session.sessionId;
+    const plan = {
+      type: 'replaceText',
+      replacements: [{ find: 'before', replace: 'after' }],
+    };
+    const preview = (await broker.handle(
+      req('edit-preview', {
+        sessionId,
+        expectedVersion: 1,
+        operationId: 'preview-1',
+        plan,
+      }),
+    )) as any;
+    const missing = (await broker.handle(
+      req('edit-apply', {
+        sessionId,
+        expectedVersion: 1,
+        operationId: 'missing',
+        plan,
+      }),
+    )) as any;
+    const changed = (await broker.handle(
+      req('edit-apply', {
+        sessionId,
+        expectedVersion: 1,
+        operationId: 'changed',
+        plan: {
+          ...plan,
+          replacements: [{ find: 'before ', replace: 'after' }],
+        },
+        previewReceipt: preview.previewReceipt,
+      }),
+    )) as any;
+    assert.equal(missing.error.code, 'PREVIEW_REQUIRED');
+    assert.equal(changed.error.code, 'PREVIEW_REJECTED');
+    assert.equal(writes, 0);
+    const payload = {
+      sessionId,
+      expectedVersion: 1,
+      operationId: 'patch-1',
+      plan,
+      previewReceipt: preview.previewReceipt,
+    };
+    const applied = (await broker.handle(req('edit-apply', payload))) as any;
+    const replay = (await broker.handle(req('edit-apply', payload))) as any;
+    assert.equal(applied.type, 'edited');
+    assert.equal(applied.content, 'after');
+    assert.deepEqual({ ...replay, requestId: applied.requestId }, applied);
+    assert.equal(writes, 1);
+    assert.equal(calls.filter((call) => call.type === 'edit-apply').length, 1);
+  });
+
+  it('rejects patch receipts from another session or document version before renderer mutation', async () => {
+    let applyCalls = 0;
+    const broker = new AgentBroker({
+      resolveTarget: async (absolutePath) => ({
+        absolutePath,
+        vaultId: 'v',
+        vaultRoot: '/v',
+        relativePath: absolutePath.endsWith('other.md') ? 'other.md' : 'n.md',
+        content: 'before',
+        diskRevision: 'r0',
+      }),
+      renderer: {
+        dispatch: async (request) => {
+          if (request.type === 'snapshot')
+            return { ok: true, documentVersion: 1, diskRevision: 'r0' };
+          if (request.type === 'edit-preview')
+            return {
+              ok: true,
+              preview: true,
+              content: 'after',
+              changed: true,
+              edits: [],
+              baseFingerprint: 'base-sha',
+              resultFingerprint: 'result-sha',
+              documentVersion: 1,
+              diskRevision: 'r0',
+            };
+          if (request.type === 'edit-apply') {
+            applyCalls++;
+            return {
+              ok: true,
+              edited: true,
+              content: 'after',
+              documentVersion: 2,
+              diskRevision: 'r1',
+            };
+          }
+          return { ok: true, inspected: true, open: false };
+        },
+      },
+    });
+    const first = (await broker.handle(
+      req('connect', { absolutePath: '/v/n.md' }),
+    )) as any;
+    const second = (await broker.handle(
+      req('connect', { absolutePath: '/v/other.md' }),
+    )) as any;
+    const plan = {
+      type: 'replaceText',
+      replacements: [{ find: 'before', replace: 'after' }],
+    };
+    const preview = (await broker.handle(
+      req('edit-preview', {
+        sessionId: first.session.sessionId,
+        expectedVersion: 1,
+        operationId: 'preview',
+        plan,
+      }),
+    )) as any;
+    const wrongSession = (await broker.handle(
+      req('edit-apply', {
+        sessionId: second.session.sessionId,
+        expectedVersion: 1,
+        operationId: 'wrong-session',
+        plan,
+        previewReceipt: preview.previewReceipt,
+      }),
+    )) as any;
+    const wrongVersion = (await broker.handle(
+      req('edit-apply', {
+        sessionId: first.session.sessionId,
+        expectedVersion: 2,
+        operationId: 'wrong-version',
+        plan,
+        previewReceipt: preview.previewReceipt,
+      }),
+    )) as any;
+    assert.equal(wrongSession.error.code, 'PREVIEW_REJECTED');
+    assert.equal(wrongVersion.error.code, 'STALE_VERSION');
+    assert.equal(applyCalls, 0);
+  });
+
   it('replays the original edit apply outcome for identical operation IDs and rejects changed payloads', async () => {
     let applyCalls = 0;
     const broker = new AgentBroker({

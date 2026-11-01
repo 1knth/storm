@@ -50,6 +50,17 @@ export class QuizService {
       scope: QuizScope,
     ) => Promise<boolean> | boolean,
     private readonly now = () => new Date().toISOString(),
+    private readonly prepareStudyBasis?: (
+      session: QuizSession,
+      snapshotId: string,
+      operationId: string,
+    ) => Promise<void>,
+    private readonly finalizeStudyBasis?: (
+      sessionId: string,
+      basis: string | undefined,
+      operationId: string,
+      revision: number,
+    ) => Promise<void>,
   ) {
     // A persisted connected state belongs to a prior process. Recover it once,
     // before any new operation can attach or observe a session.
@@ -99,15 +110,13 @@ export class QuizService {
     const normalizedName = name.trim();
     if (!normalizedName || normalizedName.length > 100)
       return { ok: false, error: 'invalid-input' };
-    const current = await this.store.get(sessionId);
-    if (!current) return { ok: false, error: 'not-found' };
-    const next = { ...current, name: normalizedName };
     try {
       // Metadata-only update intentionally leaves revisions/events untouched, so
       // a rename cannot invalidate an agent's in-flight compare-and-swap request.
-      await this.store.rename(next);
+      const renamed = await this.store.rename(sessionId, normalizedName);
+      if (!renamed) return { ok: false, error: 'not-found' };
       await this.store.promote(sessionId);
-      return { ok: true, value: next };
+      return { ok: true, value: renamed };
     } catch {
       return { ok: false, error: 'stale-revision' };
     }
@@ -183,12 +192,23 @@ export class QuizService {
     await this.startupRecovery;
     return this.store.list(options);
   }
-  async getSnapshot(id: string, after = 0): Promise<QuizSnapshot | null> {
+  async getSnapshot(
+    id: string,
+    after = 0,
+    compact = false,
+  ): Promise<QuizSnapshot | null> {
     await this.startupRecovery;
-    const session = await this.store.get(id);
+    const session = compact
+      ? await this.store.getAgentState(id)
+      : await this.store.get(id);
     return session
       ? { session, events: await this.store.events(id, after) }
       : null;
+  }
+
+  async listSessionSummaries() {
+    await this.startupRecovery;
+    return this.store.listSummaries();
   }
 
   /** Pair an authenticated local CLI caller with a learner-selected session ID. */
@@ -283,7 +303,27 @@ export class QuizService {
     if (!current) return { ok: false, error: 'not-found' };
     if (request.agentToken !== current.agentToken)
       return { ok: false, error: 'unauthorized' };
-    return this.applyRequest(current, request);
+    const result = await this.applyRequest(current, request);
+    if (
+      request.type === 'pose-question' &&
+      request.studyBasis &&
+      this.finalizeStudyBasis
+    ) {
+      // The question and its basis already committed together. Cleanup failure
+      // retains conservative pins; it must not turn an accepted write into failure.
+      try {
+        const committed = await this.store.get(request.sessionId);
+        await this.finalizeStudyBasis(
+          request.sessionId,
+          committed?.currentQuestion?.studyBasis,
+          request.idempotencyKey,
+          committed?.revision ?? current.revision,
+        );
+      } catch {
+        /* Reconcile conservative pins at startup if cleanup failed. */
+      }
+    }
+    return result;
   }
 
   /** Trusted renderer adapter: the main process validates the IPC sender; no agent capability crosses the UI bridge. */
@@ -348,6 +388,14 @@ export class QuizService {
     // Store enforces key idempotency atomically; expected revision guards competing tabs/agents.
     if (current.revision !== request.expectedRevision)
       return { ok: false, error: 'stale-revision' };
+    if (
+      request.handledThroughCursor !== undefined &&
+      (!Number.isSafeInteger(request.handledThroughCursor) ||
+        request.handledThroughCursor < 0 ||
+        request.handledThroughCursor > current.eventCursor ||
+        request.handledThroughCursor < (current.pendingLearnerCursor ?? 0))
+    )
+      return { ok: false, error: 'stale-revision' };
     const next = structuredClone(current);
     const timestamp = this.now();
     const addMessage = (role: 'learner' | 'agent', text: string) =>
@@ -367,7 +415,7 @@ export class QuizService {
         if (
           next.status !== 'connected' ||
           next.currentPrompt ||
-          (next.currentQuestion && next.currentQuestion.status !== 'feedback')
+          next.currentQuestion !== null
         )
           return { ok: false, error: 'invalid-state' };
         const kind = request.kind ?? 'multiple-choice';
@@ -414,9 +462,27 @@ export class QuizService {
           ].includes(kind)
         )
           return { ok: false, error: 'invalid-input' };
+        if (request.studyBasis !== undefined) {
+          if (
+            typeof request.studyBasis !== 'string' ||
+            !/^[a-f0-9]{64}$/.test(request.studyBasis) ||
+            !this.prepareStudyBasis
+          )
+            return { ok: false, error: 'study-unavailable' };
+          try {
+            await this.prepareStudyBasis(
+              current,
+              request.studyBasis,
+              request.idempotencyKey,
+            );
+          } catch {
+            return { ok: false, error: 'study-unavailable' };
+          }
+        }
         const questionId = randomUUID();
         const safeQuestion = {
           id: questionId,
+          ...(request.studyBasis ? { studyBasis: request.studyBasis } : {}),
           kind,
           prompt: request.question,
           choices: structuredClone(choices),
@@ -644,6 +710,26 @@ export class QuizService {
         break;
       }
     }
+    if (
+      request.type === 'answer' ||
+      request.type === 'respond-prompt' ||
+      request.type === 'continue' ||
+      request.type === 'message'
+    ) {
+      next.awaitingAgent = true;
+      next.pendingLearnerCursor = current.eventCursor + 1;
+    } else if (
+      request.type === 'pose-question' ||
+      request.type === 'pose-prompt' ||
+      request.type === 'feedback' ||
+      request.type === 'agent-message'
+    ) {
+      next.awaitingAgent = false;
+      next.respondedThroughCursor =
+        request.handledThroughCursor ??
+        current.pendingLearnerCursor ??
+        current.eventCursor;
+    }
     next.revision++;
     next.eventCursor++;
     next.updatedAt = timestamp;
@@ -660,6 +746,11 @@ export class QuizService {
               promptId: request.promptId,
               choiceId: request.choiceId,
               choiceText: next.transcript[next.transcript.length - 1]!.text,
+              ...(current.currentPrompt?.choices.find(
+                (choice) => choice.id === request.choiceId,
+              )?.effect === 'continue'
+                ? { effect: 'continue' }
+                : {}),
               ...(request.detail !== undefined
                 ? { detail: request.detail }
                 : {}),
@@ -833,6 +924,7 @@ export class QuizService {
       agentToken: randomUUID(),
       status: 'disconnected' as const,
       activity: undefined,
+      awaitingAgent: false,
       revision: current.revision + 1,
       eventCursor: current.eventCursor + 1,
       updatedAt: this.now(),
@@ -871,6 +963,8 @@ export class QuizService {
     const next = {
       ...current,
       status: 'disconnected' as const,
+      activity: undefined,
+      awaitingAgent: false,
       revision: current.revision + 1,
       eventCursor: current.eventCursor + 1,
       updatedAt: this.now(),

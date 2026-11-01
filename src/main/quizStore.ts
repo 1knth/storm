@@ -1,7 +1,12 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { QuizEvent, QuizSession } from '../shared/quizProtocol';
+import type {
+  QuizEvent,
+  QuizSession,
+  QuizSessionSummary,
+} from '../shared/quizProtocol';
+import { quizAgentEvent } from '../shared/quizAgentContext';
 
 export type QuizDatabase = {
   version: 1;
@@ -13,18 +18,21 @@ export type QuizDatabase = {
   >;
 };
 function sanitizeEvent(event: QuizEvent): QuizEvent {
-  const sanitize = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(sanitize);
-    if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(
-      Object.entries(value).flatMap(([key, child]) =>
-        /token|authorization|credential|secret/i.test(key)
-          ? []
-          : [[key, sanitize(child)]],
-      ),
-    );
+  return { ...event, data: quizAgentEvent(event).data ?? {} };
+}
+
+function preserveSessionMetadata(
+  current: QuizSession,
+  incoming: QuizSession,
+): QuizSession {
+  const { activity: _activity, ...next } = incoming;
+  const activity =
+    incoming.status === 'connected' ? current.activity : undefined;
+  return {
+    ...next,
+    ...(activity ? { activity } : {}),
+    ...(current.name !== undefined ? { name: current.name } : {}),
   };
-  return { ...event, data: sanitize(event.data) };
 }
 
 function mergeDraftFields(
@@ -72,6 +80,7 @@ const emptyDatabase = (): QuizDatabase => ({
 /** Small versioned JSON store; each replacement is written beside the target then atomically renamed. */
 export class QuizStore {
   private queue: Promise<unknown> = Promise.resolve();
+  private cache?: { signature: string; database: QuizDatabase };
   private drafts = new Map<
     string,
     {
@@ -84,6 +93,9 @@ export class QuizStore {
 
   private async read(): Promise<QuizDatabase> {
     try {
+      const info = await stat(this.filePath);
+      const signature = `${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+      if (this.cache?.signature === signature) return this.cache.database;
       const value: unknown = JSON.parse(await readFile(this.filePath, 'utf8'));
       if (
         !value ||
@@ -142,6 +154,7 @@ export class QuizStore {
         ]),
       );
       if (legacyReceipts) await this.write(database);
+      else this.cache = { signature, database };
       return database;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT')
@@ -159,6 +172,7 @@ export class QuizStore {
         mode: 0o600,
       });
       await rename(temporary, this.filePath);
+      this.cache = undefined;
     } catch (error) {
       await import('node:fs/promises').then(({ unlink }) =>
         unlink(temporary).catch(() => {}),
@@ -176,7 +190,7 @@ export class QuizStore {
     options: { includeDrafts?: boolean } = {},
   ): Promise<QuizSession[]> {
     await this.queue;
-    const sessions = (await this.read()).sessions;
+    const sessions = structuredClone((await this.read()).sessions);
     return options.includeDrafts
       ? [
           ...sessions,
@@ -188,12 +202,38 @@ export class QuizStore {
     await this.queue;
     return (
       this.drafts.get(id)?.session ??
-      (await this.read()).sessions.find((session) => session.id === id)
+      structuredClone(
+        (await this.read()).sessions.find((session) => session.id === id),
+      )
     );
   }
+  async listSummaries(): Promise<QuizSessionSummary[]> {
+    await this.queue;
+    return structuredClone(
+      (await this.read()).sessions.map(
+        ({ id, name, scope, status, createdAt, updatedAt }) => ({
+          id,
+          name,
+          scope,
+          status,
+          createdAt,
+          updatedAt,
+        }),
+      ),
+    );
+  }
+  async getAgentState(id: string): Promise<QuizSession | undefined> {
+    await this.queue;
+    const session =
+      this.drafts.get(id)?.session ??
+      (await this.read()).sessions.find((item) => item.id === id);
+    if (!session) return undefined;
+    return structuredClone({ ...session, transcript: [], freeChatDraft: '' });
+  }
+
   async createDraft(session: QuizSession): Promise<void> {
     return this.serialize(async () => {
-      const db = await this.read();
+      const db = structuredClone(await this.read());
       if (
         db.sessions.some((item) => item.id === session.id) ||
         this.drafts.has(session.id)
@@ -206,7 +246,7 @@ export class QuizStore {
     return this.serialize(async () => {
       const draft = this.drafts.get(id);
       if (!draft) return;
-      const db = await this.read();
+      const db = structuredClone(await this.read());
       if (db.sessions.some((item) => item.id === id))
         throw new Error('Duplicate quiz session');
       db.sessions.push(draft.session);
@@ -254,7 +294,7 @@ export class QuizStore {
   }
   async create(session: QuizSession): Promise<void> {
     return this.serialize(async () => {
-      const db = await this.read();
+      const db = structuredClone(await this.read());
       if (db.sessions.some((item) => item.id === session.id))
         throw new Error('Duplicate quiz session');
       db.sessions.push(session);
@@ -265,7 +305,7 @@ export class QuizStore {
   async deleteSession(id: string): Promise<void> {
     return this.serialize(async () => {
       if (this.drafts.delete(id)) return;
-      const db = await this.read();
+      const db = structuredClone(await this.read());
       db.sessions = db.sessions.filter((session) => session.id !== id);
       delete db.events[id];
       db.idempotency = Object.fromEntries(
@@ -277,18 +317,19 @@ export class QuizStore {
     });
   }
 
-  async rename(session: QuizSession): Promise<void> {
+  async rename(id: string, name: string): Promise<QuizSession | undefined> {
     return this.serialize(async () => {
-      const draft = this.drafts.get(session.id);
+      const draft = this.drafts.get(id);
       if (draft) {
-        draft.session = session;
-        return;
+        draft.session = { ...draft.session, name };
+        return draft.session;
       }
-      const db = await this.read();
-      const index = db.sessions.findIndex((item) => item.id === session.id);
-      if (index < 0) throw new Error('Quiz session disappeared');
-      db.sessions[index] = session;
+      const db = structuredClone(await this.read());
+      const session = db.sessions.find((item) => item.id === id);
+      if (!session) return undefined;
+      session.name = name;
       await this.write(db);
+      return session;
     });
   }
 
@@ -304,7 +345,7 @@ export class QuizStore {
         draft.session = { ...draft.session, activity };
         return draft.session;
       }
-      const db = await this.read();
+      const db = structuredClone(await this.read());
       const index = db.sessions.findIndex((item) => item.id === sessionId);
       if (index < 0 || db.sessions[index]!.agentToken !== agentToken)
         return undefined;
@@ -326,7 +367,7 @@ export class QuizStore {
         draft.session = mergeDraftFields(draft.session, session);
         return draft.session;
       }
-      const db = await this.read();
+      const db = structuredClone(await this.read());
       const index = db.sessions.findIndex((item) => item.id === session.id);
       if (index < 0) throw new Error('Quiz session disappeared');
       const current = db.sessions[index]!;
@@ -357,16 +398,16 @@ export class QuizStore {
         }
         if (draft.session.revision !== expectedRevision)
           throw new Error('Stale quiz revision');
-        draft.session = session;
+        draft.session = preserveSessionMetadata(draft.session, session);
         draft.events.push(sanitizeEvent(event));
         draft.idempotency[key] = {
           fingerprint,
           sessionId: session.id,
           revision: session.revision,
         };
-        return session;
+        return draft.session;
       }
-      const db = await this.read();
+      const db = structuredClone(await this.read());
       const index = db.sessions.findIndex((item) => item.id === session.id);
       if (index < 0) throw new Error('Quiz session disappeared');
       const prior = db.idempotency[key];
@@ -383,16 +424,10 @@ export class QuizStore {
         throw new Error('Stale quiz revision');
       // Keep metadata-only edits (such as a session rename) made after the
       // caller read its snapshot when committing a semantic revision update.
-      const { activity: _activity, ...sessionWithoutActivity } = session;
-      const updatedSession = {
-        ...sessionWithoutActivity,
-        ...(db.sessions[index]!.activity
-          ? { activity: db.sessions[index]!.activity }
-          : {}),
-        ...(db.sessions[index].name !== undefined
-          ? { name: db.sessions[index].name }
-          : {}),
-      };
+      const updatedSession = preserveSessionMetadata(
+        db.sessions[index],
+        session,
+      );
       db.sessions[index] = updatedSession;
       (db.events[session.id] ??= []).push(sanitizeEvent(event));
       db.idempotency[key] = {

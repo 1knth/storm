@@ -5,12 +5,33 @@ import type {
   AgentQuizSnapshot,
 } from '../shared/agentProtocol';
 import type { QuizService } from './quizService';
+import {
+  quizAgentSession,
+  quizContextChunk,
+  quizEventPage,
+  quizRecovery,
+  submittedQuizQuestion,
+} from '../shared/quizAgentContext';
 
 const publicSession = (
   session: import('../shared/quizProtocol').QuizSession,
 ): AgentQuizSession => {
   const { agentToken: _token, ...value } = session;
-  return value;
+  return {
+    ...value,
+    freeChatDraft: '',
+    currentQuestion: submittedQuizQuestion(value.currentQuestion),
+    ...(value.currentPrompt
+      ? {
+          currentPrompt: {
+            id: value.currentPrompt.id,
+            kind: value.currentPrompt.kind,
+            prompt: value.currentPrompt.prompt,
+            choices: value.currentPrompt.choices,
+          },
+        }
+      : {}),
+  };
 };
 const publicSnapshot = (
   snapshot: import('../shared/quizProtocol').QuizSnapshot,
@@ -18,6 +39,30 @@ const publicSnapshot = (
   session: publicSession(snapshot.session),
   events: snapshot.events,
 });
+
+function compactSnapshot(
+  snapshot: import('../shared/quizProtocol').QuizSnapshot,
+  recover: boolean,
+  after = 0,
+): AgentQuizSnapshot {
+  const page = quizEventPage(snapshot.events, after);
+  return {
+    session: {
+      ...publicSession(snapshot.session),
+      ...quizAgentSession(snapshot.session),
+      transcript: [],
+      freeChatDraft: '',
+      createdAt: snapshot.session.createdAt,
+      updatedAt: snapshot.session.updatedAt,
+    } as AgentQuizSession,
+    events: page.events as import('../shared/quizProtocol').QuizEvent[],
+    after: page.after,
+    hasMore: page.hasMore,
+    ...(recover
+      ? { recovery: quizRecovery(snapshot.session, snapshot.events) }
+      : {}),
+  };
+}
 
 export function createQuizAgentHandler(
   service: Pick<
@@ -65,7 +110,9 @@ export function createQuizAgentHandler(
                 ok: true,
                 value: {
                   agentToken: result.value.agentToken,
-                  snapshot: publicSnapshot(result.value.snapshot),
+                  snapshot: request.compact
+                    ? compactSnapshot(result.value.snapshot, true)
+                    : publicSnapshot(result.value.snapshot),
                 },
               }
             : { ok: false, error: result.error },
@@ -131,7 +178,8 @@ export function createQuizAgentHandler(
       case 'snapshot': {
         const snapshot = await service.getSnapshot(
           request.sessionId,
-          request.after ?? 0,
+          request.recover ? 0 : (request.after ?? 0),
+          request.compact && !request.recover,
         );
         if (!snapshot)
           return { ...base, operation: 'snapshot', snapshot: null };
@@ -149,7 +197,40 @@ export function createQuizAgentHandler(
         return {
           ...base,
           operation: 'snapshot',
-          snapshot: publicSnapshot(snapshot),
+          snapshot: request.compact
+            ? compactSnapshot(snapshot, !!request.recover, request.after ?? 0)
+            : publicSnapshot(snapshot),
+        };
+      }
+      case 'context': {
+        const snapshot = await service.getSnapshot(request.sessionId);
+        if (!snapshot || snapshot.session.agentToken !== request.agentToken)
+          return {
+            ...base,
+            operation: 'context',
+            result: {
+              ok: false,
+              error: snapshot ? 'unauthorized' : 'not-found',
+            },
+          };
+        return {
+          ...base,
+          operation: 'context',
+          result: {
+            ok: true,
+            value: {
+              sessionId: snapshot.session.id,
+              revision: snapshot.session.revision,
+              eventCursor: snapshot.session.eventCursor,
+              ...quizContextChunk(
+                snapshot.session,
+                snapshot.events,
+                request.section,
+                request.before,
+                request.offset,
+              ),
+            },
+          },
         };
       }
       case 'request': {

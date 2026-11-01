@@ -7,6 +7,7 @@ import type {
   QuizSession,
   QuizSnapshot,
 } from './quizProtocol';
+import type { StudyRequest, StudyValue } from './studyContext';
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 
 export type AgentSessionId = string;
@@ -64,8 +65,29 @@ export type AgentEditPlan =
       type: 'replaceText';
       replacements: Array<{ find: string; replace: string }>;
     };
+export type AgentPatchPreviewEdit = {
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+  heading?: string;
+  contextBefore: string;
+  contextAfter: string;
+  find: string;
+  replace: string;
+};
+export type AgentEditFingerprints = {
+  baseFingerprint: string;
+  resultFingerprint: string;
+};
 
 export type AgentRequest =
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'study';
+      study: StudyRequest;
+    }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
       requestId: string;
@@ -103,6 +125,7 @@ export type AgentRequest =
       operationId: AgentOperationId;
       expectedVersion: number;
       plan: AgentEditPlan;
+      previewReceipt?: string;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
@@ -165,6 +188,7 @@ export type AgentRequest =
       operation: 'attach';
       sessionId: string;
       clientId: string;
+      compact?: boolean;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
@@ -209,6 +233,19 @@ export type AgentRequest =
       sessionId: string;
       agentToken: string;
       after?: number;
+      compact?: boolean;
+      recover?: boolean;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      operation: 'context';
+      sessionId: string;
+      agentToken: string;
+      section: 'history' | 'question' | 'prompt' | 'scope' | 'event';
+      before?: number;
+      offset?: number;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
@@ -221,6 +258,9 @@ export type AgentRequest =
 export type AgentQuizSession = Omit<QuizSession, 'agentToken'>;
 export type AgentQuizSnapshot = Omit<QuizSnapshot, 'session'> & {
   session: AgentQuizSession;
+  recovery?: Record<string, any>;
+  after?: number;
+  hasMore?: boolean;
 };
 export type AgentQuizAttachResult = {
   agentToken: string;
@@ -251,6 +291,13 @@ export interface AgentSessionStatus {
 }
 
 export type AgentResponse =
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'study';
+      result: { ok: true; value: StudyValue };
+    }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
       requestId: string;
@@ -303,6 +350,11 @@ export type AgentResponse =
       ok: true;
       type: 'preview';
       operationId: AgentOperationId;
+      previewReceipt?: string;
+      expiresAt?: number;
+      baseFingerprint?: string;
+      resultFingerprint?: string;
+      edits?: AgentPatchPreviewEdit[];
       content: string;
       changed: boolean;
       documentVersion: number;
@@ -431,6 +483,14 @@ export type AgentResponse =
       requestId: string;
       ok: true;
       type: 'quiz';
+      operation: 'context';
+      result: QuizResult<Record<string, any>>;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
       operation: 'request';
       result: QuizResult<AgentQuizSession>;
     }
@@ -457,6 +517,9 @@ export type AgentProtocolErrorCode =
   | 'DISK_CONFLICT'
   | 'STALE_VERSION'
   | 'INVALID_EDIT'
+  | 'PREVIEW_REQUIRED'
+  | 'PREVIEW_EXPIRED'
+  | 'PREVIEW_REJECTED'
   | 'SAVE_FAILED'
   | 'INTERNAL';
 

@@ -185,13 +185,9 @@ declare global {
       groupsReorder: (groupIds: string[]) => Promise<void>;
       groupSetCollapsed: (id: string, collapsed: boolean) => Promise<void>;
       groupSetColor: (id: string, color: GroupColor) => Promise<void>;
-      registryAdd: (
-        directory: string,
-      ) => Promise<{ vault: RegisteredVault; created: boolean }>;
       registryActivate: (
         id: string,
       ) => Promise<{ id: string; path: string | null }>;
-      registryRemove: (id: string) => Promise<void>;
       registryUnloadVault: (id: string) => Promise<void>;
       registryUnloadAll: () => Promise<void>;
       choose: () => Promise<{ path: string | null; warning: string | null }>;

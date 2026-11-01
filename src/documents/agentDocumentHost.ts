@@ -217,10 +217,15 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           request.expectedVersion,
           request.plan,
         );
+        const fingerprints = await controller.fingerprints(
+          preview,
+          document.state.doc.toString(),
+        );
         return {
           ok: true,
           preview: true,
           ...preview,
+          ...fingerprints,
           documentVersion: document.acceptedVersion,
           diskRevision: document.revision,
         };
@@ -230,6 +235,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           document,
           request.expectedVersion,
           request.plan,
+          request.expectedFingerprints,
         );
         return {
           ok: true,
@@ -285,7 +291,9 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           ? 'STALE_VERSION'
           : /find text|replacement targets overlap/i.test(message)
             ? 'INVALID_EDIT'
-            : 'SAVE_FAILED';
+            : /fingerprint mismatch/i.test(message)
+              ? 'STALE_VERSION'
+              : 'SAVE_FAILED';
       return { ok: false, code, message };
     }
   }

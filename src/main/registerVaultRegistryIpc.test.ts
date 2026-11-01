@@ -243,6 +243,18 @@ test('refuses to unload a vault with a writable agent session', async () => {
   assert.deepEqual(calls, []);
 });
 
+test('unload-all also refuses writable sessions and renderer cannot register arbitrary roots', async () => {
+  const { handlers, calls, dependencies } = setup();
+  assert.equal(handlers.has('vault:registry-add'), false);
+  assert.equal(handlers.has('vault:registry-remove'), false);
+  dependencies.hasWritableAgentSession = () => true;
+  await assert.rejects(
+    async () => invoke(handlers, 'vault:registry-unload-all'),
+    /Stop the connected agent sessions/,
+  );
+  assert.deepEqual(calls, []);
+});
+
 test('returns registry and group lists', async () => {
   const { handlers } = setup();
   assert.deepEqual(await invoke(handlers, 'vault:registry-list'), {
@@ -344,9 +356,7 @@ test('preserves validation errors for invalid payloads', async () => {
       ['id', 'yes'],
       'Invalid group collapse state',
     ],
-    ['vault:registry-add', [null], 'Invalid vault directory'],
     ['vault:registry-activate', [null], 'Invalid vault ID'],
-    ['vault:registry-remove', [null], 'Invalid vault ID'],
     ['vault:placement-set', [null], 'Invalid vault placement'],
     [
       'vault:placement-set',

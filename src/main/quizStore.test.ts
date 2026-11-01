@@ -44,6 +44,43 @@ async function withStore(
 }
 
 describe('QuizStore storage regressions', () => {
+  test('picker summaries omit capabilities, history and drafts and isolate nested metadata', async () => {
+    await withStore(async (_dir, store) => {
+      const saved = session();
+      saved.transcript = [
+        {
+          id: 'm',
+          role: 'agent',
+          text: 'private history'.repeat(10000),
+          createdAt: saved.createdAt,
+        },
+      ];
+      saved.freeChatDraft = 'private draft';
+      await store.createDraft(saved);
+      assert.deepEqual(await store.listSummaries(), []);
+      await store.promote(saved.id);
+      const [summary] = await store.listSummaries();
+      assert.equal(summary.id, saved.id);
+      assert.ok(JSON.stringify(summary).length < 500);
+      for (const field of [
+        'agentToken',
+        'transcript',
+        'freeChatDraft',
+        'currentQuestion',
+        'currentPrompt',
+      ])
+        assert.equal(field in summary, false);
+      summary.scope!.selectedNotePaths.push('mutated.md');
+      assert.deepEqual(
+        (await store.get(saved.id))!.scope!.selectedNotePaths,
+        [],
+      );
+      assert.equal(
+        (await store.get(saved.id))!.transcript[0].text,
+        saved.transcript[0].text,
+      );
+    });
+  });
   test('drafts stay in memory until promotion, then persist session, events, and receipts', async () => {
     await withStore(async (dir, store) => {
       const draft = session();
@@ -216,7 +253,7 @@ describe('QuizStore storage regressions', () => {
           },
         ],
       };
-      await store.rename({ ...initial, name: 'Renamed session' });
+      await store.rename(initial.id, 'Renamed session');
 
       const committed = await store.update(
         inFlight,

@@ -3,11 +3,8 @@ import type {
   AgentRendererRequest,
   AgentRendererResult,
 } from './agentBroker';
-import { isAgentContext } from '../shared/agentProtocol';
-import type {
-  AgentBridgeResult,
-  AgentBridgeStatusEvent,
-} from '../shared/agentBridge';
+import { isAgentResult } from '../shared/agentBridgeValidation';
+import { rendererAuthorizer } from './rendererSecurity';
 
 export interface AgentIpcEvent {
   sender: AgentWebContents;
@@ -46,7 +43,6 @@ export interface AgentRendererTransport {
 const REQUEST_CHANNEL = 'agent:renderer-request';
 const RESPONSE_CHANNEL = 'agent:renderer-response';
 const CANCEL_CHANNEL = 'agent:renderer-cancel';
-const STATUS_CHANNEL = 'agent:status';
 const READY_CHANNEL = 'agent:renderer-ready';
 const UNAVAILABLE_CHANNEL = 'agent:renderer-unavailable';
 const TIMEOUT_MS = 15_000;
@@ -93,20 +89,7 @@ export function registerAgentIpc(
     contents.on?.('render-process-gone', teardown);
     contents.on?.('destroyed', teardown);
   };
-  const trusted = (event: AgentIpcEvent): boolean => {
-    const window = getWindow();
-    const url = acceptedUrl();
-    return (
-      !!window &&
-      !window.isDestroyed() &&
-      !window.webContents.isDestroyed() &&
-      event.sender.id === window.webContents.id &&
-      !!url &&
-      !!event.senderFrame &&
-      !event.senderFrame.parent &&
-      isAcceptedUrl(event.senderFrame.url, url)
-    );
-  };
+  const trusted = rendererAuthorizer(getWindow, acceptedUrl);
   const onReady = (event: AgentIpcEvent) => {
     if (!trusted(event)) return;
     attachLifecycle();
@@ -127,7 +110,7 @@ export function registerAgentIpc(
   ) => {
     if (!trusted(event) || typeof requestId !== 'string') return;
     const resolve = pending.get(requestId);
-    if (!resolve || !isResult(payload)) return;
+    if (!resolve || !isAgentResult(payload)) return;
     pending.delete(requestId);
     resolve(payload);
   };
@@ -218,20 +201,7 @@ export function bindAgentBrokerIpc(
   getWindow: () => AgentWindow | undefined,
   acceptedUrl: () => string | undefined,
 ): () => void {
-  const trusted = (event: AgentIpcEvent): boolean => {
-    const window = getWindow();
-    const url = acceptedUrl();
-    return (
-      !!window &&
-      !window.isDestroyed() &&
-      !window.webContents.isDestroyed() &&
-      event.sender.id === window.webContents.id &&
-      !!url &&
-      !!event.senderFrame &&
-      !event.senderFrame.parent &&
-      isAcceptedUrl(event.senderFrame.url, url)
-    );
-  };
+  const trusted = rendererAuthorizer(getWindow, acceptedUrl);
   ipc.removeHandler('agent:request');
   ipc.handle('agent:request', async (event, value) =>
     trusted(event)
@@ -248,75 +218,4 @@ export function bindAgentBrokerIpc(
         },
   );
   return () => ipc.removeHandler('agent:request');
-}
-export function isTrustedRenderer(
-  windowAlive: boolean,
-  contentsAlive: boolean,
-  sender: unknown,
-  expectedSender: unknown,
-  frame: { url: string } | null | undefined,
-  mainFrame: unknown,
-  acceptedUrl: string | undefined,
-): boolean {
-  return (
-    windowAlive &&
-    contentsAlive &&
-    sender === expectedSender &&
-    !!frame &&
-    frame === mainFrame &&
-    !!acceptedUrl &&
-    isAcceptedUrl(frame.url, acceptedUrl)
-  );
-}
-
-export function isAcceptedUrl(actual: string, expected: string): boolean {
-  try {
-    const a = new URL(actual);
-    const e = new URL(expected);
-    return (
-      a.origin === e.origin &&
-      a.pathname === e.pathname &&
-      a.search === e.search &&
-      (a.hash === e.hash || !e.hash)
-    );
-  } catch {
-    return actual === expected;
-  }
-}
-export function sendAgentStatus(
-  window: AgentWindow | undefined,
-  event: AgentBridgeStatusEvent,
-): void {
-  if (window && !window.isDestroyed() && !window.webContents.isDestroyed())
-    window.webContents.send(STATUS_CHANNEL, event);
-}
-function isResult(value: unknown): value is AgentBridgeResult {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const result = value as Record<string, unknown>;
-  if (result.ok === false)
-    return (
-      typeof result.code === 'string' && typeof result.message === 'string'
-    );
-  if (result.ok === true && isAgentContext(result.context)) return true;
-  if (result.ok === true && result.inspected === true)
-    return (
-      result.open === false ||
-      (result.open === true &&
-        typeof result.content === 'string' &&
-        Number.isSafeInteger(result.documentVersion) &&
-        typeof result.diskRevision === 'string' &&
-        (result.saveState === 'pending' ||
-          result.saveState === 'saved' ||
-          result.saveState === 'failed'))
-    );
-  return (
-    result.ok === true &&
-    Number.isSafeInteger(result.documentVersion) &&
-    typeof result.diskRevision === 'string' &&
-    (result.content === undefined || typeof result.content === 'string') &&
-    (result.saveState === undefined ||
-      result.saveState === 'pending' ||
-      result.saveState === 'saved' ||
-      result.saveState === 'failed')
-  );
 }

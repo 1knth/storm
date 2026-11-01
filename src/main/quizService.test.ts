@@ -37,6 +37,99 @@ async function fixture() {
 }
 
 describe('QuizService', () => {
+  test('agent activity appears in public snapshots without advancing semantic revision or event cursor', async () => {
+    const f = await fixture();
+    try {
+      const attached = await f.service.attachSession(f.session.id);
+      assert.equal(attached.ok, true);
+      if (!attached.ok) return;
+      const revision = attached.value.snapshot.session.revision;
+      const eventCursor = attached.value.snapshot.session.eventCursor;
+
+      const thinking = await f.service.setAgentActivity(
+        f.session.id,
+        attached.value.agentToken,
+        'thinking',
+      );
+      assert.equal(thinking.ok, true);
+      const thinkingSnapshot = await f.service.getSnapshot(f.session.id);
+      assert.equal(thinkingSnapshot?.session.activity?.state, 'thinking');
+      assert.equal(thinkingSnapshot?.session.revision, revision);
+      assert.equal(thinkingSnapshot?.session.eventCursor, eventCursor);
+      assert.deepEqual(
+        thinkingSnapshot?.events,
+        attached.value.snapshot.events,
+      );
+
+      const drafting = await f.service.setAgentActivity(
+        f.session.id,
+        attached.value.agentToken,
+        'drafting',
+      );
+      assert.equal(drafting.ok, true);
+      assert.equal(
+        (await f.service.getSnapshot(f.session.id))?.session.activity?.state,
+        'drafting',
+      );
+
+      const idle = await f.service.setAgentActivity(
+        f.session.id,
+        attached.value.agentToken,
+        'idle',
+      );
+      assert.equal(idle.ok, true);
+      assert.equal(
+        (await f.service.getSnapshot(f.session.id))?.session.activity?.state,
+        'idle',
+      );
+    } finally {
+      await rm(f.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('accepted learner messages wait for committed agent output, not activity idle', async () => {
+    const f = await fixture();
+    try {
+      const attached = await f.service.attachSession(f.session.id);
+      assert.equal(attached.ok, true);
+      if (!attached.ok) return;
+      const message = await f.service.learnerRequest({
+        type: 'message',
+        sessionId: f.session.id,
+        expectedRevision: attached.value.snapshot.session.revision,
+        idempotencyKey: 'learner-message',
+        text: 'Please explain this.',
+      });
+      assert.equal(message.ok, true);
+      if (!message.ok) return;
+      assert.equal(message.value.awaitingAgent, true);
+      assert.equal(message.value.revision, 2);
+      const idle = await f.service.setAgentActivity(
+        f.session.id,
+        f.agentToken,
+        'idle',
+      );
+      assert.equal(idle.ok, true);
+      assert.equal(
+        (await f.service.getSnapshot(f.session.id))?.session.awaitingAgent,
+        true,
+      );
+
+      const response = await f.service.request({
+        type: 'agent-message',
+        sessionId: f.session.id,
+        agentToken: f.agentToken,
+        expectedRevision: message.value.revision,
+        idempotencyKey: 'agent-reply',
+        text: 'Here is an explanation.',
+      });
+      assert.equal(response.ok, true);
+      if (response.ok) assert.equal(response.value.awaitingAgent, false);
+    } finally {
+      await rm(f.dir, { recursive: true, force: true });
+    }
+  });
+
   test('prompt choices are private learner input with persisted drafts and explicit continuation', async () => {
     const f = await fixture();
     try {
@@ -295,6 +388,59 @@ describe('QuizService', () => {
       await rm(f.dir, { recursive: true, force: true });
     }
   });
+  test('renaming alongside Stop preserves revocation for draft and saved sessions', async () => {
+    for (const persisted of [false, true]) {
+      for (const renameFirst of [false, true]) {
+        const f = await fixture();
+        try {
+          const attached = await f.service.attachSession(f.session.id);
+          assert.equal(attached.ok, true);
+          if (!attached.ok) throw new Error('attach failed');
+          await f.service.setAgentActivity(
+            f.session.id,
+            attached.value.agentToken,
+            'thinking',
+          );
+          if (persisted) await f.store.promote(f.session.id);
+          const rename = () => f.service.renameSession(f.session.id, 'Review');
+          const stop = () => f.service.stopAgent(f.session.id);
+          const actions = renameFirst ? [rename, stop] : [stop, rename];
+          const results = await Promise.all(actions.map((action) => action()));
+          assert.ok(results.every((result) => result.ok));
+          const snapshot = await f.service.getSnapshot(f.session.id);
+          assert.equal(snapshot?.session.name, 'Review');
+          assert.equal(snapshot?.session.status, 'disconnected');
+          assert.equal(snapshot?.session.activity, undefined);
+          assert.notEqual(
+            snapshot?.session.agentToken,
+            attached.value.agentToken,
+          );
+          assert.equal(
+            snapshot?.session.revision,
+            attached.value.snapshot.session.revision + 1,
+          );
+          assert.equal(
+            snapshot?.session.eventCursor,
+            snapshot?.events.at(-1)?.cursor,
+          );
+          assert.deepEqual(
+            await f.service.request({
+              type: 'agent-message',
+              sessionId: f.session.id,
+              agentToken: attached.value.agentToken,
+              expectedRevision: snapshot!.session.revision,
+              idempotencyKey: 'revoked-after-rename',
+              text: 'Must be rejected',
+            }),
+            { ok: false, error: 'unauthorized' },
+          );
+        } finally {
+          await rm(f.dir, { recursive: true, force: true });
+        }
+      }
+    }
+  });
+
   test('pose-question validates and stores all supported question variants', async () => {
     const variants = [
       {

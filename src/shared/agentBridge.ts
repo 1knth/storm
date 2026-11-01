@@ -2,8 +2,10 @@ import type {
   AgentActivity,
   AgentContext,
   AgentSessionStatus,
+  AgentEditFingerprints,
+  AgentEditPlan,
+  AgentPatchPreviewEdit,
 } from './agentProtocol';
-import type { AgentEditPlan } from '../documents/agentDocumentController';
 import type { SaveNoteRequest, SaveNoteResult } from './types';
 
 export type AgentBridgeRequest =
@@ -45,6 +47,8 @@ export type AgentBridgeRequest =
       sessionId: string;
       expectedVersion: number;
       plan: AgentEditPlan;
+      expectedFingerprints?: AgentEditFingerprints;
+      previewReceipt?: string;
     }
   | { type: 'finish' | 'cancel'; requestId: string; sessionId: string };
 
@@ -74,8 +78,12 @@ export type AgentBridgeResult =
   | {
       ok: true;
       preview: true;
+      saveState?: 'saved';
       content: string;
       changed: boolean;
+      edits?: AgentPatchPreviewEdit[];
+      baseFingerprint?: string;
+      resultFingerprint?: string;
       documentVersion: number;
       diskRevision: string;
     }
