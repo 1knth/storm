@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun", "node"]
+  },
+  "include": ["scripts/*.ts", "extensions/storm-quiz-runtime.ts"],
+  "exclude": ["scripts/**/*.test.ts"]
+}
