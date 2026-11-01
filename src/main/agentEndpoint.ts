@@ -4,6 +4,7 @@ import {
   type Server,
   type Socket,
 } from 'node:net';
+import { StringDecoder } from 'node:string_decoder';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmod, mkdir, readFile, rm, writeFile, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -23,6 +24,8 @@ export interface StartedAgentEndpoint extends AgentEndpointInfo {
 export async function startAgentEndpoint(options: {
   broker: Pick<AgentBroker, 'handle'>;
   userDataPath: string;
+  authenticationTimeoutMs?: number;
+  idleTimeoutMs?: number;
 }): Promise<StartedAgentEndpoint> {
   await mkdir(options.userDataPath, { recursive: true, mode: 0o700 });
   await chmod(options.userDataPath, 0o700);
@@ -46,9 +49,16 @@ export async function startAgentEndpoint(options: {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const token = randomBytes(32).toString('hex');
-  const server: Server = createServer((socket) =>
-    serveSocket(socket, token, options.broker),
-  );
+  const sockets = new Set<Socket>();
+  let closing: Promise<void> | undefined;
+  const server: Server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+    serveSocket(socket, token, options.broker, {
+      authenticationTimeoutMs: options.authenticationTimeoutMs ?? 5_000,
+      idleTimeoutMs: options.idleTimeoutMs ?? 60_000,
+    });
+  });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(endpoint, resolve);
@@ -62,70 +72,136 @@ export async function startAgentEndpoint(options: {
     endpoint,
     token,
     metadataPath,
-    close: async () => {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      const metadata = await readAgentEndpoint(metadataPath).catch(() => null);
-      if (metadata?.endpoint === endpoint && metadata.token === token) {
-        await rm(endpoint, { force: true });
-        await rm(metadataPath, { force: true });
-      }
-    },
+    close: () =>
+      (closing ??= (async () => {
+        const stopped = new Promise<void>((resolve) =>
+          server.close(() => resolve()),
+        );
+        for (const socket of sockets) socket.destroy();
+        await stopped;
+        const metadata = await readAgentEndpoint(metadataPath).catch(
+          () => null,
+        );
+        if (metadata?.endpoint === endpoint && metadata.token === token) {
+          await rm(endpoint, { force: true });
+          await rm(metadataPath, { force: true });
+        }
+      })()),
   };
 }
 function serveSocket(
   socket: Socket,
   token: string,
   broker: Pick<AgentBroker, 'handle'>,
+  timeouts: { authenticationTimeoutMs: number; idleTimeoutMs: number },
 ): void {
   let buffer = Buffer.alloc(0);
   let authenticated = false;
-  let busy = false;
-  socket.on('data', async (chunk) => {
+  let pendingFrames = 0;
+  let draining = false;
+  let deadline: NodeJS.Timeout;
+  const armIdleDeadline = () => {
+    clearTimeout(deadline);
+    if (socket.destroyed) return;
+    deadline = setTimeout(() => socket.destroy(), timeouts.idleTimeoutMs);
+  };
+  deadline = setTimeout(
+    () => socket.destroy(),
+    timeouts.authenticationTimeoutMs,
+  );
+  socket.on('error', () => socket.destroy());
+  socket.once('close', () => clearTimeout(deadline));
+  socket.on('data', (chunk) => {
     if (typeof chunk === 'string') chunk = Buffer.from(chunk);
-    buffer = Buffer.concat([buffer, chunk]);
-    if (buffer.length > AGENT_TRANSPORT.maxFrameBytes && !buffer.includes(10)) {
+    if (buffer.length + chunk.length > 2 * AGENT_TRANSPORT.maxFrameBytes) {
       socket.destroy();
       return;
     }
-    while (!busy) {
-      const newline = buffer.indexOf(10);
-      if (newline < 0) break;
-      if (newline > AGENT_TRANSPORT.maxFrameBytes) {
-        socket.destroy();
-        return;
-      }
-      const line = buffer.subarray(0, newline);
-      buffer = buffer.subarray(newline + 1);
-      try {
-        const envelope = JSON.parse(line.toString('utf8')) as {
-          token?: unknown;
-          request?: unknown;
-        };
-        if (!authenticated) {
-          if (
-            typeof envelope.token !== 'string' ||
-            !safeEqual(envelope.token, token)
-          ) {
-            socket.destroy();
-            return;
-          }
-          authenticated = true;
-          if (envelope.request === undefined) continue;
-        }
-        if (envelope.request === undefined) {
-          socket.destroy();
-          return;
-        }
-        busy = true;
-        const response = await broker.handle(envelope.request);
-        if (!socket.destroyed) socket.write(`${JSON.stringify(response)}\n`);
-      } catch {
-        socket.destroy();
-        return;
-      } finally {
-        busy = false;
-      }
+    const incomingFrames = chunk.reduce(
+      (count, byte) => count + Number(byte === 10),
+      0,
+    );
+    if (
+      pendingFrames + incomingFrames >
+      AGENT_TRANSPORT.maxPendingOperationsPerSession
+    ) {
+      socket.destroy();
+      return;
     }
+    buffer = Buffer.concat([buffer, chunk]);
+    pendingFrames += incomingFrames;
+    if (authenticated) armIdleDeadline();
+    if (
+      buffer.length > AGENT_TRANSPORT.maxFrameBytes &&
+      buffer.indexOf(10) < 0
+    ) {
+      socket.destroy();
+      return;
+    }
+    if (!draining) void drain();
+  });
+
+  async function drain(): Promise<void> {
+    draining = true;
+    try {
+      while (!socket.destroyed) {
+        const newline = buffer.indexOf(10);
+        if (newline < 0) break;
+        if (newline > AGENT_TRANSPORT.maxFrameBytes) {
+          socket.destroy();
+          break;
+        }
+        const line = buffer.subarray(0, newline);
+        buffer = buffer.subarray(newline + 1);
+        pendingFrames -= 1;
+        try {
+          const envelope = JSON.parse(line.toString('utf8')) as {
+            token?: unknown;
+            request?: unknown;
+          };
+          if (!authenticated) {
+            if (
+              typeof envelope.token !== 'string' ||
+              !safeEqual(envelope.token, token)
+            ) {
+              socket.destroy();
+              break;
+            }
+            authenticated = true;
+            armIdleDeadline();
+            if (envelope.request === undefined) continue;
+          }
+          if (envelope.request === undefined) {
+            socket.destroy();
+            break;
+          }
+          const response = await broker.handle(envelope.request);
+          if (!socket.destroyed) {
+            const writable = socket.write(`${JSON.stringify(response)}\n`);
+            if (!writable) await waitForDrain(socket);
+          }
+        } catch {
+          socket.destroy();
+          break;
+        }
+        armIdleDeadline();
+      }
+    } finally {
+      draining = false;
+      if (!socket.destroyed && buffer.includes(10)) void drain();
+    }
+  }
+}
+function waitForDrain(socket: Socket): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      socket.removeListener('drain', done);
+      socket.removeListener('close', done);
+      resolve();
+    };
+    socket.once('drain', done);
+    socket.once('close', done);
+    if (socket.destroyed) done();
   });
 }
 function safeEqual(a: string, b: string): boolean {
@@ -165,6 +241,7 @@ export function sendAgentRequest(
   return new Promise((resolve, reject) => {
     const socket = connectSocket(info.endpoint);
     let buffer = '';
+    const decoder = new StringDecoder('utf8');
     let settled = false;
     const cleanup = () => {
       clearTimeout(timeout);
@@ -185,7 +262,7 @@ export function sendAgentRequest(
     const onConnect = () =>
       socket.write(`${JSON.stringify({ token: info.token, request })}\n`);
     const onData = (chunk: Buffer) => {
-      buffer += chunk.toString();
+      buffer += decoder.write(chunk);
       const end = buffer.indexOf('\n');
       if (end >= 0) {
         try {

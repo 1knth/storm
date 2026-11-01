@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connect, createServer } from 'node:net';
+import { AGENT_TRANSPORT } from '../shared/agentProtocol';
 import {
   startAgentEndpoint,
   readAgentEndpoint,
@@ -12,6 +13,17 @@ import {
 import { AgentBroker } from './agentBroker';
 
 describe('agent endpoint', () => {
+  async function socketClosed(
+    endpoint: string,
+    write?: (socket: ReturnType<typeof connect>) => void,
+  ) {
+    await new Promise<void>((resolve) => {
+      const socket = connect(endpoint, () => write?.(socket));
+      socket.once('close', resolve);
+      socket.once('error', () => resolve());
+    });
+  }
+
   test('settles on peer close and rejects an incomplete response at EOF', async () => {
     for (const response of ['', '{"partial":']) {
       const server = createServer((socket) => {
@@ -50,29 +62,29 @@ describe('agent endpoint', () => {
     'times out when a peer remains connected without responding',
     { timeout: 35_000 },
     async () => {
-    const server = createServer((socket) => socket.on('data', () => {}));
-    const dir = await mkdtemp(join(tmpdir(), 'storm-agent-timeout-'));
-    const socketPath = join(dir, 'endpoint.sock');
-    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
-    try {
-      await assert.rejects(
-        sendAgentRequest(
-          { endpoint: socketPath, token: 'x' },
-          {
-            protocol: 1,
-            requestId: 'timeout',
-            type: 'connect',
-            absolutePath: '/fake.md',
-          },
-        ),
-        /Agent request timed out/,
-      );
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-      await rm(dir, { recursive: true, force: true });
-    }
+      const server = createServer((socket) => socket.on('data', () => {}));
+      const dir = await mkdtemp(join(tmpdir(), 'storm-agent-timeout-'));
+      const socketPath = join(dir, 'endpoint.sock');
+      await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+      try {
+        await assert.rejects(
+          sendAgentRequest(
+            { endpoint: socketPath, token: 'x' },
+            {
+              protocol: 1,
+              requestId: 'timeout',
+              type: 'connect',
+              absolutePath: '/fake.md',
+            },
+          ),
+          /Agent request timed out/,
+        );
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+        await rm(dir, { recursive: true, force: true });
+      }
     },
   );
 
@@ -104,6 +116,196 @@ describe('agent endpoint', () => {
       await endpoint.close();
     }
   });
+
+  test('preserves fragmented UTF-8 and dispatches multiple frames in order', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'storm-agent-'));
+    const requests: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const broker = {
+      handle: async (request: any) => {
+        requests.push(request.requestId);
+        if (request.requestId === 'one') await gate;
+        return {
+          protocol: 1 as const,
+          requestId: request.requestId,
+          ok: false as const,
+          error: {
+            code: 'INVALID_REQUEST' as const,
+            message: request.requestId,
+            retryable: false,
+          },
+        };
+      },
+    };
+    const endpoint = await startAgentEndpoint({ broker, userDataPath: dir });
+    const socket = connect(endpoint.endpoint);
+    try {
+      await new Promise<void>((resolve) => socket.once('connect', resolve));
+      const first = `${JSON.stringify({ token: endpoint.token, request: { requestId: 'one', text: '🙂' } })}\n`;
+      const second = `${JSON.stringify({ request: { requestId: 'two' } })}\n`;
+      const bytes = Buffer.from(first + second);
+      const split = bytes.indexOf(Buffer.from('🙂')) + 2;
+      socket.write(bytes.subarray(0, split));
+      socket.write(bytes.subarray(split));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(requests, ['one']);
+      release();
+      const lines: unknown[] = [];
+      socket.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n').filter(Boolean))
+          lines.push(JSON.parse(line));
+      });
+      await new Promise<void>((resolve) => {
+        const check = setInterval(() => {
+          if (lines.length === 2) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 5);
+      });
+      assert.deepEqual(requests, ['one', 'two']);
+      assert.deepEqual(
+        lines.map((line: any) => line.requestId),
+        ['one', 'two'],
+      );
+    } finally {
+      socket.destroy();
+      await endpoint.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('caps aggregate bytes and complete pending frames during broker work', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'storm-agent-'));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const endpoint = await startAgentEndpoint({
+      broker: {
+        handle: async () => {
+          await gate;
+          return {
+            protocol: 1 as const,
+            requestId: 'test',
+            ok: false as const,
+            error: {
+              code: 'INVALID_REQUEST' as const,
+              message: 'test',
+              retryable: false,
+            },
+          };
+        },
+      },
+      userDataPath: dir,
+    });
+    try {
+      await socketClosed(endpoint.endpoint, (socket) => {
+        socket.write(
+          `${JSON.stringify({ token: endpoint.token, request: {} })}\n`,
+        );
+        setTimeout(
+          () =>
+            socket.write(
+              'x\n'.repeat(AGENT_TRANSPORT.maxPendingOperationsPerSession + 1),
+            ),
+          10,
+        );
+      });
+      release();
+    } finally {
+      release();
+      await endpoint.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('caps aggregate buffered bytes with newlines while broker is blocked', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'storm-agent-'));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const endpoint = await startAgentEndpoint({
+      broker: {
+        handle: async () => {
+          await gate;
+          return {
+            protocol: 1 as const,
+            requestId: 'test',
+            ok: false as const,
+            error: {
+              code: 'INVALID_REQUEST' as const,
+              message: 'test',
+              retryable: false,
+            },
+          };
+        },
+      },
+      userDataPath: dir,
+    });
+    try {
+      await socketClosed(endpoint.endpoint, (socket) => {
+        socket.write(
+          `${JSON.stringify({ token: endpoint.token, request: {} })}\n`,
+        );
+        setTimeout(
+          () =>
+            socket.write(`x\n${'x'.repeat(2 * AGENT_TRANSPORT.maxFrameBytes)}`),
+          10,
+        );
+      });
+    } finally {
+      release();
+      await endpoint.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('enforces authentication and idle deadlines and closes idle or busy clients', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'storm-agent-'));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const endpoint = await startAgentEndpoint({
+      broker: {
+        handle: async () => {
+          await gate;
+          return {
+            protocol: 1 as const,
+            requestId: 'test',
+            ok: false as const,
+            error: {
+              code: 'INVALID_REQUEST' as const,
+              message: 'test',
+              retryable: false,
+            },
+          };
+        },
+      },
+      userDataPath: dir,
+      authenticationTimeoutMs: 30,
+      idleTimeoutMs: 30,
+    });
+    try {
+      await socketClosed(endpoint.endpoint);
+      await socketClosed(endpoint.endpoint, (socket) =>
+        socket.write(`${JSON.stringify({ token: endpoint.token })}\n`),
+      );
+      await socketClosed(endpoint.endpoint, (socket) =>
+        socket.write(`${JSON.stringify({ token: endpoint.token })}\n`),
+      );
+      const quiet = connect(endpoint.endpoint);
+      await new Promise<void>((resolve) => quiet.once('connect', resolve));
+      const busy = connect(endpoint.endpoint);
+      await new Promise<void>((resolve) => busy.once('connect', resolve));
+      busy.write(`${JSON.stringify({ token: endpoint.token, request: {} })}\n`);
+      await endpoint.close();
+      assert.equal(quiet.destroyed, true);
+      assert.equal(busy.destroyed, true);
+    } finally {
+      release();
+      await endpoint.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('rejects invalid authentication and oversized unterminated frames', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'storm-agent-'));
     const broker = {
