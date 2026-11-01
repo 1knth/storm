@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   createWaitRuntime,
   parseWaitResponse,
-  refreshSnapshot,
   attachStateMessage,
   responseValue,
   snapshotValue,
@@ -230,29 +229,59 @@ describe('quiz CLI response handling', () => {
   });
 });
 
-describe('quiz status refresh', () => {
-  test('refreshes the revision used for feedback without skipping pending learner events', () => {
-    const state = {
-      revision: 12,
-      cursor: 4,
-      snapshot: { revision: 12, eventCursor: 4, status: 'connected' },
-    };
-    const refreshed = refreshSnapshot(state, {
-      session: { revision: 14, eventCursor: 9, status: 'connected' },
-    });
-
-    expect(refreshed.revision).toBe(14);
-    expect(state.revision).toBe(14);
-    expect(state.cursor).toBe(4);
-    // The subsequent feedback request uses the refreshed revision, while the
-    // independent waiter still resumes from its last delivered cursor.
-    const feedbackRequest = { expectedRevision: state.revision };
-    expect(feedbackRequest.expectedRevision).toBe(14);
-    expect(state.cursor).toBe(4);
-  });
-});
-
 describe('quiz wait runtime', () => {
+  test('waits for asynchronous delivery before advancing the cursor or spawning another waiter', async () => {
+    const result = deferred<any>();
+    const delivery = deferred<void>();
+    const cursors: number[] = [];
+    const runtime = createWaitRuntime<string>({
+      spawnWait(after) {
+        cursors.push(after);
+        return { kill() {}, result: result.promise };
+      },
+      deliver() {
+        return delivery.promise;
+      },
+    });
+    runtime.start(3, 'synthetic');
+    result.resolve({ value: 'image-event', cursor: 4 });
+    await Promise.resolve();
+    expect(cursors).toEqual([3]);
+    runtime.stop();
+    delivery.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cursors).toEqual([3]);
+  });
+
+  test('exhausts bounded retries, exposes failure, and status can restart at the delivered cursor', async () => {
+    const cursors: number[] = [];
+    let fail = true;
+    const pending = deferred<any>();
+    const runtime = createWaitRuntime<string>({
+      retryDelays: [0],
+      spawnWait(after) {
+        cursors.push(after);
+        return {
+          kill() {},
+          result: fail
+            ? Promise.reject(new Error('temporary'))
+            : pending.promise,
+        };
+      },
+      deliver() {},
+    });
+    runtime.start(7, 'synthetic');
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(cursors).toEqual([7, 7]);
+    expect(runtime.health).toBe('failed');
+    fail = false;
+    runtime.start(7, 'synthetic');
+    expect(cursors).toEqual([7, 7, 7]);
+    expect(runtime.health).toBe('running');
+    runtime.stop();
+  });
+
   test('parses the CLI top-level snapshot envelope and literal newline suffix', () => {
     const parsed = parseWaitResponse(
       JSON.stringify({

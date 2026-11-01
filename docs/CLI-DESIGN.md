@@ -4,6 +4,8 @@ This document describes the CLI and preview behavior shipped with Storm. The CLI
 
 ## Running the CLI
 
+Read-only shared study context is available through `study capabilities` and JSON requests with `study --stdin`. The Pi extension exposes `storm_study` for scoped retrieval, pinned snapshot reads, freshness checks, and local worker-reference verification. Scoped questions provide their snapshot ID as `studyBasis`; the basis persists atomically with the question. These source snapshots are separate from conversation `contextId` and do not authorize note edits. See [Shared study context](SHARED-STUDY-CONTEXT.md) for the exact request shapes, limits, retention, and `pnpm tutor` launcher.
+
 Use `storm` after enabling the command in the app. On macOS, the installed launcher is also available directly:
 
 ```sh
@@ -26,7 +28,8 @@ storm inspect ABS_PATH --json
 storm connect ABS_PATH --json [--name NAME]
 storm stream SESSION --stdin
 storm replace SESSION --expected-version N --stdin [--dry-run] [--json] [--operation-id ID]
-storm patch SESSION --expected-version N --stdin [--dry-run] [--json] [--operation-id ID]
+storm patch SESSION --expected-version N --stdin --dry-run [--json]
+storm patch SESSION --expected-version N --stdin --preview-receipt ID [--json] [--operation-id ID]
 storm status [SESSION] [--json]
 storm finish SESSION
 storm cancel SESSION
@@ -66,7 +69,7 @@ For an existing note, prefer `patch` for focused corrections; reserve `replace` 
 [{ "find": "old unique text", "replace": "new text" }]
 ```
 
-Patch finds must be non-empty, present exactly once, and non-overlapping. Both commands require the current live `documentVersion` from connect or status (or open-note inspect), never `diskRevision`. `--dry-run` returns a preview without mutation. Without it, apply waits for a saved response, verifying the resulting content/version; a conflicting human edit during save is rejected rather than acknowledged as saved. If apply fails due to a concurrent edit/save issue, inspect current content and reconcile; do not blindly retry.
+Patch finds must be non-empty, present exactly once, and non-overlapping. Both commands require the current live `documentVersion` from connect or status (or open-note inspect), never `diskRevision`. **Patch now requires a preview receipt before every apply.** First run the exact patch with `--dry-run --json`. The preview returns `previewReceipt`, `expiresAt`, `baseFingerprint`, `resultFingerprint`, `edits`, resulting `content`, and `documentVersion`. Inspect the matched section(s) and the complete proposed result, including all affected terminology and structure, before applying. Then submit the identical patch JSON and expected version with `--preview-receipt ID`; the receipt binds the session, document, version, exact serialized plan, base, and result, and is consumed once. It expires after 10 minutes and is held in a process-local cache capped at 128 receipts. The cache stores metadata/fingerprints, not note copies. A receipt proves that the reviewed plan matches the previewed plan, **not** that replacement text is semantically correct. If preview or apply outcome is uncertain, inspect fresh state and reconcile; do not blindly retry or assume a backup/snapshot is authoritative. Apply waits for a saved response; a conflicting human edit during save is rejected rather than acknowledged as saved. Guarded `replace` remains available for a substantial, coherent rewrite; choose patch versus replace based on the best safe scope, not a minimum-edit rule.
 
 A stable `--operation-id ID` permits replay of the identical request; reusing it with different payload fails. Apply deduplication is bounded to 256 remembered operations in memory, not durable across app restarts.
 
@@ -78,6 +81,10 @@ storm connect "/absolute/vault/plan.md" --json
 storm replace SESSION_ID --expected-version LIVE_VERSION --stdin --dry-run < draft.md
 # If the live version changes, inspect and reconcile before applying.
 storm replace SESSION_ID --expected-version LIVE_VERSION --stdin --operation-id draft-v1 < draft.md
+# Patch alternative: preview the identical JSON plan, inspect matched sections and full result,
+# then apply once with the returned receipt and same live version.
+storm patch SESSION_ID --expected-version LIVE_VERSION --stdin --dry-run --json < edits.json
+storm patch SESSION_ID --expected-version LIVE_VERSION --stdin --preview-receipt RECEIPT_ID --json < edits.json
 # On successful apply, finish the session this workflow owns.
 storm finish SESSION_ID
 storm status SESSION_ID --json
@@ -141,3 +148,15 @@ Document extraction is handled by the agent's general tools, not by Storm's CLI.
 Prepare one complete draft, inspect any existing destination, then use one writing session and one guarded apply. Finish the owned session and verify a saved result plus exact content readback. Related commands can share a shell call, with result checks and failure cleanup preserved. Routine reviews do not need extra hashes, snapshots, or repeated status polls; add them when requested or when an error needs investigation. Do not pace writes for animation or repeatedly append corrections to an unfinished draft.
 
 This is reference preparation, not teaching, completion, or mastery. Preserve existing notes and provenance. See the [agent skill](../skills/storm/SKILL.md) for the operational workflow.
+
+### Connected-agent context and delivery
+
+Quiz attach/status/wait accept `--compact`; the Pi extension uses this mode. Compact attach/status return bounded recent history, pending prompt choices, submitted current-answer state, and durable pending learner work. Open answer, reasoning, selection, chat, and prompt drafts stay in Storm's UI and persistence store. Recovery history is labeled historical and does not replay earlier learner activity. Session capabilities remain private to the extension.
+
+Compact wait omits transcript and returns up to 32 events within a 64,000-byte event budget. Oversized single events carry an omission marker. Resume from the returned `after`; `hasMore` indicates another page, and the session's latest `eventCursor` is not a delivery acknowledgment. The CLI continues polling while idle at roughly one-second intervals; unchanged stores use metadata-validated read caching instead of repeated history parsing. Full snapshots remain available without `--compact`.
+
+Read omitted/older context with `quiz context SESSION_ID --token TOKEN --section history|question|prompt|scope|event [--before N] [--offset N]`. History `before` is an exclusive transcript index; event `before` is an event cursor. Responses contain JSON text chunks of at most 6,000 Unicode code points, `nextOffset`, and the observed revision. Concatenate all chunks from the same revision before treating the object as complete. History has up to 12 entries within a 24,000-byte entry budget; missing content is explicit rather than silently truncated.
+
+Pi writes require the public `contextId` from the learner update being answered. IDs are bound to one attachment, revision, event cursor, and image set. Read status to reconcile newer activity; status supplies a fresh ID and recovery state without advancing the listener's delivered cursor. Old-session or stale IDs fail. A successful write returns a new ID; an intervening newer event may instead require status. `operationId` preserves the same request identity for an identical uncertain retry after reconciliation. These IDs are not capabilities and do not replace session authentication.
+
+Notifications are enqueued in event order, including image resolution. Images are released only by a response owning them; failed release remains retryable. Historical attachment metadata can be resolved through the Pi `image` action if bytes still exist; otherwise report unavailability accurately. The listener makes bounded local retries (250 ms, 1 s, 3 s), reports failures, and can be resumed by status. It makes no idle model calls. Stop invalidates contexts and cancels retry/wait ownership. Quiz feedback cannot be replaced by another question until the learner explicitly continues, including a structured choice with `effect:"continue"`.

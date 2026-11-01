@@ -4,6 +4,7 @@ Usage:
   bun scripts/storm.ts [--endpoint PATH | --profile NAME] <command> [arguments]
 
 Commands:
+  study capabilities | study --stdin      Read scoped study context using a JSON request
   context [--json]                        Show registered vault roots and open-note context (read-only)
   list --vault VAULT_ID [--limit N] [--json]
   search QUERY --vault VAULT_ID [--limit N] [--json] [--source PATH --depth 0..5] [--include-source]
@@ -12,10 +13,11 @@ Commands:
   connect ABS_PATH --json [--name NAME]  Open/create a vault note and return its session and content
   stream SESSION --stdin                 Append UTF-8 stdin; EOF finishes the session
   replace SESSION --expected-version N --stdin [--dry-run] [--json] [--operation-id ID]
-  patch SESSION --expected-version N --stdin [--dry-run] [--json] [--operation-id ID]
+  patch SESSION --expected-version N --stdin --dry-run [--json]
+  patch SESSION --expected-version N --stdin --preview-receipt ID [--json] [--operation-id ID]
   status [SESSION] [--json]              Show session state (or all sessions)
   activity SESSION thinking|drafting|idle Report or clear the current work phase
-  quiz list | attach SESSION_ID | detach SESSION_ID --token TOKEN | activity SESSION_ID --token TOKEN --state STATE | status SESSION_ID --token TOKEN [--after CURSOR] | wait SESSION_ID --token TOKEN --after CURSOR [--timeout SECONDS] | request SESSION_ID --token TOKEN < request.json | image SESSION_ID --image-id ID --token TOKEN | image-release SESSION_ID --image-id ID --token TOKEN
+  quiz list | attach SESSION_ID | detach SESSION_ID --token TOKEN | activity SESSION_ID --token TOKEN --state STATE | status SESSION_ID --token TOKEN [--after CURSOR] [--compact] | wait SESSION_ID --token TOKEN --after CURSOR [--timeout SECONDS] [--compact] | request SESSION_ID --token TOKEN < request.json | image SESSION_ID --image-id ID --token TOKEN | image-release SESSION_ID --image-id ID --token TOKEN
   finish SESSION                         Stop writing normally
   cancel SESSION                         Cancel writing; accepted edits remain
   resolve-link --vault ID --source PATH --target TARGET [--json]
@@ -29,7 +31,9 @@ Quick workflow:
   bun scripts/storm.ts connect "/absolute/vault/plan.md" --json
   bun scripts/storm.ts stream SESSION_ID --stdin < draft.md
   bun scripts/storm.ts replace SESSION_ID --expected-version 4 --stdin < new.md
-  bun scripts/storm.ts patch SESSION_ID --expected-version 4 --stdin < edits.json
+  bun scripts/storm.ts patch SESSION_ID --expected-version 4 --stdin --dry-run --json < edits.json
+  # Inspect the matched sections, complete proposed result, and receipt:
+  bun scripts/storm.ts patch SESSION_ID --expected-version 4 --stdin --preview-receipt RECEIPT_ID --json < edits.json
   bun scripts/storm.ts status SESSION_ID --json
   bun scripts/storm.ts activity SESSION_ID thinking
   bun scripts/storm.ts activity SESSION_ID drafting
@@ -94,11 +98,25 @@ protocol errors go to stderr) and exits nonzero. Endpoint metadata contains a pr
 authentication token: do not disclose it. Use --help with any command for details.`;
 
 const commandHelp: Record<string, string> = {
-  quiz: `Usage: bun scripts/storm.ts [endpoint options] quiz list|attach SESSION_ID [--client-id ID]|detach SESSION_ID --token TOKEN|activity SESSION_ID --token TOKEN --state STATE|status SESSION_ID --token TOKEN [--after CURSOR]|wait SESSION_ID --token TOKEN --after CURSOR [--timeout SECONDS]|request SESSION_ID --token TOKEN < request.json|image SESSION_ID --image-id ID --token TOKEN|image-release SESSION_ID --image-id ID --token TOKEN
+  study: `Usage: storm study capabilities | storm study --stdin
+JSON requests: {"action":"open","scope":{"vaultId":"ID","notePath":"note.md","folderPath":null,"selectedNotePaths":[]}}
+Then {"action":"tree","studyId":"ID","offset":0}, {"action":"retrieve","studyId":"ID","query":"topic","offset":0},
+{"action":"read","studyId":"ID","snapshotId":"ID","offset":0}, or {"action":"validate","studyId":"ID","snapshotId":"ID"}.
+Retrieval is bounded. Follow nextScanOffset for further search and nextOffset for snapshot chunks.
+Read returns captured source versions; validate explicitly checks current source content. No note edits or quiz attachment is created.`,
+  quiz: `Usage: bun scripts/storm.ts [endpoint options] quiz list|attach SESSION_ID [--client-id ID] [--compact]|detach SESSION_ID --token TOKEN|activity SESSION_ID --token TOKEN --state STATE|status SESSION_ID --token TOKEN [--after CURSOR] [--compact]|wait SESSION_ID --token TOKEN --after CURSOR [--timeout SECONDS] [--compact]|request SESSION_ID --token TOKEN < request.json|image SESSION_ID --image-id ID --token TOKEN|image-release SESSION_ID --image-id ID --token TOKEN
+
+Context: quiz context SESSION_ID --token TOKEN --section history|question|prompt|scope|event [--before N] [--offset N]
 
 List sessions without exposing capabilities, attach to obtain an agent token, detach your authenticated agent, read authenticated snapshots, wait for learner activity, or send an agent action JSON object on stdin. wait requires --after CURSOR and waits indefinitely by default, including across idle periods; no periodic idle return or model re-invocation is needed. --timeout SECONDS is optional (0-300) for a bounded wait; on timeout it returns the latest snapshot with timedOut:true. Repeat wait with the latest event cursor to continue. The call ends when learner activity arrives or the quiz disconnects/ends. It blocks the CLI process, not the external agent host; host tool timeouts may still interrupt it, and an exited agent is not automatically revived.
 
 Agent requests pose-question, pose-prompt, feedback, and agent-message each require expectedRevision. pose-prompt uses kind next-steps or clarification, prompt text, and 1–6 choices; only an explicit choice with effect continue advances. Feedback may set verdict correct, partial, or incorrect; the UI renders the verdict. The CLI supplies sessionId, token (--token or STORM_QUIZ_TOKEN), and an idempotencyKey if omitted. Learner actions answer, message, respond-prompt, and continue are performed in Storm UI only. Attach response nests agentToken at result.value.agentToken and snapshot at result.value.snapshot. Keep the token private: never print or log it. Inspect scope and snapshot before acting. Attach/CLI exit does not launch or revive an external agent. List output redacts tokens.
+
+Attach, status, and wait accept --compact. Compact attach/status include bounded recovery history, pending prompts, and durable pending learner work; compact wait transfers at most 32 events within a 64 KB event budget and excludes accumulated transcript. Inspect hasMore and after rather than assuming eventCursor was delivered. The full snapshot remains the default. No external agent response includes unsent answer/chat/prompt drafts.
+
+Use quiz context SESSION_ID --token TOKEN --section history|question|prompt|scope|event [--before N] [--offset N] for omitted material. History before is an exclusive immutable transcript index (default total); event before is an event cursor. The result is a JSON-text chunk of at most 6000 Unicode code points with nextOffset; concatenate chunks before treating the object as complete. Do not persist image paths or capabilities. Continue is enforced by the service: feedback must be followed by explicit learner Continue before another question.
+
+The Pi extension requires contextId on every write, echoes a fresh contextId in responses, and rejects stale/different-session context. Its context action reads omitted sections; its image action retrieves available historical attachments. Reuse operationId and identical arguments after reconciling an uncertain result. The listener retries temporary failures at 250 ms, 1 s, and 3 s; status resumes it after exhausted retries without duplicating waiters.
 
 The status response is a snapshot operation with its snapshot at the top-level snapshot field; attach, image, and action responses nest values at result.value. The quiz image command returns the full broker JSON envelope, including a server-allocated private temporary path; only use paths returned to this authenticated caller. Release after successful handling with quiz image-release. Unreleased files expire within one hour and are removed on session deletion/app shutdown. These are internal extension operations, not user-facing file-download commands.
 
@@ -164,12 +182,17 @@ Replace the live note from stdin. --dry-run previews; otherwise applies and wait
 saved confirmation. Source text saves independently of preview presentation; the current
 preview can reveal identified pure insertions, but ambiguous/oversized rewrites may skip reveal. Use live documentVersion from connect/status (or open-note inspect),
 not diskRevision. --operation-id enables bounded in-memory replay of an identical request.`,
-  patch: `Usage: bun scripts/storm.ts [endpoint options] patch SESSION --expected-version N --stdin [--dry-run] [--json]
+  patch: `Usage: bun scripts/storm.ts [endpoint options] patch SESSION --expected-version N --stdin [--dry-run] [--preview-receipt ID] [--json]
 
 Stdin is a JSON array of exact-text edits: [{"find":"old","replace":"new"}].
---dry-run previews; otherwise applies and waits for saved confirmation. Corrections are
-immediate; source saving is independent of preview presentation, which may skip reveal for ambiguous/oversized rewrites. Use live
-documentVersion from connect/status (or open-note inspect), not diskRevision.
+--dry-run is required first; it returns previewReceipt, expiresAt, baseFingerprint,
+resultFingerprint, edits, resulting content, and documentVersion. Inspect the exact
+matched sections and complete proposed result. Apply the exact same serialized plan,
+expected version, session, and document with --preview-receipt ID; the receipt is
+one-use, process-local, expires after 10 minutes, and holds metadata/fingerprints only,
+not note text. It does not establish semantic correctness: review every replacement.
+If preview/apply outcome is uncertain, inspect fresh state; never blindly retry.
+Use live documentVersion from connect/status (or open-note inspect), not diskRevision.
 --operation-id enables bounded in-memory replay of an identical request.`,
   stream: `Usage: bun scripts/storm.ts [endpoint options] stream SESSION --stdin
 

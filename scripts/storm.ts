@@ -10,6 +10,10 @@ import {
   type AgentEndpointInfo,
 } from '../src/main/agentEndpoint';
 import type { AgentRequest } from '../src/shared/agentProtocol';
+import { isStudyRequest, type StudyRequest } from '../src/shared/studyContext';
+type RequestPayload<T> = T extends unknown
+  ? Omit<T, 'protocol' | 'requestId'>
+  : never;
 import { helpText, knownCommands } from './stormHelp';
 
 class CliUsageError extends Error {}
@@ -230,6 +234,7 @@ export async function runCli(
         arg !== '--expected-version' &&
         arg !== '--dry-run' &&
         arg !== '--operation-id' &&
+        arg !== '--preview-receipt' &&
         arg !== '--vault' &&
         arg !== '--limit' &&
         arg !== '--source' &&
@@ -238,9 +243,14 @@ export async function runCli(
         arg !== '--include-source' &&
         arg !== '--client-id' &&
         arg !== '--token' &&
+        arg !== '--state' &&
         arg !== '--after' &&
         arg !== '--timeout' &&
-        arg !== '--image-id'
+        arg !== '--image-id' &&
+        arg !== '--compact' &&
+        arg !== '--section' &&
+        arg !== '--before' &&
+        arg !== '--offset'
       ) {
         throw new CliUsageError(`Unknown option: ${arg}`);
       } else rest.push(arg);
@@ -257,6 +267,38 @@ export async function runCli(
       command !== 'quiz'
     )
       throw new CliUsageError(`Unknown command: ${command}`);
+    let studyRequest: StudyRequest | undefined;
+    if (command === 'study') {
+      if (
+        rest[1] === 'capabilities' &&
+        rest.slice(2).every((v) => v === '--json')
+      )
+        studyRequest = { action: 'capabilities' };
+      else {
+        if (rest.length !== 2 || rest[1] !== '--stdin')
+          throw new CliUsageError(
+            'study requires capabilities or --stdin with a study request JSON object',
+          );
+        let input = '';
+        const decoder = new StringDecoder('utf8');
+        for await (const chunk of (io.stdin ??
+          process.stdin) as AsyncIterable<Uint8Array>) {
+          input += decoder.write(Buffer.from(chunk));
+          if (Buffer.byteLength(input) > 64_000)
+            throw new CliUsageError('Study request exceeds 64 KB');
+        }
+        input += decoder.end();
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(input);
+        } catch {
+          throw new CliUsageError('Study input must be valid JSON');
+        }
+        if (!isStudyRequest(parsed))
+          throw new CliUsageError('Invalid study request');
+        studyRequest = parsed;
+      }
+    }
     const nameFlag = rest.indexOf('--name');
     if (
       nameFlag >= 0 &&
@@ -282,6 +324,7 @@ export async function runCli(
       let sawDryRun = false;
       let sawJson = false;
       let sawOperationId = false;
+      let previewReceipt: string | undefined;
       for (let index = 2; index < rest.length; index++) {
         const flag = rest[index]!;
         if (flag === '--expected-version') {
@@ -305,6 +348,12 @@ export async function runCli(
           editOperationId = rest[++index];
           if (!editOperationId || editOperationId.startsWith('-'))
             throw new CliUsageError('--operation-id requires a value');
+        } else if (flag === '--preview-receipt') {
+          if (previewReceipt !== undefined)
+            throw new CliUsageError('Duplicate --preview-receipt');
+          previewReceipt = rest[++index];
+          if (!previewReceipt || previewReceipt.startsWith('-'))
+            throw new CliUsageError('--preview-receipt requires a value');
         } else if (flag === '--stdin') {
           if (sawStdin) throw new CliUsageError('Duplicate --stdin');
           sawStdin = true;
@@ -320,6 +369,10 @@ export async function runCli(
         throw new CliUsageError(
           `${command} requires SESSION --expected-version N --stdin`,
         );
+      if (command === 'patch' && !sawDryRun && !previewReceipt)
+        throw new CliUsageError(
+          'patch requires --preview-receipt ID before applying. First run the same patch with --dry-run, inspect the preview, then apply with its receipt.',
+        );
     }
     let quizOperation:
       | 'list'
@@ -331,10 +384,15 @@ export async function runCli(
       | 'request'
       | 'image'
       | 'image-release'
+      | 'context'
       | undefined;
     let quizSession: string | undefined;
     let quizImageId: string | undefined;
     let quizToken: string | undefined;
+    let quizCompact = false;
+    let quizSection = 'history';
+    let quizBefore: number | undefined;
+    let quizOffset: number | undefined;
     let quizAfter: number | undefined;
     let quizTimeout: number | undefined;
     let quizClientId: string | undefined;
@@ -348,6 +406,7 @@ export async function runCli(
           'detach',
           'activity',
           'status',
+          'context',
           'wait',
           'request',
           'image',
@@ -361,7 +420,35 @@ export async function runCli(
       const tail = rest.slice(quizSession ? 3 : 2);
       for (let i = 0; i < tail.length; i++) {
         const flag = tail[i]!;
+        if (
+          flag === '--compact' &&
+          ['attach', 'status', 'wait'].includes(quizOperation ?? '')
+        ) {
+          quizCompact = true;
+          continue;
+        }
         const value = tail[++i];
+        if (
+          quizOperation === 'context' &&
+          flag === '--section' &&
+          ['history', 'question', 'prompt', 'scope', 'event'].includes(
+            value ?? '',
+          )
+        ) {
+          quizSection = value!;
+          continue;
+        }
+        if (
+          quizOperation === 'context' &&
+          ['--before', '--offset'].includes(flag) &&
+          value &&
+          /^(0|[1-9]\d*)$/.test(value) &&
+          Number.isSafeInteger(Number(value))
+        ) {
+          if (flag === '--before') quizBefore = Number(value);
+          else quizOffset = Number(value);
+          continue;
+        }
         if (flag === '--token') quizToken = value;
         else if (flag === '--client-id') quizClientId = value;
         else if (flag === '--state') quizPayload = value;
@@ -402,6 +489,7 @@ export async function runCli(
       if (
         [
           'status',
+          'context',
           'wait',
           'detach',
           'activity',
@@ -423,9 +511,11 @@ export async function runCli(
       }
       if (quizOperation === 'request') {
         let text = '';
+        const stdinDecoder = new StringDecoder('utf8');
         for await (const chunk of (io.stdin ??
           process.stdin) as AsyncIterable<Uint8Array>)
-          text += Buffer.from(chunk).toString('utf8');
+          text += stdinDecoder.write(Buffer.from(chunk));
+        text += stdinDecoder.end();
         try {
           quizPayload = JSON.parse(text);
         } catch {
@@ -494,7 +584,7 @@ export async function runCli(
                 quizPayload.promptId.length > 128))
           )
             throw new CliUsageError(
-              'pose-prompt requires kind, prompt, and 1-6 choices with unique ids',
+              'pose-prompt requires kind, prompt text of 1-4000 characters, and 1-6 choices with unique ids',
             );
         }
         if (quizPayload.type === 'pose-question') {
@@ -532,6 +622,7 @@ export async function runCli(
           const validQuestion =
             typeof question === 'string' &&
             question.trim() &&
+            question.length <= 4000 &&
             (kind === 'multiple-choice'
               ? validChoices &&
                 quizPayload.leftItems === undefined &&
@@ -555,7 +646,7 @@ export async function runCli(
                   : false);
           if (!validQuestion)
             throw new CliUsageError(
-              'pose-question requires valid question fields for its kind: multiple-choice (1-6 choices), matching (2-12 unique pairs), or short-answer/long-answer (no choices/items)',
+              'pose-question requires question text of 1-4000 characters and valid fields for its kind: multiple-choice (1-6 choices), matching (2-12 unique pairs), or short-answer/long-answer (no choices/items)',
             );
         }
       }
@@ -696,15 +787,13 @@ export async function runCli(
         'Cannot read Storm endpoint metadata; start Storm or check --endpoint/--profile',
       );
     }
-    const request = async (
-      value: Omit<AgentRequest, 'protocol' | 'requestId'>,
-    ) => {
+    const request = async (value: RequestPayload<AgentRequest>) => {
       try {
         return await sendAgentRequest(info, {
           ...value,
-          protocol: 1,
+          protocol: 1 as const,
           requestId: randomUUID(),
-        } as AgentRequest);
+        });
       } catch {
         throw new Error(
           'Could not communicate with Storm; confirm the app is running',
@@ -723,6 +812,7 @@ export async function runCli(
           sessionId: quizSession!,
           agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN!,
           after: cursor,
+          ...(quizCompact ? { compact: true } : {}),
         } as any);
         const value = latest?.snapshot;
         if (!latest?.ok)
@@ -732,6 +822,7 @@ export async function runCli(
         const events = Array.isArray(value.events) ? value.events : [];
         cursor = Math.max(
           cursor,
+          Number(value.after) || 0,
           ...events.map((event: any) => Number(event.cursor) || 0),
         );
         const learnerEvents = events.filter(
@@ -771,7 +862,9 @@ export async function runCli(
       }
     }
     let result: any;
-    if (command === 'quiz') {
+    if (command === 'study')
+      result = await request({ type: 'study', study: studyRequest! });
+    else if (command === 'quiz') {
       const operation =
         quizOperation === 'status' || quizOperation === 'wait'
           ? 'snapshot'
@@ -785,7 +878,10 @@ export async function runCli(
         operation,
         ...(quizSession ? { sessionId: quizSession } : {}),
         ...(operation === 'attach'
-          ? { clientId: quizClientId ?? 'storm-cli' }
+          ? {
+              clientId: quizClientId ?? 'storm-cli',
+              ...(quizCompact ? { compact: true } : {}),
+            }
           : {}),
         ...(operation === 'detach'
           ? { agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN! }
@@ -794,6 +890,9 @@ export async function runCli(
           ? {
               agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN!,
               ...(quizAfter !== undefined ? { after: quizAfter } : {}),
+              ...(quizCompact
+                ? { compact: true, recover: quizOperation === 'status' }
+                : {}),
             }
           : {}),
         ...(operation === 'activity'
@@ -806,6 +905,14 @@ export async function runCli(
           ? {
               agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN!,
               imageId: quizImageId,
+            }
+          : {}),
+        ...(operation === 'context'
+          ? {
+              agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN!,
+              section: quizSection,
+              before: quizBefore,
+              offset: quizOffset,
             }
           : {}),
         ...(operation === 'request' ? { request: quizPayload } : {}),
@@ -842,8 +949,10 @@ export async function runCli(
     else if (command === 'replace' || command === 'patch') {
       const stdin = io.stdin ?? process.stdin;
       let source = '';
+      const stdinDecoder = new StringDecoder('utf8');
       for await (const chunk of stdin as AsyncIterable<Uint8Array>)
-        source += Buffer.from(chunk).toString('utf8');
+        source += stdinDecoder.write(Buffer.from(chunk));
+      source += stdinDecoder.end();
       let plan: import('../src/shared/agentProtocol').AgentEditPlan;
       try {
         plan =
@@ -877,6 +986,9 @@ export async function runCli(
         operationId: editOperationId ?? randomUUID(),
         expectedVersion: editVersion!,
         plan,
+        ...(command === 'patch' && !preview
+          ? { previewReceipt: rest[rest.indexOf('--preview-receipt') + 1] }
+          : {}),
       });
     } else if (command === 'status') {
       const sessionId = rest[1] === '--json' ? undefined : rest[1];
@@ -1012,7 +1124,11 @@ export async function runCli(
     return 0;
   } catch (error) {
     if (error instanceof CliUsageError) {
-      err(`${error.message}\n\n${cliHelp()}\n`);
+      if (args.includes('quiz'))
+        err(
+          `${JSON.stringify({ error: { code: 'INVALID_ARGUMENT', message: error.message } })}\n`,
+        );
+      else err(`${error.message}\n\n${cliHelp()}\n`);
       return 2;
     }
     err(`${error instanceof Error ? error.message : String(error)}\n`);

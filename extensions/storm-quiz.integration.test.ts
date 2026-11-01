@@ -1,8 +1,9 @@
 // Reconstructed after accidental truncation; this is not an exact recovery of the original file.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { mock } from 'bun:test';
 
 // The production extension is imported below with only its Typebox schema
@@ -18,6 +19,7 @@ mock.module('typebox', () => ({
     Literal: type('literal'),
     Optional: type('optional'),
     String: type('string'),
+    Number: type('number'),
     Array: type('array'),
   },
 }));
@@ -36,18 +38,36 @@ function makePi() {
   const notices: any[] = [];
   let activeTools = ['read', 'custom'];
   let idle = true;
+  let latestContextId = '';
+  const observe = (text: string) => {
+    latestContextId =
+      text.match(/"contextId":"([^"]+)"/)?.[1] ?? latestContextId;
+  };
   const pi: any = {
     registerCommand: (name: string, options: any) =>
       commands.set(name, options),
-    registerTool: (tool: any) => tools.set(tool.name, tool),
+    registerTool: (tool: any) =>
+      tools.set(tool.name, {
+        ...tool,
+        execute: async (id: string, params: any) => {
+          const result = await tool.execute(id, {
+            contextId: latestContextId,
+            ...params,
+          });
+          observe(result.content[0].text);
+          return result;
+        },
+      }),
     on: (event: string, fn: Function) =>
       listeners.set(event, [...(listeners.get(event) ?? []), fn]),
     getActiveTools: () => activeTools,
     setActiveTools: (value: string[]) => {
       activeTools = value;
     },
-    sendUserMessage: (message: string, options?: unknown) =>
-      calls.push({ command: message, options }),
+    sendUserMessage: (message: string, options?: unknown) => {
+      observe(message);
+      calls.push({ command: message, options });
+    },
   };
   extension(pi);
   const ctx = {
@@ -104,11 +124,26 @@ async function fixture(options: Record<string, unknown> = {}) {
     `
 const fs=require('node:fs'); const p=process.env.QUIZ_FIXTURE;
 const s=JSON.parse(fs.readFileSync(p,'utf8')); const a=process.argv.slice(2);
+const baseline=JSON.parse(JSON.stringify(s));
 const op=a[1], id=a[2]; const arg=(n)=>a[a.indexOf(n)+1];
-function save(){fs.writeFileSync(p,JSON.stringify(s));}
+function save(){
+  const lock=p+'.lock', deadline=Date.now()+2000; let fd;
+  while(fd===undefined){try{fd=fs.openSync(lock,'wx');}catch(e){if(e.code!=='EEXIST'||Date.now()>deadline)throw e;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5);}}
+  try{
+    const current=JSON.parse(fs.readFileSync(p,'utf8'));
+    for(const key of Object.keys(s)){
+      if(JSON.stringify(s[key])===JSON.stringify(baseline[key]))continue;
+      if(Array.isArray(s[key]))current[key]=(current[key]||[]).concat(s[key].slice((baseline[key]||[]).length));
+      else if(key==='revision')current[key]=(current[key]||0)+(s[key]-(baseline[key]||0));
+      else current[key]=s[key];
+    }
+    const tmp=p+'.'+process.pid+'.tmp';fs.writeFileSync(tmp,JSON.stringify(current));fs.renameSync(tmp,p);
+  }finally{fs.closeSync(fd);fs.unlinkSync(lock);}
+}
 function ok(value){process.stdout.write(JSON.stringify({ok:true,result:{ok:true,value}}));}
-if(op==='list'){ok(s.list ?? [{id:'quiz-test',status:s.listStatus ?? s.status}]);}
-else if(op==='attach'){ok({agentToken:'synthetic-capability',snapshot:{session:{id,revision:s.revision,eventCursor:s.cursor,status:s.status,scope:'synthetic'},events:[]}});}
+if(a[0]==='study'){if(!s.study){ok({});}else if(op==='capabilities'){ok({schemaVersion:1});}else{let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{const r=JSON.parse(b);s.studyRequests=(s.studyRequests||[]).concat(r);save();ok(r.action==='open'?{studyId:'study-test',entries:[{path:'Course/Note.md'}]}:{studyId:'study-test',snapshotId:'a'.repeat(64),sources:[],chunks:[{id:'chunk-test',text:'Pinned course definition'}]});});}}
+else if(op==='list'){ok(s.list ?? [{id:'quiz-test',status:s.listStatus ?? s.status}]);}
+else if(op==='attach'){ok({agentToken:'synthetic-capability',snapshot:{session:{id,revision:s.revision,eventCursor:s.cursor,status:s.status,scope:s.scope ?? 'synthetic'},events:[]}});}
 else if(op==='wait'){if(s.waitError){process.stderr.write(JSON.stringify({error:{code:s.waitError}}));process.exitCode=1;}else if(s.waitSnapshot){process.stdout.write(JSON.stringify({ok:true,snapshot:s.waitSnapshot,after:s.waitSnapshot.session.eventCursor,timedOut:false}));}else {process.stdin.resume();setInterval(()=>{},1000);}}
 else if(op==='status'){process.stdout.write(JSON.stringify({ok:true,operation:'snapshot',snapshot:{session:{id,revision:s.statusRevision ?? s.revision,eventCursor:s.statusCursor ?? s.cursor,status:s.status},events:[]}}));}
 else if(op==='request'){let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{s.requests.push(JSON.parse(b));s.revision++;save();ok({revision:s.revision,currentQuestion:null});});}
@@ -132,6 +167,12 @@ async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
+async function writeState(path: string, value: unknown) {
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporaryPath, JSON.stringify(value));
+  await rename(temporaryPath, path);
+}
+
 beforeEach(async () => {
   oldEnv = Object.fromEntries(
     ['STORM_QUIZ_CLI', 'STORM_QUIZ_CLI_ARGS', 'QUIZ_FIXTURE'].map((key) => [
@@ -152,6 +193,59 @@ afterEach(async () => {
 async function attach(pi: Harness) {
   await pi.command('attach quiz-test');
 }
+
+test('shared study context bootstraps the attached scope, guards question basis, and restores standalone tools', async () => {
+  const { stateFile } = await fixture({
+    study: true,
+    scope: {
+      vaultId: 'vault',
+      notePath: 'Course/Note.md',
+      folderPath: null,
+      selectedNotePaths: [],
+    },
+  });
+  const pi = makePi();
+  pi.pi.setActiveTools(['read', 'quiz', 'ask_user_question']);
+  try {
+    await attach(pi);
+    expect(pi.getActiveTools()).toContain('storm_study');
+    expect(pi.getActiveTools()).not.toContain('quiz');
+    expect(pi.getActiveTools()).not.toContain('ask_user_question');
+    expect(pi.calls[0].command).toContain('Course/Note.md');
+    expect(pi.calls[0].command).not.toContain('synthetic-capability');
+    await pi.tools
+      .get('storm_study')
+      .execute('study-read', { action: 'retrieve', query: 'definition' });
+    const stored = await state(stateFile);
+    expect(stored.studyRequests.at(-1).studyId).toBe('study-test');
+    expect(JSON.stringify(stored.studyRequests)).not.toContain(
+      'synthetic-capability',
+    );
+    await expect(
+      pi.tools.get('storm_quiz').execute('missing-basis', {
+        action: 'question',
+        kind: 'short-answer',
+        text: 'Explain this',
+      }),
+    ).rejects.toThrow('studyBasis');
+    await pi.tools.get('storm_quiz').execute('with-basis', {
+      action: 'question',
+      kind: 'short-answer',
+      text: 'Explain this',
+      studyBasis: 'a'.repeat(64),
+    });
+    expect((await state(stateFile)).requests.at(-1).studyBasis).toBe(
+      'a'.repeat(64),
+    );
+    await pi.command('disconnect');
+    expect(pi.getActiveTools()).toContain('quiz');
+    expect(pi.getActiveTools()).toContain('ask_user_question');
+    expect(pi.getActiveTools()).not.toContain('storm_study');
+    expect(pi.getActiveTools()).not.toContain('storm_quiz');
+  } finally {
+    await pi.shutdown();
+  }
+});
 
 describe('registered Storm quiz extension integration (synthetic CLI only)', () => {
   test('registers the production command and private capability tool; attach preserves tools and never exposes capability', async () => {
@@ -258,7 +352,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
         },
       ],
     };
-    await writeFile(stateFile, JSON.stringify(s));
+    await writeState(stateFile, s);
     await pi.command('disconnect');
     await attach(pi);
     await flush();
@@ -291,7 +385,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     const saved = await state(stateFile);
     saved.waitError = undefined;
     saved.status = 'waiting';
-    await writeFile(stateFile, JSON.stringify(saved));
+    await writeState(stateFile, saved);
     await attach(pi);
     expect(pi.getActiveTools()).toContain('storm_quiz');
     await pi.shutdown();
@@ -370,7 +464,14 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await writeFile(stateFile, JSON.stringify(s));
     await pi.command('disconnect');
     await attach(pi);
-    await flush();
+    // Wait for the context that owns the image, rather than racing subprocess
+    // startup against a fixed delay when the full suite is running.
+    const deadline = Date.now() + 2_000;
+    while (!pi.calls.some((call) => call.command.includes('img-retry'))) {
+      if (Date.now() >= deadline)
+        throw new Error('The learner image context was not delivered.');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     await pi.tools.get('storm_quiz').execute('reply', {
       action: 'feedback',
       text: 'I reviewed the image.',
@@ -428,7 +529,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
         { cursor: 4, type: 'message', data: { text: 'queued learner turn' } },
       ],
     };
-    await writeFile(stateFile, JSON.stringify(s));
+    await writeState(stateFile, s);
     await pi.command('disconnect');
     await attach(pi);
     await flush();

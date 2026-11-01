@@ -1072,6 +1072,8 @@ test('replace and patch CLI requests forward plans, versions, previews, and save
             'session-a',
             '--expected-version',
             '8',
+            '--preview-receipt',
+            'receipt-test',
             '--stdin',
             '--json',
           ],
@@ -1098,12 +1100,15 @@ test('replace and patch CLI requests forward plans, versions, previews, and save
       'preview',
     );
     assert.deepEqual(
-      requests.map(({ type, sessionId, expectedVersion, plan }) => ({
-        type,
-        sessionId,
-        expectedVersion,
-        plan,
-      })),
+      requests.map(
+        ({ type, sessionId, expectedVersion, plan, previewReceipt }) => ({
+          type,
+          sessionId,
+          expectedVersion,
+          plan,
+          ...(previewReceipt ? { previewReceipt } : {}),
+        }),
+      ),
       [
         {
           type: 'edit-apply',
@@ -1121,6 +1126,7 @@ test('replace and patch CLI requests forward plans, versions, previews, and save
           type: 'edit-apply',
           sessionId: 'session-a',
           expectedVersion: 8,
+          previewReceipt: 'receipt-test',
           plan: {
             type: 'replaceText',
             replacements: [{ find: 'old', replace: 'new' }],
@@ -1174,6 +1180,7 @@ test('replace and patch report broker save failures as failures, not saved outpu
           'session-a',
           '--expected-version',
           '1',
+          ...(command === 'patch' ? ['--preview-receipt', 'receipt-test'] : []),
           '--stdin',
           '--json',
         ],

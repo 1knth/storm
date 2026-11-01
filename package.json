@@ -20,7 +20,8 @@
     "lint": "oxlint && oxfmt --check",
     "test": "bun test",
     "lint:fix": "oxlint --fix && oxfmt --write",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "tutor": "sh scripts/startTutor.sh"
   },
   "peerDependencies": {
     "electron-winstaller": "^5.4.0"
