@@ -53,6 +53,16 @@ describe('vault discovery', () => {
     assert.deepEqual(content.unresolved, []);
   });
 
+  test('content search scans beyond the bounded preview window', async () => {
+    const tail = 'needle-near-end';
+    const { discover } = await createVault({
+      'Large.md': `${'x'.repeat(2 * 1024 * 1024)} ${tail}`,
+    });
+    const result = await discover(tail);
+    assert.equal(result.results[0]?.path, 'Large.md');
+    assert.ok(result.results[0]?.excerpt?.includes(tail));
+  });
+
   test('resolves standalone links and distinguishes missing, ambiguous, and invalid targets', async () => {
     const { root, vaultId } = await createVault({
       'A.md': 'source',

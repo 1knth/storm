@@ -222,6 +222,33 @@ test('sidebar peeks omit fenced delimiters and retain visible content', async ()
   }
 });
 
+test('bounds long Markdown previews and supports listing without reading previews', async () => {
+  const { root, service } = await fixture();
+  const content = `A${'x'.repeat(2 * 1024 * 1024 - 1)}`;
+  await writeFile(path.join(root, 'huge.md'), content);
+  const withPreview = await service.listNotes();
+  const hugePreview = withPreview.find((entry) => entry.name === 'huge.md');
+  assert.equal(hugePreview?.peek.length, 300);
+  const withoutPreviews = await service.listNotes({ previews: false });
+  assert.deepEqual(
+    withoutPreviews.map(({ path: notePath, name, kind }) => ({
+      notePath,
+      name,
+      kind,
+    })),
+    withPreview.map(({ path: notePath, name, kind }) => ({
+      notePath,
+      name,
+      kind,
+    })),
+  );
+  assert.ok(
+    withoutPreviews.every(
+      (entry) => entry.kind !== 'note' || entry.peek === '',
+    ),
+  );
+});
+
 test('reads assets with signature, path, MIME, and size validation', async () => {
   const { root } = await fixture();
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
@@ -434,3 +461,41 @@ test('failed stale save leaves original and no temporary files behind', async ()
     [],
   );
 });
+
+for (const separateServices of [false, true]) {
+  test(`same-revision concurrent saves to one note have one winner${separateServices ? ' across service instances' : ''}`, async () => {
+    const { root, service, note, vaultPath } = await fixture();
+    const other = separateServices ? new VaultService() : service;
+    if (separateServices) await other.selectVault(root);
+    const writes = await Promise.allSettled([
+      service.saveNote({
+        vaultPath,
+        path: note.path,
+        content: 'winner A',
+        revision: note.revision,
+      }),
+      other.saveNote({
+        vaultPath,
+        path: note.path,
+        content: 'winner B',
+        revision: note.revision,
+      }),
+    ]);
+    assert.equal(
+      writes.filter((result) => result.status === 'fulfilled').length,
+      1,
+    );
+    const rejected = writes.find((result) => result.status === 'rejected');
+    assert.ok(rejected && rejected.status === 'rejected');
+    assert.match(String(rejected.reason), /changed outside/i);
+    assert.ok(
+      ['winner A', 'winner B'].includes(
+        await readFile(path.join(root, 'note.md'), 'utf8'),
+      ),
+    );
+    assert.deepEqual(
+      (await readdir(root)).filter((entry) => entry.endsWith('.tmp')),
+      [],
+    );
+  });
+}

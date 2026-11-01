@@ -74,7 +74,9 @@ export async function discoverVaultNotes(
   const service = new VaultService();
   await service.selectVault(root);
   const needle = query?.toLocaleLowerCase();
-  const entries = (await service.listNotes()).filter(
+  const hasSourceLinks = Boolean(options?.sourcePath);
+  const metadataOnly = !needle && !hasSourceLinks;
+  const entries = (await service.listNotes({ previews: !metadataOnly })).filter(
     (entry) => entry.kind === 'note',
   );
   const paths = new Set(entries.map((entry) => entry.path));
@@ -147,7 +149,7 @@ export async function discoverVaultNotes(
     if (!absolute.startsWith(root + path.sep)) continue;
     const info = await lstat(absolute);
     if (!info.isFile() || info.isSymbolicLink()) continue;
-    const contents = await readFile(absolute, 'utf8');
+    const contents = metadataOnly ? '' : await readFile(absolute, 'utf8');
     const lowered = contents.toLocaleLowerCase();
     if (
       needle &&

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   chmod,
   lstat,
+  open,
   readFile,
   readdir,
   realpath,
@@ -11,13 +12,17 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import { planRenameLinks } from './renameLinks';
+import { KeyedQueue } from '../shared/asyncQueue';
 import type {
   NoteData,
   SaveNoteRequest,
   SaveNoteResult,
   VaultEntry,
 } from '../shared/types';
+
+const noteWrites = new KeyedQueue();
 
 export class VaultService {
   private selectedVaultPath: string | null = null;
@@ -36,7 +41,9 @@ export class VaultService {
     this.selectedVaultPath = null;
   }
 
-  async listNotes(): Promise<VaultEntry[]> {
+  async listNotes(
+    options: { previews?: boolean; limit?: number } = {},
+  ): Promise<VaultEntry[]> {
     const rootPath = this.selectedVaultPath;
     if (!rootPath) return [];
 
@@ -47,6 +54,7 @@ export class VaultService {
     ): Promise<void> {
       const entries = await readdir(directory, { withFileTypes: true });
       for (const entry of entries) {
+        if (notes.length >= (options.limit ?? Infinity)) return;
         if (entry.isSymbolicLink()) continue;
         const relativePath = relativeDirectory
           ? path.join(relativeDirectory, entry.name)
@@ -64,12 +72,29 @@ export class VaultService {
           }
         } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
           let peek = '';
-          try {
-            peek = firstSentence(
-              await readFile(path.join(directory, entry.name), 'utf8'),
-            );
-          } catch {
-            // Keep an unreadable note in the list without a preview.
+          if (options.previews !== false) {
+            let file;
+            try {
+              file = await open(
+                path.join(directory, entry.name),
+                fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+              );
+              const buffer = Buffer.alloc(16 * 1024);
+              const { bytesRead } = await file.read(
+                buffer,
+                0,
+                buffer.length,
+                0,
+              );
+              peek = firstSentence(buffer.toString('utf8', 0, bytesRead)).slice(
+                0,
+                300,
+              );
+            } catch {
+              // Keep an unreadable note in the list without a preview.
+            } finally {
+              await file?.close().catch(() => {});
+            }
           }
           notes.push({
             path: relativePath,
@@ -231,7 +256,7 @@ export class VaultService {
       );
       return { ...renamed, changedNotes: [] };
     }
-    const entries = await this.listNotes();
+    const entries = await this.listNotes({ previews: false });
     const documents: { path: string; content: string; revision: string }[] = [];
     for (const entry of entries) {
       if (entry.kind !== 'note') continue;
@@ -403,33 +428,44 @@ export class VaultService {
     const root = this.selectedVaultPath;
     if (!root || vaultPath !== root)
       throw new Error('Selected vault changed; save cancelled');
-    if (typeof content !== 'string' || typeof revision !== 'string')
+    if (
+      typeof relativePath !== 'string' ||
+      typeof content !== 'string' ||
+      typeof revision !== 'string'
+    )
       throw new Error('Invalid save request');
-    const current = await this.readNote(relativePath);
-    if (current.revision !== revision)
-      throw new Error('Note changed outside Storm; reload before saving');
-    const rootReal = await realpath(root);
-    const target = path.resolve(rootReal, ...current.path.split('/'));
-    const info = await lstat(target);
-    if (!info.isFile() || info.isSymbolicLink())
-      throw new Error('Not a regular Markdown note');
-    const temp = path.join(
-      path.dirname(target),
-      `.${path.basename(target)}.${randomUUID()}.tmp`,
+    const identity = await realpath(
+      path.resolve(root, ...relativePath.split(/[\\/]+/)),
     );
-    try {
-      await writeFile(temp, content, { flag: 'wx', mode: info.mode });
-      await chmod(temp, info.mode);
+    return noteWrites.run(identity, async () => {
       if (this.selectedVaultPath !== root)
         throw new Error('Selected vault changed; save cancelled');
-      const latest = await readFile(target, 'utf8');
-      if (revisionOf(latest) !== revision)
+      const current = await this.readNote(relativePath);
+      if (current.revision !== revision)
         throw new Error('Note changed outside Storm; reload before saving');
-      await rename(temp, target);
-    } finally {
-      await unlink(temp).catch(() => {});
-    }
-    return { revision: revisionOf(content) };
+      const rootReal = await realpath(root);
+      const target = path.resolve(rootReal, ...current.path.split('/'));
+      const info = await lstat(target);
+      if (!info.isFile() || info.isSymbolicLink())
+        throw new Error('Not a regular Markdown note');
+      const temp = path.join(
+        path.dirname(target),
+        `.${path.basename(target)}.${randomUUID()}.tmp`,
+      );
+      try {
+        await writeFile(temp, content, { flag: 'wx', mode: info.mode });
+        await chmod(temp, info.mode);
+        if (this.selectedVaultPath !== root)
+          throw new Error('Selected vault changed; save cancelled');
+        const latest = await readFile(target, 'utf8');
+        if (revisionOf(latest) !== revision)
+          throw new Error('Note changed outside Storm; reload before saving');
+        await rename(temp, target);
+      } finally {
+        await unlink(temp).catch(() => {});
+      }
+      return { revision: revisionOf(content) };
+    });
   }
 }
 
