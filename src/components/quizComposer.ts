@@ -24,6 +24,13 @@ export function getClipboardImages(data: {
   return images;
 }
 
+export function shouldClearSubmittedDraft(
+  currentDraft: string,
+  submittedDraft: string,
+) {
+  return currentDraft === submittedDraft;
+}
+
 export function getQuizComposerIntent(
   draft: string,
   canSubmitAnswer: boolean,
@@ -51,10 +58,11 @@ export function isCompleteQuestionAnswer(
 
   const leftItems = value.leftItems ?? [];
   const matches = value.matches ?? {};
+  const matchValues = leftItems.map((id) => matches[id]);
   return (
     leftItems.length > 0 &&
-    leftItems.every((id) => !!matches[id]) &&
-    new Set(leftItems.map((id) => matches[id])).size === leftItems.length
+    matchValues.every((id) => !!id) &&
+    new Set(matchValues).size === leftItems.length
   );
 }
 

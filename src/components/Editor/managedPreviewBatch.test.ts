@@ -755,6 +755,41 @@ describe('managed writing baseline lifecycle', () => {
     assert.equal(retainedId, '1');
     assert.equal(revealId, 1);
   });
+  it('retains per-session baselines across A → B → A and does not reveal away-time arrivals', () => {
+    const baselines = new Map<
+      string,
+      ReturnType<typeof acquireWritingBaseline>
+    >();
+    const acquire = (session: string, markdown: string) => {
+      const baseline = acquireWritingBaseline(
+        baselines.get(session) ?? null,
+        session,
+        markdown,
+      );
+      baselines.set(session, baseline);
+      return baseline;
+    };
+
+    const a = acquire('session-a', 'A existing');
+    acquire('session-b', 'B existing');
+    // A received content while not selected; it is included in the fresh
+    // baseline when A is selected again and therefore is not eligible.
+    const resumedMarkdown = 'A existing\n\nArrived while away';
+    const resumedA = acquireWritingBaseline(null, 'session-a', resumedMarkdown);
+    assert.equal(resumedA.markdown, resumedMarkdown);
+    assert.equal(
+      appendedContentStartLine(resumedA.markdown, resumedMarkdown),
+      null,
+    );
+
+    // New content arriving after the resumed baseline is eligible; an unchanged
+    // poll snapshot creates no additional reveal boundary.
+    const live = `${resumedMarkdown}\n\nNew live paragraph`;
+    assert.equal(appendedContentStartLine(resumedA.markdown, live), 5);
+    assert.equal(appendedContentStartLine(live, live), null);
+    assert.equal(a.markdown, 'A existing');
+  });
+
   it('preserves the sync-captured baseline when the React writing prop arrives late', () => {
     let baseline = acquireWritingBaseline(null, 'note-a', 'Original');
     const firstAppend = 'Original\n\nFirst paragraph';

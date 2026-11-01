@@ -1,50 +1,30 @@
 @import 'tailwindcss';
 
-.quiz-learner-markdown > :first-child {
-  margin-top: 0;
-}
-.quiz-learner-markdown > :last-child {
-  margin-bottom: 0;
-}
-.quiz-learner-markdown p {
-  margin: 0;
+.quiz-learner-message {
+  border-radius: 1.125rem 1.125rem 0.375rem 1.125rem;
+  padding: 0.375rem 0.625rem;
+  background-color: #0a84ff;
+  color: white;
+  line-height: 1.25;
   white-space: pre-wrap;
-}
-.quiz-learner-markdown :is(ul, ol) {
-  margin-block: 0.5em;
-  padding-left: 1.5em;
-}
-.quiz-learner-markdown ul {
-  list-style: disc;
-}
-.quiz-learner-markdown ol {
-  list-style: decimal;
-}
-.quiz-learner-markdown li + li {
-  margin-top: 0.35em;
-}
-.quiz-learner-markdown li > p {
-  margin-block: 0;
-}
-.quiz-learner-markdown li > p + p {
-  margin-block-start: 0.35em;
-}
-.quiz-learner-markdown .katex-display {
-  margin: 0.25rem 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow-wrap: anywhere;
 }
 
 .markdown-preview-content strong {
   color: var(--preview-bold-color, inherit);
 }
 
-.markdown-preview-content em {
+.markdown-preview-content em,
+.quiz-agent-markdown em {
   color: var(--preview-italic-color, inherit);
 }
 
-.markdown-preview-content :is(ul, ol) > li::marker,
-.quiz-markdown :is(ul, ol) > li::marker {
+.quiz-agent-markdown strong {
+  color: var(--preview-bold-color, inherit);
+}
+
+.markdown-preview-content li::marker,
+.quiz-agent-markdown li::marker {
   color: var(--preview-list-marker-color, inherit);
 }
 
@@ -514,11 +494,44 @@
   background-color: rgb(255 255 255 / 5%);
 }
 
-/* Keep the titlebar controls on the native drag region, but soften its backdrop
-   so it reads as a continuation of the glass panes rather than a separate band. */
+/* Window chrome belongs to the leftmost pane, not a row above every pane. */
+.app-shell {
+  /* hiddenInset traffic lights sit 19px below the window's top edge. */
+  --window-controls-height: 38px;
+  --window-controls-width: 144px;
+  --window-controls-space: calc(
+    var(--window-controls-height) * var(--window-chrome-scale, 1)
+  );
+  --window-controls-min-width: calc(
+    var(--window-controls-width) * var(--window-chrome-scale, 1)
+  );
+}
+
 .window-pane-controls {
-  background-color: rgb(var(--ui-panel) / 30%);
-  backdrop-filter: brightness(1.15) saturate(1.2) blur(2px);
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 30;
+  width: var(--window-controls-width);
+  height: var(--window-controls-height);
+  zoom: var(--window-chrome-scale, 1);
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.app-shell[data-window-controls-host='vaults'] [data-pane='vaults'] {
+  min-width: var(--window-controls-min-width);
+  padding-top: calc(var(--window-controls-space) - 0.5rem);
+}
+
+.app-shell[data-window-controls-host='explorer'] [data-pane='explorer'] {
+  min-width: max(240px, var(--window-controls-min-width));
+  padding-top: calc(var(--window-controls-space) + 0.75rem);
+}
+
+.app-shell[data-window-controls-host='editor'] [data-pane='editor'] {
+  min-width: var(--window-controls-min-width);
+  padding-top: var(--window-controls-space);
 }
 
 /* Pane rim samples the app backdrop before the pane fill. Tune these three
@@ -592,8 +605,93 @@
   }
 }
 
+.quiz-reveal-word,
+.quiz-reveal-unit {
+  animation: quiz-word-reveal 100ms ease-out both;
+  animation-delay: calc(var(--quiz-word-index) * 50ms);
+}
+
+.quiz-reveal-unit {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.quiz-reveal-list-item {
+  list-style: none;
+}
+
+.quiz-reveal-task-checkbox {
+  animation: quiz-word-reveal 100ms ease-out both;
+  animation-delay: calc(var(--quiz-word-index) * 50ms);
+}
+
+.quiz-reveal-marker {
+  display: inline-block;
+  width: 1.5em;
+  margin-left: -1.5em;
+  color: var(--preview-list-marker-color, currentColor);
+  animation: quiz-word-reveal 100ms ease-out both;
+  animation-delay: calc(var(--quiz-word-index) * 50ms);
+}
+
+.quiz-reveal-list-item > .quiz-reveal-marker::before {
+  content: '•';
+}
+.quiz-agent-markdown ol > .quiz-reveal-list-item > .quiz-reveal-marker::before {
+  content: counter(list-item) '.';
+}
+.quiz-agent-markdown
+  ul
+  ul
+  > .quiz-reveal-list-item
+  > .quiz-reveal-marker::before {
+  content: '◦';
+}
+.quiz-agent-markdown
+  ul
+  ul
+  ul
+  > .quiz-reveal-list-item
+  > .quiz-reveal-marker::before {
+  content: '▪';
+}
+
+@keyframes quiz-word-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-reveal-word,
+  .quiz-reveal-unit,
+  .quiz-reveal-marker,
+  .quiz-reveal-task-checkbox {
+    animation: none;
+  }
+}
+
 .quiz-agent-reveal > * {
   animation: quiz-message-reveal 280ms ease-out both;
+}
+
+.quiz-new-question {
+  animation: quiz-question-reveal 300ms ease-out both;
+}
+
+@keyframes quiz-question-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes quiz-message-reveal {
@@ -614,39 +712,31 @@
     border-top-color: currentColor;
   }
 
-  .quiz-agent-reveal > * {
+  .quiz-agent-reveal > *,
+  .quiz-new-question {
     animation: none;
   }
 }
 
 .quiz-transcript-pane {
-  /* Container-relative sizing follows the actual space below the quiz header. */
+  /* Container-relative sizing follows the actual space left below the quiz header. */
   container-type: size;
 }
 
+.quiz-transcript-message--agent + .quiz-transcript-message--agent {
+  border-top: 1px solid rgb(var(--ui-border) / 8%);
+  padding-top: 1rem;
+}
+
 .quiz-composer {
+  /* cqh comes from the size-contained transcript pane, so the absolute overlay
+     is bounded by the space below the quiz header rather than the viewport. */
   box-sizing: border-box;
   max-height: max(0px, calc(100cqh - 1.5rem));
   overflow-y: auto;
   overscroll-behavior: contain;
-  font-size: clamp(11px, 1.15cqh, 13px);
-  line-height: 1.4;
-}
-
-.quiz-composer * {
-  font-size: inherit;
-}
-
-.quiz-composer .quiz-agent-markdown {
-  font-size: inherit;
-  line-height: 1.5;
-}
-
-.quiz-composer .quiz-agent-markdown :is(h1, h2, h3, h4) {
-  font-size: inherit;
-}
-
-.quiz-composer {
+  font-size: 0.95rem;
+  line-height: 1.35;
   border: 1px solid rgb(255 255 255 / 12%);
   background-color: rgb(15 17 20 / 78%);
   -webkit-backdrop-filter: blur(16px);
@@ -695,19 +785,35 @@
 }
 
 .quiz-composer-input {
+  align-self: center;
   box-sizing: border-box;
+  min-height: 2rem;
   max-height: min(40cqh, 240px);
   overflow-y: hidden;
-  line-height: 1.4;
+  /* One 20px line plus equal 6px insets fills the 32px input row. */
+  line-height: 1.25rem;
+  resize: none;
   background-color: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
+.quiz-composer #quiz-qa-content,
+.quiz-composer .quiz-agent-markdown {
+  font-size: inherit;
+  line-height: 1.35;
+}
+
+.quiz-composer :is(input, select, textarea, button) {
+  font-size: inherit;
+}
+
 .quiz-agent-markdown {
+  min-width: 0;
+  max-width: 100%;
   color: rgb(var(--ui-fg) / 96%);
   font-size: 0.95rem;
-  line-height: 1.7;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
@@ -724,7 +830,12 @@
 .quiz-agent-markdown ol,
 .quiz-agent-markdown blockquote,
 .quiz-agent-markdown pre {
-  margin-block: 0.75em;
+  margin-block: 0;
+}
+
+/* Separate authored paragraphs, without adding gaps to each Markdown list item. */
+.quiz-agent-markdown p + p {
+  margin-block-start: 1lh;
 }
 
 .quiz-agent-markdown ul,
@@ -741,14 +852,17 @@
 }
 
 .quiz-agent-markdown li + li {
-  margin-top: 0.4em;
+  margin-top: 0;
 }
 
 .quiz-agent-markdown h1,
 .quiz-agent-markdown h2,
 .quiz-agent-markdown h3,
-.quiz-agent-markdown h4 {
-  margin-block: 1em 0.45em;
+.quiz-agent-markdown h4,
+.quiz-agent-markdown h5,
+.quiz-agent-markdown h6 {
+  /* Keep sections distinct even when authored without blank lines. */
+  margin-block: 1em 0.35em;
   color: rgb(var(--ui-fg));
   font-weight: 750;
   line-height: 1.3;
@@ -765,6 +879,11 @@
 .quiz-agent-markdown h3,
 .quiz-agent-markdown h4 {
   font-size: 1.05rem;
+}
+
+.quiz-agent-markdown h5,
+.quiz-agent-markdown h6 {
+  font-size: 1em;
 }
 
 .quiz-agent-markdown em {
@@ -800,6 +919,37 @@
 .quiz-agent-markdown pre code {
   background: transparent;
   padding: 0;
+}
+
+.quiz-markdown-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-block: 0.75rem;
+}
+
+.quiz-markdown-table-scroll:focus-visible {
+  outline: 2px solid rgb(var(--ui-fg) / 60%);
+  outline-offset: 2px;
+}
+
+.quiz-markdown-table-scroll > table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.quiz-markdown-table-scroll :is(th, td) {
+  border: 1px solid rgb(var(--ui-border) / 20%);
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+}
+
+.quiz-markdown-table-scroll th {
+  background: rgb(var(--ui-panel) / 35%);
+  font-weight: 750;
+  text-align: left;
+  white-space: nowrap;
 }
 
 body {
@@ -859,57 +1009,4 @@ body,
 
 ::-webkit-scrollbar-corner {
   background: transparent;
-}
-
-.quiz-reveal-word {
-  animation: quiz-word-reveal 100ms ease-out both;
-  animation-delay: calc(var(--quiz-word-index) * 50ms);
-}
-
-.quiz-reveal-list-item {
-  list-style: none;
-}
-
-.quiz-reveal-task-checkbox {
-  animation: quiz-word-reveal 100ms ease-out both;
-  animation-delay: calc(var(--quiz-word-index) * 50ms);
-}
-
-.quiz-reveal-marker {
-  display: inline-block;
-  width: 1.5em;
-  margin-left: -1.5em;
-  color: var(--preview-list-marker-color, currentColor);
-  animation: quiz-word-reveal 100ms ease-out both;
-  animation-delay: calc(var(--quiz-word-index) * 50ms);
-}
-
-.quiz-reveal-list-item > .quiz-reveal-marker::before {
-  content: '•';
-}
-.quiz-agent-markdown ol > .quiz-reveal-list-item > .quiz-reveal-marker::before {
-  content: counter(list-item) '.';
-}
-.quiz-agent-markdown ul ul > .quiz-reveal-list-item > .quiz-reveal-marker::before {
-  content: '◦';
-}
-.quiz-agent-markdown ul ul ul > .quiz-reveal-list-item > .quiz-reveal-marker::before {
-  content: '▪';
-}
-
-@keyframes quiz-word-reveal {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .quiz-reveal-word,
-  .quiz-reveal-marker,
-  .quiz-reveal-task-checkbox {
-    animation: none;
-  }
 }

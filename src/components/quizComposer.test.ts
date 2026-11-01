@@ -5,6 +5,7 @@ import {
   getQuizComposerIntent,
   handleQuizComposerEnter,
   isCompleteQuestionAnswer,
+  shouldClearSubmittedDraft,
 } from './quizComposer';
 
 function press(
@@ -46,11 +47,24 @@ test('clipboard images use item data when files is empty and deduplicate fallbac
   assert.deepEqual(result, [file]);
 });
 
-test('answer takes priority over chat, then chat over prompt', () => {
+test('successful sends clear the exact submitted draft, not normalized text or later typing', () => {
+  const multiline = 'first line\nsecond line\n';
+  assert.equal(shouldClearSubmittedDraft(multiline, multiline), true);
+  assert.equal(shouldClearSubmittedDraft('new text', multiline), false);
+  assert.equal(
+    shouldClearSubmittedDraft('first line\nsecond line', multiline),
+    false,
+  );
+});
+
+test('answer, chat, and prompt intents preserve their priority', () => {
   assert.equal(getQuizComposerIntent('  hello  ', true), 'answer');
   assert.equal(getQuizComposerIntent('', true), 'answer');
   assert.equal(getQuizComposerIntent('  hello  ', false), 'message');
-  assert.equal(getQuizComposerIntent('optional detail', false, 0, true), 'message');
+  assert.equal(
+    getQuizComposerIntent('optional detail', false, 0, true),
+    'message',
+  );
   assert.equal(getQuizComposerIntent('', false, 0, true), 'prompt');
   assert.equal(getQuizComposerIntent('  ', false), null);
 });
@@ -87,10 +101,26 @@ test('answer completeness covers choice, unique complete matching, and text', ()
     }),
     false,
   );
+  const completeMatching = isCompleteQuestionAnswer('matching', {
+    leftItems,
+    matches: { one: 'x', two: 'y' },
+  });
+  assert.equal(completeMatching, true);
+  assert.equal(getQuizComposerIntent('chat draft', completeMatching), 'answer');
+  assert.equal(
+    getQuizComposerIntent(
+      'chat draft',
+      isCompleteQuestionAnswer('matching', {
+        leftItems,
+        matches: { one: 'x' },
+      }),
+    ),
+    'message',
+  );
   assert.equal(
     isCompleteQuestionAnswer('matching', {
       leftItems,
-      matches: { one: 'x', two: 'y' },
+      matches: { one: 'x', two: 'y', stale: 'z' },
     }),
     true,
   );

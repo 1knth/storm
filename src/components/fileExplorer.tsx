@@ -15,7 +15,6 @@ import {
   remapOptimisticPath,
 } from './optimisticRename';
 import { FaPlus } from 'react-icons/fa';
-import { TbLayoutSidebarRightFilled } from 'react-icons/tb';
 import Note from './Note';
 import { commitOpacityDraft, DEFAULT_APPEARANCE } from '../appearance';
 import type { Appearance } from '../appearance';
@@ -142,7 +141,6 @@ export default function FileExplorer({
   onToggleExplorerShortcutChange,
   selectedPath,
   collapsed,
-  onToggleCollapsed,
   onCopyPathError,
   onPathCopied,
   appearance,

@@ -18,11 +18,6 @@ describe('appearance preferences', () => {
       headings: ['#abcdef'],
     });
     strictEqual(result.selection, DEFAULT_APPEARANCE.selection);
-    strictEqual(result.listMarkerColor, null);
-    strictEqual(
-      validateAppearance({ listMarkerColor: 'red' }).listMarkerColor,
-      null,
-    );
     strictEqual(result.folderIcon, DEFAULT_APPEARANCE.folderIcon);
     strictEqual(
       validateAppearance({ folderIcon: 'blue' }).folderIcon,
@@ -57,15 +52,22 @@ describe('appearance preferences', () => {
     const legacy = validateAppearance({ folderIcon: '#123456' });
     strictEqual(legacy.previewBoldColor, null);
     strictEqual(legacy.previewItalicColor, null);
+    strictEqual(legacy.listMarkerColor, null);
 
     const custom = validateAppearance({
       previewBoldColor: '#123456',
       previewItalicColor: '#abcdef',
+      listMarkerColor: '#654321',
     });
     strictEqual(custom.previewBoldColor, '#123456');
     strictEqual(custom.previewItalicColor, '#abcdef');
+    strictEqual(custom.listMarkerColor, '#654321');
     strictEqual(
       validateAppearance({ previewBoldColor: 'var(--bad)' }).previewBoldColor,
+      null,
+    );
+    strictEqual(
+      validateAppearance({ listMarkerColor: 'red' }).listMarkerColor,
       null,
     );
 
@@ -74,10 +76,10 @@ describe('appearance preferences', () => {
       getItem: (key: string) => memory.get(key) ?? null,
       setItem: (key: string, value: string) => memory.set(key, value),
     };
-    saveAppearance(storage, { ...custom, listMarkerColor: '#654321' });
-    strictEqual(loadAppearance(storage).listMarkerColor, '#654321');
+    saveAppearance(storage, custom);
     strictEqual(loadAppearance(storage).previewBoldColor, '#123456');
     strictEqual(loadAppearance(storage).previewItalicColor, '#abcdef');
+    strictEqual(loadAppearance(storage).listMarkerColor, '#654321');
     saveAppearance(storage, {
       ...custom,
       previewBoldColor: null,

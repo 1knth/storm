@@ -1,4 +1,7 @@
-type ShortcutKeyEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>;
+type ShortcutKeyEvent = Pick<
+  KeyboardEvent,
+  'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'
+>;
 
 export function isToggleExplorerShortcut(
   event: ShortcutKeyEvent,

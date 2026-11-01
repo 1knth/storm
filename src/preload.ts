@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webFrame } from 'electron';
 import type {
   NoteData,
   SaveNoteRequest,
@@ -28,6 +28,20 @@ import {
   isAgentStatus,
 } from './shared/agentBridgeValidation';
 import type { StormAgentBridge } from './shared/agentBridge';
+
+// Native window buttons do not follow View zoom. Keep their neighboring chrome
+// at native size, including the clearance reserved by the leftmost content pane.
+const updateWindowChromeZoom = () => {
+  document.documentElement?.style.setProperty(
+    '--window-chrome-scale',
+    String(1 / webFrame.getZoomFactor()),
+  );
+};
+window.addEventListener('resize', updateWindowChromeZoom);
+document.addEventListener('DOMContentLoaded', updateWindowChromeZoom, {
+  once: true,
+});
+updateWindowChromeZoom();
 
 const stormAgent: StormAgentBridge = {
   onRequest(callback) {

@@ -1,6 +1,9 @@
 import { isToggleVaultsShortcut } from './mainShortcuts';
 import React, { useEffect, useRef, useState } from 'react';
-import { TbLayoutSidebarLeftCollapseFilled, TbLayoutSidebarRightFilled } from 'react-icons/tb';
+import {
+  TbLayoutSidebarLeftCollapseFilled,
+  TbLayoutSidebarRightFilled,
+} from 'react-icons/tb';
 import './index.css';
 import { createRoot } from 'react-dom/client';
 import FileExplorer from './components/fileExplorer';
@@ -45,7 +48,10 @@ import { loadAppearance, saveAppearance } from './appearance';
 import type { Appearance } from './appearance';
 import { createAgentDocumentHost } from './documents/agentDocumentHost';
 import { createAgentContext } from './documents/agentContext';
-import { reconcileAgentTargetContent, agentTargetDiskRevision } from './documents/agentTargetReconciliation';
+import {
+  reconcileAgentTargetContent,
+  agentTargetDiskRevision,
+} from './documents/agentTargetReconciliation';
 import { isAgentTabProtected } from './documents/agentTabProtection';
 import {
   STARTUP_VAULT_ERROR,
@@ -191,7 +197,7 @@ function App() {
           vaultPath: tab.vaultPath,
           path,
           state: snapshot.state,
-          revision: agentTargetDiskRevision(note, snapshot.state.doc.toString()),
+          revision: snapshot.note.revision,
         };
       },
       openDocument: async ({ absolutePath, vaultId, vaultRoot }) => {
@@ -319,7 +325,10 @@ function App() {
           vaultPath: vaultRoot,
           path: relativePath,
           state: snapshot.state,
-          revision: snapshot.note.revision,
+          revision: agentTargetDiskRevision(
+            note,
+            snapshot.state.doc.toString(),
+          ),
         };
       },
       publishDocument: (document) => {
@@ -574,14 +583,19 @@ function App() {
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const [vaultSidebarCollapsed, setVaultSidebarCollapsed] = useState(() => {
     try {
-      return window.localStorage.getItem('storm.vaultSidebarCollapsed') === 'true';
+      return (
+        window.localStorage.getItem('storm.vaultSidebarCollapsed') === 'true'
+      );
     } catch {
       return false;
     }
   });
   useEffect(() => {
     try {
-      window.localStorage.setItem('storm.vaultSidebarCollapsed', String(vaultSidebarCollapsed));
+      window.localStorage.setItem(
+        'storm.vaultSidebarCollapsed',
+        String(vaultSidebarCollapsed),
+      );
     } catch {
       /* Optional preference. */
     }
@@ -598,11 +612,11 @@ function App() {
   const pickerSelectionFocus = useRef(false);
   const [query, setQuery] = useState('');
   const [notes, setNotes] = useState<VaultEntry[]>([]);
-  const openPdf = async (path: string) => {
+  const openAsset = async (path: string, kind: 'pdf' | 'image') => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId || navigationBusy.current || vaultTransition.current) return;
     const entry = notes.find(
-      (item) => item.path === path && item.kind === 'pdf',
+      (item) => item.path === path && item.kind === kind,
     );
     if (!entry || activeVaultIdRef.current !== vaultId) return;
     navigationBusy.current = true;
@@ -617,59 +631,22 @@ function App() {
               : tab,
           ),
         );
-      const pdf: TabSnapshot = {
-        kind: 'pdf',
-        vaultId,
-        relativePath: entry.path,
-        fileName: entry.name,
-      };
-      const pdfId = getTabId(pdf);
-      const existing = tabsRef.current.find((tab) => getTabId(tab) === pdfId);
-      const activePdf = existing ?? pdf;
-      if (!existing) setTabs((old) => [...old, pdf]);
-      editorRef.current?.activate(activePdf);
-      setActiveId(pdfId);
+      const asset: TabSnapshot =
+        kind === 'pdf'
+          ? { kind, vaultId, relativePath: entry.path, fileName: entry.name }
+          : { kind, vaultId, path: entry.path, filename: entry.name };
+      const assetId = getTabId(asset);
+      const existing = tabsRef.current.find((tab) => getTabId(tab) === assetId);
+      if (!existing) setTabs((old) => [...old, asset]);
+      editorRef.current?.activate(existing ?? asset);
+      setActiveId(assetId);
       setActivePath(entry.path);
     } finally {
       navigationBusy.current = false;
     }
   };
-  const openImagePreview = async (path: string) => {
-    const vaultId = activeVaultIdRef.current;
-    if (!vaultId || navigationBusy.current || vaultTransition.current) return;
-    const entry = notes.find(
-      (item) => item.path === path && item.kind === 'image',
-    );
-    if (!entry || activeVaultIdRef.current !== vaultId) return;
-    navigationBusy.current = true;
-    try {
-      if (!(await editorRef.current?.flush())) return;
-      const outgoing = editorRef.current?.snapshot();
-      if (outgoing)
-        setTabs((old) =>
-          old.map((tab) =>
-            tab.kind === 'note' && tab.note.path === outgoing.note.path
-              ? outgoing
-              : tab,
-          ),
-        );
-      const image: TabSnapshot = {
-        kind: 'image',
-        vaultId,
-        path: entry.path,
-        filename: entry.name,
-      };
-      const imageId = getTabId(image);
-      const existing = tabsRef.current.find((tab) => getTabId(tab) === imageId);
-      const activeImage = existing ?? image;
-      if (!existing) setTabs((old) => [...old, image]);
-      editorRef.current?.activate(activeImage);
-      setActiveId(imageId);
-      setActivePath(entry.path);
-    } finally {
-      navigationBusy.current = false;
-    }
-  };
+  const openPdf = (path: string) => openAsset(path, 'pdf');
+  const openImagePreview = (path: string) => openAsset(path, 'image');
   const notesRefreshRequest = useRef(0);
   const pendingVaultRefresh = useRef<string | null>(null);
   const refreshNotes = async (vaultId: string) => {
@@ -735,7 +712,13 @@ function App() {
     }
   });
   const [toggleVaultsShortcut, setToggleVaultsShortcut] = useState(() => {
-    try { return window.localStorage.getItem('storm.shortcut.toggleVaults') !== 'false'; } catch { return true; }
+    try {
+      return (
+        window.localStorage.getItem('storm.shortcut.toggleVaults') !== 'false'
+      );
+    } catch {
+      return true;
+    }
   });
   const [toggleExplorerShortcut, setToggleExplorerShortcut] = useState(() => {
     try {
@@ -763,7 +746,10 @@ function App() {
         'storm.shortcut.toggleExplorer',
         String(toggleExplorerShortcut),
       );
-      window.localStorage.setItem('storm.shortcut.toggleVaults', String(toggleVaultsShortcut));
+      window.localStorage.setItem(
+        'storm.shortcut.toggleVaults',
+        String(toggleVaultsShortcut),
+      );
     } catch {
       /* Optional preference. */
     }
@@ -1252,7 +1238,9 @@ function App() {
       if (paneName === 'vaults' && vaultSidebarCollapsed) {
         setVaultSidebarCollapsed(false);
         requestAnimationFrame(() => {
-          const pane = document.querySelector<HTMLElement>('[data-pane="vaults"]');
+          const pane = document.querySelector<HTMLElement>(
+            '[data-pane="vaults"]',
+          );
           const vaultRow = pane?.querySelector<HTMLElement>('[data-vault-row]');
           (vaultRow ?? pane)?.focus();
         });
@@ -2543,10 +2531,67 @@ function App() {
   );
 
   return (
-    <main className="flex h-screen min-h-0 w-full min-w-0 flex-col">
-      <div className="window-pane-controls flex h-8 shrink-0 items-center gap-1 pl-20" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-        <button type="button" className="app-icon-button relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties} aria-label={vaultSidebarCollapsed ? 'Show vaults' : 'Hide vaults'} aria-expanded={!vaultSidebarCollapsed} title={`Toggle vaults (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧S' : 'Ctrl+Shift+S'})`} onClick={() => setVaultSidebarCollapsed((value) => !value)}><TbLayoutSidebarLeftCollapseFilled aria-hidden="true" className="!h-[14px] !w-[14px]" />{commandHeld && <span aria-hidden="true" className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white">{navigator.platform.toLowerCase().includes('mac') ? '⌘⇧S' : 'Ctrl+Shift+S'}</span>}</button>
-        <button type="button" className="app-icon-button relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties} aria-label={explorerCollapsed ? 'Show file explorer' : 'Hide file explorer'} aria-expanded={!explorerCollapsed} title={`Toggle file explorer (${navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'})`} onClick={() => setExplorerCollapsed((value) => !value)}><TbLayoutSidebarRightFilled aria-hidden="true" className="!h-[14px] !w-[14px]" />{commandHeld && <span aria-hidden="true" className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white">{navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'}</span>}</button>
+    <main
+      className="app-shell relative flex h-screen min-h-0 w-full min-w-0 flex-col"
+      data-window-controls-host={
+        !vaultSidebarCollapsed
+          ? 'vaults'
+          : !explorerCollapsed
+            ? 'explorer'
+            : 'editor'
+      }
+    >
+      <div className="window-pane-controls flex items-center gap-1 pl-20">
+        <button
+          type="button"
+          className="app-icon-button relative"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          aria-label={vaultSidebarCollapsed ? 'Show vaults' : 'Hide vaults'}
+          aria-expanded={!vaultSidebarCollapsed}
+          title={`Toggle vaults (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧S' : 'Ctrl+Shift+S'})`}
+          onClick={() => setVaultSidebarCollapsed((value) => !value)}
+        >
+          <TbLayoutSidebarLeftCollapseFilled
+            aria-hidden="true"
+            className="!h-[14px] !w-[14px]"
+          />
+          {commandHeld && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white"
+            >
+              {navigator.platform.toLowerCase().includes('mac')
+                ? '⌘⇧S'
+                : 'Ctrl+Shift+S'}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          className="app-icon-button relative"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          aria-label={
+            explorerCollapsed ? 'Show file explorer' : 'Hide file explorer'
+          }
+          aria-expanded={!explorerCollapsed}
+          title={`Toggle file explorer (${navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'})`}
+          onClick={() => setExplorerCollapsed((value) => !value)}
+        >
+          <TbLayoutSidebarRightFilled
+            aria-hidden="true"
+            className="!h-[14px] !w-[14px]"
+          />
+          {commandHeld && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white"
+            >
+              {navigator.platform.toLowerCase().includes('mac')
+                ? '⌘S'
+                : 'Ctrl+S'}
+            </span>
+          )}
+        </button>
       </div>
       {shortcutHelpOpen && (
         <div
@@ -2653,28 +2698,30 @@ function App() {
       )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-row">
         <div className="contents">
-          {!vaultSidebarCollapsed && <VaultSidebar
-            vaults={vaults}
-            groups={vaultGroups}
-            sidebarRootOrder={sidebarRootOrder}
-            onSidebarRootOrderChange={setSidebarRootOrder}
-            visibleVaults={visibleVaults}
-            onGroupsChange={setVaultGroups}
-            onVaultsChange={setVaults}
-            activeVaultId={activeVaultId}
-            onActivate={activateVault}
-            onAdd={addVault}
-            collapsed={explorerCollapsed}
-            onToggleExplorer={() => setExplorerCollapsed(false)}
-            toggleExplorerShortcut={toggleExplorerShortcut}
-            onRemove={removeVault}
-            error={vaultError}
-            commandHeld={commandHeld}
-            vimMode={vimMode}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onToggleQuiz={toggleQuiz}
-            quizOpen={quizOpen}
-          />}
+          {!vaultSidebarCollapsed && (
+            <VaultSidebar
+              vaults={vaults}
+              groups={vaultGroups}
+              sidebarRootOrder={sidebarRootOrder}
+              onSidebarRootOrderChange={setSidebarRootOrder}
+              visibleVaults={visibleVaults}
+              onGroupsChange={setVaultGroups}
+              onVaultsChange={setVaults}
+              activeVaultId={activeVaultId}
+              onActivate={activateVault}
+              onAdd={addVault}
+              collapsed={explorerCollapsed}
+              onToggleExplorer={() => setExplorerCollapsed(false)}
+              toggleExplorerShortcut={toggleExplorerShortcut}
+              onRemove={removeVault}
+              error={vaultError}
+              commandHeld={commandHeld}
+              vimMode={vimMode}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onToggleQuiz={toggleQuiz}
+              quizOpen={quizOpen}
+            />
+          )}
           <FileExplorer
             vaultPath={vaultPath}
             notes={notes}
@@ -2855,8 +2902,8 @@ function App() {
                   vaults.find((vault) => vault.id === activeVaultId)?.name ?? ''
                 }
                 notePath={activePath}
-                visible={quizOpen}
                 appearance={appearance}
+                visible={quizOpen}
                 onClose={() => setQuizOpen(false)}
               />
             </div>

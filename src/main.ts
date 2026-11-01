@@ -352,9 +352,7 @@ ipcMain.handle('quiz:delete', async (event, id: unknown) => {
     return { ok: false, error: 'invalid-input' };
   return { ok: true, value: await quizService.deleteSession(id) };
 });
-ipcMain.handle('quiz:list', async () =>
-  (await quizService.listSessions()).map(quizPublicSession),
-);
+ipcMain.handle('quiz:list', async () => quizService.listSessionSummaries());
 ipcMain.handle('quiz:snapshot', async (event, id: unknown, after: unknown) => {
   const snapshot =
     typeof id === 'string' &&
