@@ -1,0 +1,9 @@
+{
+  "loader": "/Users/kenneth/.bun/install/global/node_modules/@earendil-works/pi-coding-agent",
+  "extensionLoaded": true,
+  "rootObjectProperties": true,
+  "missingContextRejected": true,
+  "actionLengthLimits": true,
+  "continueChoices": true,
+  "modelCalls": 0
+}

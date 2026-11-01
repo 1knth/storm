@@ -1,0 +1,12 @@
+{
+  "app": "/Users/kenneth/Coding/storm/out/storm-darwin-arm64/Storm.app",
+  "platform": "darwin",
+  "arch": "arm64",
+  "recoveredUnicode": true,
+  "durableReplyRevision": 6,
+  "continueGate": "enforced",
+  "contextChunks": "verified",
+  "idleResponseBytes": 593,
+  "ownedSessionsDetached": true,
+  "isolatedProfileRemoved": true
+}

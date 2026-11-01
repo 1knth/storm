@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Shared study context implementation draft</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--foreground, #222);
+        font: 14px/1.5 var(--font-sans, system-ui);
+      }
+      .label {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--muted-foreground, #666);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      h2 {
+        font-size: 18px;
+        line-height: 1.35;
+        margin: 0;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 0;
+      }
+      p {
+        margin: 6px 0 0;
+      }
+      .panel {
+        padding: 16px;
+        border: 1px solid var(--border, #ddd);
+        border-radius: var(--radius, 10px);
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .hub {
+        border-left: 4px solid var(--primary, #555);
+      }
+      .arrow {
+        padding: 7px 0;
+        text-align: center;
+        color: var(--muted-foreground, #666);
+        font-size: 12px;
+      }
+      .muted {
+        color: var(--muted-foreground, #666);
+      }
+      code {
+        font: 12px var(--font-mono, monospace);
+      }
+      .tree {
+        margin-top: 10px;
+        padding-left: 12px;
+        border-left: 1px solid var(--border, #ddd);
+        font: 12px/1.8 var(--font-mono, monospace);
+      }
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 18px 0 10px;
+      }
+      button {
+        cursor: pointer;
+        font: 12px var(--font-sans, system-ui);
+        color: inherit;
+        border: 1px solid var(--border, #ddd);
+        border-radius: 6px;
+        background: transparent;
+        padding: 7px 10px;
+      }
+      button[aria-pressed='true'] {
+        background: var(--primary, #333);
+        color: var(--primary-foreground, #fff);
+        border-color: var(--primary, #333);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--ring, #888);
+        outline-offset: 3px;
+      }
+      .status {
+        border-top: 1px solid var(--border, #ddd);
+        padding-top: 12px;
+      }
+      .facts {
+        display: grid;
+        grid-template-columns: 145px 1fr;
+        column-gap: 12px;
+        row-gap: 7px;
+        margin: 10px 0 0;
+        font-size: 12px;
+      }
+      .facts dt {
+        color: var(--muted-foreground, #666);
+      }
+      .facts dd {
+        margin: 0;
+      }
+      .foot {
+        margin-top: 14px;
+        font-size: 12px;
+        color: var(--muted-foreground, #666);
+      }
+      @media (max-width: 480px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+        .facts {
+          grid-template-columns: 110px 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <p class="label">
+      Implementation draft · shared sources, bounded retrieval
+    </p>
+    <div class="row" style="margin-top: 10px">
+      <div class="panel">
+        <h3>Selected study scope</h3>
+        <div class="tree">
+          Course/<br />&nbsp; Review.md<br />&nbsp; Topics/<br />&nbsp;&nbsp;
+          Definitions.md<br />&nbsp;&nbsp; Worked example.md
+        </div>
+        <p class="muted">
+          Folders, headings, and explicit links. No implied mastery or
+          prerequisite order.
+        </p>
+      </div>
+      <div class="panel">
+        <h3>Exact source capture</h3>
+        <p>
+          Read live editor text when open, otherwise disk. Label unsaved
+          content.
+        </p>
+        <p class="muted">
+          Source ID + content hash + locator. Missing files, readers, and
+          partial coverage stay visible.
+        </p>
+      </div>
+    </div>
+    <div class="arrow">Validated reads and change signals ↓</div>
+    <div class="panel hub">
+      <h2>StudyContextService</h2>
+      <p>
+        Maintain the scoped index, retrieve relevant sections, and retain
+        immutable source snapshots.
+      </p>
+      <p class="muted">
+        A small tree at attach; more content on demand. Source edits invalidate
+        cached context without starting a model turn.
+      </p>
+    </div>
+    <div class="arrow">One identifiable source basis ↓</div>
+    <div class="row">
+      <div class="panel">
+        <h3>Tutor</h3>
+        <p>
+          Uses <code>storm_study</code> to retrieve context. Owns the learner
+          interaction and reviews the final explanation.
+        </p>
+      </div>
+      <div class="panel">
+        <h3>Optional worker</h3>
+        <p>
+          Receives a bounded packet from the same snapshot. Returns cited
+          findings for validation by Tutor.
+        </p>
+      </div>
+    </div>
+    <div class="tabs" role="group" aria-label="Explore context changes">
+      <button type="button" data-case="normal" aria-pressed="true">
+        Shared packet</button
+      ><button type="button" data-case="edit" aria-pressed="false">
+        Note edited</button
+      ><button type="button" data-case="scope" aria-pressed="false">
+        Scope changed</button
+      ><button type="button" data-case="reconnect" aria-pressed="false">
+        Reattached
+      </button>
+    </div>
+    <div class="status" aria-live="polite">
+      <h3 id="scenario">Tutor and worker use snapshot S1</h3>
+      <p id="explanation">
+        Both receive references to the same source versions. The worker receives
+        only the sections its task needs.
+      </p>
+      <dl class="facts">
+        <dt>Current study context</dt>
+        <dd id="current">S1 · selected course</dd>
+        <dt>Outstanding question</dt>
+        <dd id="question">Basis pinned to S1</dd>
+        <dt>Worker result</dt>
+        <dd id="worker">Validate cited chunks against S1</dd>
+      </dl>
+    </div>
+    <p class="foot">
+      Study snapshots identify source material. The existing quiz context ID
+      still guards learner-state concurrency and explicit Continue.
+    </p>
+    <script>
+      const scenarios = {
+        normal: [
+          'Tutor and worker use snapshot S1',
+          'Both receive references to the same source versions. The worker receives only the sections its task needs.',
+          'S1 · selected course',
+          'Basis pinned to S1',
+          'Validate cited chunks against S1',
+        ],
+        edit: [
+          'An edit creates a new source version',
+          'New work refreshes to S2. The outstanding question retains its original basis; a source correction must be explained.',
+          'S2 · changed material',
+          'Basis remains S1',
+          'Check freshness before reusing S1 findings for new work',
+        ],
+        scope: [
+          'A new selection changes the context',
+          'Old-scope workers cannot publish into the new study context. Prior question history retains its own evidence references.',
+          'S3 · newly selected scope',
+          'Historical basis remains identifiable',
+          'Reject a late result for the previous scope',
+        ],
+        reconnect: [
+          'Recover the conversation and its sources',
+          'Reload the study binding and pinned evidence. Recheck freshness; unavailable historical content is reported explicitly.',
+          'Reload binding; validate sources',
+          'Recover its original pinned basis',
+          'Reconcile interrupted work; do not invent a resumed worker',
+        ],
+      };
+      document.querySelectorAll('button[data-case]').forEach((button) =>
+        button.addEventListener('click', () => {
+          document
+            .querySelectorAll('button[data-case]')
+            .forEach((item) =>
+              item.setAttribute('aria-pressed', String(item === button)),
+            );
+          const values = scenarios[button.dataset.case];
+          ['scenario', 'explanation', 'current', 'question', 'worker'].forEach(
+            (id, index) =>
+              (document.getElementById(id).textContent = values[index]),
+          );
+        }),
+      );
+      console.log('context scenarios:', Object.keys(scenarios).length);
+    </script>
+  </body>
+</html>

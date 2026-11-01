@@ -1,0 +1,42 @@
+{
+  "runtime": "bun 1.3.12 (v24.3.0 compatibility)",
+  "platform": "darwin",
+  "arch": "arm64",
+  "trials": 7,
+  "results": [
+    {
+      "compactIdleSnapshotBytes": 371,
+      "compactMedianSnapshotAndSerializeMs": 0.055,
+      "messages": 100,
+      "charsPerMessage": 1110,
+      "databaseBytes": 240570,
+      "idleSnapshotBytes": 119413,
+      "newEvents": 0,
+      "medianSnapshotAndSerializeMs": 0.15,
+      "snapshotBytesPerIdleHourAtOnePollPerSecond": 429886800
+    },
+    {
+      "compactIdleSnapshotBytes": 374,
+      "compactMedianSnapshotAndSerializeMs": 0.044,
+      "messages": 1000,
+      "charsPerMessage": 1110,
+      "databaseBytes": 2405974,
+      "idleSnapshotBytes": 1192215,
+      "newEvents": 0,
+      "medianSnapshotAndSerializeMs": 0.86,
+      "snapshotBytesPerIdleHourAtOnePollPerSecond": 4291974000
+    },
+    {
+      "compactIdleSnapshotBytes": 374,
+      "compactMedianSnapshotAndSerializeMs": 0.086,
+      "messages": 5000,
+      "charsPerMessage": 1110,
+      "databaseBytes": 12041974,
+      "idleSnapshotBytes": 5964215,
+      "newEvents": 0,
+      "medianSnapshotAndSerializeMs": 3.59,
+      "snapshotBytesPerIdleHourAtOnePollPerSecond": 21471174000
+    }
+  ],
+  "limitations": "Synthetic warm local filesystem. Measures service handler plus serialization, excludes socket/CLI/model cost. Per-hour traffic is arithmetic at 1 poll/s; real cadence also includes request latency."
+}

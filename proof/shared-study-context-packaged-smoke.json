@@ -1,0 +1,19 @@
+{
+  "packagedApp": true,
+  "bundledCli": true,
+  "isolatedProfile": true,
+  "context": true,
+  "inspect": true,
+  "connect": true,
+  "stream": true,
+  "studyContext": true,
+  "studyChangeDetection": true,
+  "immutableSourceRead": true,
+  "questionBasisPersistence": true,
+  "quizReattach": true,
+  "tutorLauncherWiring": true,
+  "finished": true,
+  "expectedBytes": 40,
+  "savedBytes": 40,
+  "savedSha256": "3e540b60e8852ff684bc77f09a97bba13301c2eb13dee26a0adeb36ba02e3743"
+}

@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proposed Tutor and Storm workflow</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font: 14px/1.5 var(--font-sans, system-ui);
+        color: var(--foreground, #222);
+      }
+      p {
+        margin: 6px 0 0;
+      }
+      .eyebrow {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--muted-foreground, #666);
+      }
+      .owner {
+        border: 1px solid var(--border, #ddd);
+        border-left: 4px solid var(--primary, #555);
+        border-radius: var(--radius, 10px);
+        padding: 18px;
+        margin-top: 9px;
+        background: var(--card, transparent);
+      }
+      h2 {
+        font-size: 20px;
+        line-height: 1.3;
+        margin: 0;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 0;
+      }
+      .muted {
+        color: var(--muted-foreground, #666);
+      }
+      .flow {
+        text-align: center;
+        color: var(--muted-foreground, #666);
+        padding: 8px;
+        font-size: 12px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .box {
+        padding: 16px;
+        border: 1px solid var(--border, #ddd);
+        border-radius: var(--radius, 10px);
+      }
+      .box ul {
+        padding-left: 18px;
+        margin: 8px 0 0;
+      }
+      .future {
+        border-style: dashed;
+      }
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 20px;
+      }
+      button {
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        border: 1px solid var(--border, #ddd);
+        border-radius: 7px;
+        padding: 7px 10px;
+        background: transparent;
+        color: inherit;
+      }
+      button[aria-pressed='true'] {
+        background: var(--primary, #333);
+        color: var(--primary-foreground, #fff);
+        border-color: var(--primary, #333);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--ring, #888);
+        outline-offset: 3px;
+      }
+      .detail {
+        padding: 12px 0 2px;
+        min-height: 76px;
+      }
+      .legend {
+        margin-top: 12px;
+        font-size: 12px;
+        color: var(--muted-foreground, #666);
+      }
+      @media (max-width: 480px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .detail {
+          min-height: 100px;
+        }
+        h2 {
+          font-size: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="eyebrow">
+      Proposed architecture · one continuing conversation
+    </div>
+    <div class="owner">
+      <h2>Tutor owns the learning session</h2>
+      <p>
+        Goal and context → choose the mode → explain connected ideas → interpret
+        learner evidence → decide the next step.
+      </p>
+      <p class="muted">
+        Apply the writing skill here. Keep the Storm attachment and sole
+        listener here.
+      </p>
+    </div>
+    <div class="flow">
+      Assign bounded work ↓ &nbsp; ↑ Return source-backed results
+    </div>
+    <div class="grid">
+      <div class="box">
+        <h3>Source workers · when needed</h3>
+        <p class="muted">Course files first; web for unresolved questions.</p>
+        <ul>
+          <li>PDF / slides / DOCX / CSV readers</li>
+          <li>Exact locations and honest coverage</li>
+          <li>No learner interaction or live-note writes</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>Drafting and review · when useful</h3>
+        <p class="muted">A separate writer for substantial synthesis.</p>
+        <ul>
+          <li>Goal, evidence, and context in the brief</li>
+          <li>Check consequential ambiguities</li>
+          <li>Tutor reviews and publishes the result</li>
+        </ul>
+      </div>
+    </div>
+    <div class="flow">Tutor communicates through one interaction adapter ↓</div>
+    <div class="grid">
+      <div class="box">
+        <h3>Storm · durable interaction</h3>
+        <p>
+          Questions, learner answers, feedback, explicit Continue, and recovery.
+          Coordinated note edits when authorized.
+        </p>
+      </div>
+      <div class="box future">
+        <h3>Proposed learning records</h3>
+        <p>
+          Keep source concepts, session plans, and learner evidence distinct. An
+          explained concept is not evidence of mastery.
+        </p>
+      </div>
+    </div>
+    <div
+      class="tabs"
+      role="group"
+      aria-label="Explore how session modes differ"
+    >
+      <button type="button" data-mode="direct" aria-pressed="true">
+        Direct answer
+      </button>
+      <button type="button" data-mode="guided" aria-pressed="false">
+        Guided lesson
+      </button>
+      <button type="button" data-mode="practice" aria-pressed="false">
+        Practice
+      </button>
+      <button type="button" data-mode="reference" aria-pressed="false">
+        Reference
+      </button>
+    </div>
+    <div class="detail" aria-live="polite">
+      <h3 id="mode-title">Answer the actual question</h3>
+      <p id="mode-copy">
+        Use the available context, verify what needs checking, and explain the
+        connection. A clarification does not require a diagnostic quiz.
+      </p>
+    </div>
+    <p class="legend">
+      Solid boxes describe ownership; dashed learning records require new Storm
+      capabilities. Workers are optional. Pi's quiz widget remains the
+      standalone adapter when Storm is detached.
+    </p>
+    <script>
+      const modes = {
+        direct: [
+          'Answer the actual question',
+          'Use the available context, verify what needs checking, and explain the connection. A clarification does not require a diagnostic quiz.',
+        ],
+        guided: [
+          'Build from the relevant starting point',
+          'Use existing evidence or a bounded probe. Motivate each useful step, connect it to what came before, and check understanding when it informs the next decision.',
+        ],
+        practice: [
+          'Observe independent application',
+          'Use a fresh problem with a checked answer or rubric. Preserve the exact attempt and assistance given. A guided success and an independent success are different evidence.',
+        ],
+        reference: [
+          'Create a complete, source-grounded reference',
+          'Inspect the assigned material and its coverage, then synthesize a coherent review through Storm. Source coverage belongs in the reference record; it does not establish learner mastery.',
+        ],
+      };
+      document.querySelectorAll('button[data-mode]').forEach((button) =>
+        button.addEventListener('click', () => {
+          document
+            .querySelectorAll('button[data-mode]')
+            .forEach((item) =>
+              item.setAttribute('aria-pressed', String(item === button)),
+            );
+          const [title, copy] = modes[button.dataset.mode];
+          document.getElementById('mode-title').textContent = title;
+          document.getElementById('mode-copy').textContent = copy;
+        }),
+      );
+      console.log(
+        'mode controls:',
+        document.querySelectorAll('button[data-mode]').length,
+      );
+    </script>
+  </body>
+</html>
