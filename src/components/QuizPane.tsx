@@ -19,6 +19,7 @@ import {
   markdownMathRehypePlugin,
 } from './Editor/markdownMath';
 import { remarkSoftBreaks } from './Editor/markdownSoftBreaks';
+import { remarkQuizCurrency } from './quizMarkdownCurrency';
 import {
   getClipboardImages,
   getQuizComposerIntent,
@@ -92,6 +93,7 @@ type SentImage = PendingImage;
 
 const quizMarkdownRemarkPlugins = [
   markdownMathRemarkPlugin,
+  remarkQuizCurrency,
   remarkGfm,
   remarkSoftBreaks,
 ];

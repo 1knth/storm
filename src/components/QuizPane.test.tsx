@@ -342,3 +342,34 @@ describe('quiz word reveal', () => {
 });
 
 describe('matching labels', () => { it('uses alphabetic item and numbered option labels', () => { assert.equal(getMatchingItemLabel('left', 0), 'A'); assert.equal(getMatchingItemLabel('left', 3), 'D'); assert.equal(getMatchingItemLabel('right', 0), '1.'); }); });
+
+describe('quiz currency rendering', () => {
+  it('keeps the fee-category question currency and inline formatting literal', () => {
+    const html = render(
+      'A program should print **exactly one** fee category. Orders of at least $100 qualify for `Free`; orders from $50 up to $100 qualify for `Reduced`; smaller orders use `Standard`.\n\n```python\nif total >= 50:\n    print("Reduced")\n```',
+    );
+    assert.match(html, /\$100 qualify for <code>Free<\/code>/);
+    assert.match(html, /\$50 up to \$100 qualify for <code>Reduced<\/code>/);
+    assert.match(html, /<strong>exactly one<\/strong>/);
+    assert.match(html, /<code class="language-python">/);
+    assert.doesNotMatch(html, /katex/);
+  });
+
+  it('preserves equations alongside currency, code, and escaped dollars', () => {
+    const html = render(
+      'Pay $5 or $10, then solve $2 + 2$ and $x^2$. Range: $5–$10.\n\n`$5 and $10`\n\n```txt\n$5 and $10\n```\n\nEscaped: \\$5 and \\$10.\n\n$$\n2 + 2\n$$',
+    );
+    assert.match(html, /Pay \$5 or \$10, then solve/);
+    assert.match(html, /Range: \$5–\$10\./);
+    assert.equal((html.match(/class="katex"/g) ?? []).length, 3);
+    assert.match(html, /class="katex-display"/);
+    assert.match(html, /<code>\$5 and \$10<\/code>/);
+    assert.match(html, /<code class="language-txt">\$5 and \$10/);
+    assert.match(html, /Escaped: \$5 and \$10\./);
+  });
+
+  it('keeps numeric equations with trailing spaces and double-dollar math', () => {
+    const html = render('$2 + 2 $ and $$2 $$');
+    assert.equal((html.match(/class="katex"/g) ?? []).length, 2);
+  });
+});
