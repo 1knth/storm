@@ -272,6 +272,19 @@ function quizHeading(Heading: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') {
   };
 }
 
+// Choices are labels, so accidental Markdown headings should remain body text.
+function QuizChoiceHeading({ children }: any) {
+  return <p>{children}</p>;
+}
+const quizChoiceHeadingComponents = {
+  h1: QuizChoiceHeading,
+  h2: QuizChoiceHeading,
+  h3: QuizChoiceHeading,
+  h4: QuizChoiceHeading,
+  h5: QuizChoiceHeading,
+  h6: QuizChoiceHeading,
+};
+
 const quizMarkdownComponents = {
   a: SafeQuizMarkdownLink,
   table: ({ children, node: _node, ...props }: any) => (
@@ -451,10 +464,12 @@ export function QuizVerdict({
 export const QuizMarkdown = memo(function QuizMarkdown({
   children,
   reveal = false,
+  choice = false,
   appearance,
 }: {
   children: string;
   reveal?: boolean;
+  choice?: boolean;
   appearance?: Appearance;
 }) {
   const inheritedAppearance = useContext(QuizMarkdownAppearanceContext);
@@ -481,7 +496,11 @@ export const QuizMarkdown = memo(function QuizMarkdown({
               ? [...quizMarkdownRehypePlugins, rehypeQuizWordReveal]
               : quizMarkdownRehypePlugins
           }
-          components={quizMarkdownComponents}
+          components={
+            choice
+              ? { ...quizMarkdownComponents, ...quizChoiceHeadingComponents }
+              : quizMarkdownComponents
+          }
         >
           {children}
         </ReactMarkdown>
@@ -1313,7 +1332,7 @@ export default function QuizPane({
                                   <ol className="mt-3 list-[upper-alpha] space-y-2 pl-6 text-[0.95rem] leading-relaxed marker:font-semibold marker:text-white/70">
                                     {m.question.choices.map((choice) => (
                                       <li key={choice.id} className="pl-1">
-                                        <QuizMarkdown>
+                                        <QuizMarkdown choice>
                                           {choice.text}
                                         </QuizMarkdown>
                                       </li>
@@ -1336,7 +1355,7 @@ export default function QuizPane({
                                                 index,
                                               )}{' '}
                                             </span>
-                                            <QuizMarkdown>
+                                            <QuizMarkdown choice>
                                               {item.text}
                                             </QuizMarkdown>
                                           </li>
@@ -1358,7 +1377,7 @@ export default function QuizPane({
                                                 index,
                                               )}{' '}
                                             </span>
-                                            <QuizMarkdown>
+                                            <QuizMarkdown choice>
                                               {item.text}
                                             </QuizMarkdown>
                                           </li>
@@ -1456,7 +1475,7 @@ export default function QuizPane({
                                   }
                                 />
                                 <span className="quiz-agent-markdown min-w-0">
-                                  <QuizMarkdown>{choice.text}</QuizMarkdown>
+                                  <QuizMarkdown choice>{choice.text}</QuizMarkdown>
                                 </span>
                               </label>
                             ))}
@@ -1525,7 +1544,7 @@ export default function QuizPane({
                                           }
                                         />
                                         <span className="quiz-agent-markdown min-w-0">
-                                          <QuizMarkdown>
+                                          <QuizMarkdown choice>
                                             {choice.text}
                                           </QuizMarkdown>
                                         </span>
@@ -1550,7 +1569,7 @@ export default function QuizPane({
                                               )}
                                             </span>
                                             <span className="quiz-agent-markdown min-w-0 break-words">
-                                              <QuizMarkdown>
+                                              <QuizMarkdown choice>
                                                 {item.text}
                                               </QuizMarkdown>
                                             </span>

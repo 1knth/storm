@@ -657,3 +657,28 @@ describe('quiz Markdown renderer', () => {
     assert.equal((html.match(/class="katex"/g) ?? []).length, 2);
   });
 });
+
+describe('quiz choice formatting', () => {
+  it('renders ATX and setext headings as body text while retaining inline formatting', () => {
+    for (const markdown of [
+      '# **Check** `hours`',
+      'Check hours\n===',
+      'Check hours\n---',
+    ]) {
+      const html = renderToStaticMarkup(
+        React.createElement(QuizMarkdown, { choice: true, children: markdown }),
+      );
+      assert.doesNotMatch(html, /<h[1-6]\b/);
+      assert.match(html, /<p>/);
+    }
+    const html = renderToStaticMarkup(
+      React.createElement(QuizMarkdown, {
+        choice: true,
+        children: '### **Check** `hours`',
+      }),
+    );
+    assert.match(html, /<strong[^>]*>Check<\/strong>/);
+    assert.match(html, /<code>hours<\/code>/);
+    assert.match(render('## Explanation'), /<h2/);
+  });
+});

@@ -108,6 +108,8 @@ describe('model-safe quiz context', () => {
       'set the explicit verdict field to correct, partial, or incorrect',
     );
     expect(prompt).toContain('do not repeat a verdict heading');
+    expect(prompt).toContain('Never use Markdown headings');
+    expect(prompt).toContain('inline Markdown only');
     expect(prompt).toContain(
       "address the learner's supplied reasoning specifically",
     );
