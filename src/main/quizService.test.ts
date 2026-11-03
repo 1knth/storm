@@ -480,7 +480,19 @@ describe('QuizService', () => {
         assert.equal(posed?.prompt, variant.question);
         if (variant.kind === 'matching') {
           assert.deepEqual(posed?.leftItems, variant.leftItems);
-          assert.deepEqual(posed?.rightItems, variant.rightItems);
+          // Match options are presented in Storm's own order, never the
+          // authored pair order, but every item survives exactly once.
+          assert.deepEqual(
+            [...(posed?.rightItems ?? [])].sort((a, b) =>
+              a.id.localeCompare(b.id),
+            ),
+            variant.rightItems,
+          );
+          assert.ok(
+            posed?.rightItems?.some(
+              (item, index) => item.id !== variant.rightItems![index].id,
+            ),
+          );
         }
         assert.equal(
           result.value.transcript.filter((entry) => entry.kind === 'question')
@@ -608,15 +620,28 @@ describe('QuizService', () => {
       assert.equal(before.ok, true);
       if (!before.ok) return;
       const posedEntry = before.value.transcript.at(-1);
-      assert.deepEqual(posedEntry?.question, {
-        id: before.value.currentQuestion?.id,
-        kind: 'multiple-choice',
-        prompt: 'Why?',
-        choices: [
-          { id: 'a', text: 'A' },
-          { id: 'b', text: 'B' },
-        ],
-      });
+      // Display order is assigned when the question is posed; compare by ID.
+      assert.deepEqual(
+        {
+          ...posedEntry?.question,
+          choices: [...(posedEntry?.question?.choices ?? [])].sort((a, b) =>
+            a.id.localeCompare(b.id),
+          ),
+        },
+        {
+          id: before.value.currentQuestion?.id,
+          kind: 'multiple-choice',
+          prompt: 'Why?',
+          choices: [
+            { id: 'a', text: 'A' },
+            { id: 'b', text: 'B' },
+          ],
+        },
+      );
+      assert.deepEqual(
+        posedEntry?.question?.choices,
+        before.value.currentQuestion?.choices,
+      );
       assert.equal(posedEntry?.kind, 'question');
       assert.equal(posedEntry?.role, 'agent');
       assert.equal(posedEntry?.text, 'Why?');
@@ -1354,6 +1379,99 @@ describe('QuizService', () => {
       assert.equal(snapshot?.session.transcript[0]?.kind, 'question');
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('posed choice order is fixed once and survives answering, feedback and reattachment', async () => {
+    const f = await fixture();
+    try {
+      await f.request('attach', 0, 'attach');
+      const authored = [
+        { id: 'a', text: 'Because the guard runs first' },
+        { id: 'b', text: 'Because the counter resets' },
+        { id: 'c', text: 'Because the list is copied' },
+        { id: 'd', text: 'Because the index is cached' },
+      ];
+      const posed = await f.request('pose-question', 1, 'q', {
+        kind: 'multiple-choice',
+        question: 'Why does the loop end?',
+        choices: authored,
+      });
+      assert.equal(posed.ok, true);
+      if (!posed.ok) return;
+      const order = posed.value.currentQuestion!.choices.map(
+        (choice) => choice.id,
+      );
+      assert.deepEqual([...order].sort(), ['a', 'b', 'c', 'd']);
+      for (const choice of authored)
+        assert.deepEqual(
+          posed.value.currentQuestion!.choices.find(
+            (stored) => stored.id === choice.id,
+          ),
+          choice,
+        );
+      assert.deepEqual(
+        posed.value.transcript
+          .at(-1)
+          ?.question?.choices.map((choice) => choice.id),
+        order,
+      );
+
+      const answered = await f.service.learnerRequest({
+        type: 'answer',
+        sessionId: f.session.id,
+        expectedRevision: 2,
+        idempotencyKey: 'answer-1',
+        choiceId: 'c',
+        reasoning: 'the copy is independent',
+        confidence: 60,
+      });
+      assert.equal(answered.ok, true);
+      if (!answered.ok) return;
+      assert.equal(answered.value.currentQuestion?.selectedChoiceId, 'c');
+      assert.equal(
+        answered.value.transcript
+          .at(-1)
+          ?.text.startsWith('Because the list is copied'),
+        true,
+      );
+      assert.deepEqual(
+        answered.value.currentQuestion!.choices.map((choice) => choice.id),
+        order,
+      );
+
+      const feedback = await f.request('feedback', 3, 'f', {
+        text: 'A copy leaves the original untouched.',
+        verdict: 'correct',
+      });
+      assert.equal(feedback.ok, true);
+      if (!feedback.ok) return;
+      assert.equal(
+        feedback.value.transcript.at(-1)?.question?.answerLabel,
+        'Because the list is copied',
+      );
+      assert.deepEqual(
+        feedback.value.transcript
+          .at(-1)
+          ?.question?.choices.map((choice) => choice.id),
+        order,
+      );
+
+      const restarted = new QuizService(
+        new QuizStore(join(f.dir, 'sessions.json')),
+        () => true,
+      );
+      const reattached = await restarted.attachSession(f.session.id);
+      assert.equal(reattached.ok, true);
+      if (!reattached.ok) return;
+      assert.deepEqual(
+        reattached.value.snapshot.session.currentQuestion?.choices.map(
+          (choice) => choice.id,
+        ),
+        order,
+      );
+    } finally {
+      await rm(f.dir, { recursive: true, force: true });
     }
   });
 

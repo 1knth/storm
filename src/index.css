@@ -608,7 +608,7 @@
 .quiz-reveal-word,
 .quiz-reveal-unit {
   animation: quiz-word-reveal 100ms ease-out both;
-  animation-delay: calc(var(--quiz-word-index) * 50ms);
+  animation-delay: calc(var(--quiz-word-index) * var(--quiz-word-step, 50ms));
 }
 
 .quiz-reveal-unit {
@@ -622,7 +622,7 @@
 
 .quiz-reveal-task-checkbox {
   animation: quiz-word-reveal 100ms ease-out both;
-  animation-delay: calc(var(--quiz-word-index) * 50ms);
+  animation-delay: calc(var(--quiz-word-index) * var(--quiz-word-step, 50ms));
 }
 
 .quiz-reveal-marker {
@@ -631,7 +631,7 @@
   margin-left: -1.5em;
   color: var(--preview-list-marker-color, currentColor);
   animation: quiz-word-reveal 100ms ease-out both;
-  animation-delay: calc(var(--quiz-word-index) * 50ms);
+  animation-delay: calc(var(--quiz-word-index) * var(--quiz-word-step, 50ms));
 }
 
 .quiz-reveal-list-item > .quiz-reveal-marker::before {
@@ -938,6 +938,63 @@
 .quiz-agent-markdown pre code {
   background: transparent;
   padding: 0;
+}
+
+/* Callout asides and learner-opened hints. Accent colors stay within the
+   app's panel tokens so appearance settings keep driving text color. */
+.quiz-agent-markdown .quiz-callout {
+  --quiz-callout-accent: rgb(var(--ui-fg) / 45%);
+
+  margin-block: 0.75rem;
+  border: 1px solid rgb(var(--ui-border) / 20%);
+  border-left: 3px solid var(--quiz-callout-accent);
+  border-radius: 0.5rem;
+  background: rgb(var(--ui-panel) / 25%);
+  padding: 0.6rem 0.75rem;
+}
+
+.quiz-agent-markdown .quiz-callout--tip,
+.quiz-agent-markdown .quiz-callout--hint {
+  --quiz-callout-accent: rgb(110 231 183 / 75%);
+}
+
+.quiz-agent-markdown .quiz-callout--example {
+  --quiz-callout-accent: rgb(147 197 253 / 75%);
+}
+
+.quiz-agent-markdown .quiz-callout--important {
+  --quiz-callout-accent: rgb(196 165 245 / 80%);
+}
+
+.quiz-agent-markdown .quiz-callout--warning,
+.quiz-agent-markdown .quiz-callout--caution {
+  --quiz-callout-accent: rgb(252 165 165 / 80%);
+}
+
+.quiz-agent-markdown .quiz-callout-title {
+  color: var(--quiz-callout-accent);
+  font-weight: 750;
+}
+
+.quiz-agent-markdown summary.quiz-callout-title {
+  cursor: pointer;
+}
+
+.quiz-agent-markdown summary.quiz-callout-title:focus-visible {
+  outline: 2px solid rgb(var(--ui-fg) / 60%);
+  outline-offset: 2px;
+}
+
+.quiz-agent-markdown .quiz-callout-body {
+  margin-block-start: 0.35rem;
+}
+
+.quiz-agent-markdown .quiz-callout-body > :first-child {
+  margin-top: 0;
+}
+
+.quiz-agent-markdown .quiz-callout-body > :last-child {
+  margin-bottom: 0;
 }
 
 .quiz-markdown-table-scroll {

@@ -18,6 +18,7 @@ import {
 import { remarkSoftBreaks } from './Editor/markdownSoftBreaks';
 import { remarkQuizCurrency } from './quizMarkdownCurrency';
 import { remarkQuizLatexDelimiters } from './quizMarkdownMath';
+import { remarkQuizCallouts } from './quizMarkdownCallouts';
 import MermaidBlock from './Editor/MermaidBlock';
 import type { Appearance } from '../appearance';
 import { DEFAULT_APPEARANCE } from '../appearance';
@@ -144,9 +145,32 @@ const quizMarkdownRemarkPlugins = [
   remarkGfm,
   remarkSoftBreaks,
 ];
+// Choices are labels: a callout would turn an option into a titled panel, so
+// callouts render only in prompts, feedback and chat.
+const quizContentRemarkPlugins = [
+  ...quizMarkdownRemarkPlugins,
+  remarkQuizCallouts,
+];
+/** Word-by-word reveal. The per-word step shrinks on long answers so a whole
+ *  response still finishes within QUIZ_REVEAL_BUDGET_MS instead of trickling in. */
+export const QUIZ_REVEAL_STEP_MS = 50;
+export const QUIZ_REVEAL_BUDGET_MS = 2500;
+export function quizRevealStepMs(units: number) {
+  if (units <= 1) return QUIZ_REVEAL_STEP_MS;
+  const step = Math.min(
+    QUIZ_REVEAL_STEP_MS,
+    QUIZ_REVEAL_BUDGET_MS / (units - 1),
+  );
+  return Math.round(step * 10) / 10;
+}
 function rehypeQuizWordReveal() {
   return (tree: any) => {
     let index = 0;
+    const styles: Record<string, unknown>[] = [];
+    const paced = (style: Record<string, unknown>) => {
+      styles.push(style);
+      return style;
+    };
     const visit = (node: any, parent?: any) => {
       const classes = node.properties?.className ?? [];
       const atomic =
@@ -158,7 +182,7 @@ function rehypeQuizWordReveal() {
           tagName: 'span',
           properties: {
             className: ['quiz-reveal-unit'],
-            style: { '--quiz-word-index': index++ },
+            style: paced({ '--quiz-word-index': index++ }),
           },
           children: [node],
         };
@@ -166,14 +190,16 @@ function rehypeQuizWordReveal() {
         return;
       }
       if (node.type === 'text') {
-        // Keep structural whitespace between table rows/cells as text. Wrapping
-        // it in spans creates invalid table children that browsers move outside.
+        // Keep structural whitespace between rows, cells and list items as
+        // text. Wrapping it in spans creates invalid table and list children.
         if (
           !node.value.trim() &&
-          ['table', 'thead', 'tbody', 'tfoot', 'tr'].includes(parent?.tagName)
+          ['table', 'thead', 'tbody', 'tfoot', 'tr', 'ul', 'ol', 'dl'].includes(
+            parent?.tagName,
+          )
         )
           return;
-        const parts = node.value.split(/(\\s+)/);
+        const parts = node.value.split(/(\s+)/);
         node.type = 'element';
         node.tagName = 'span';
         node.properties = {};
@@ -184,7 +210,7 @@ function rehypeQuizWordReveal() {
                 tagName: 'span',
                 properties: {
                   className: ['quiz-reveal-word'],
-                  style: { '--quiz-word-index': index++ },
+                  style: paced({ '--quiz-word-index': index++ }),
                 },
                 children: [{ type: 'text', value: part }],
               }
@@ -220,10 +246,10 @@ function rehypeQuizWordReveal() {
                 ...(checkbox.properties.className ?? []),
                 'quiz-reveal-task-checkbox',
               ];
-              checkbox.properties.style = {
+              checkbox.properties.style = paced({
                 ...checkbox.properties.style,
                 '--quiz-word-index': markerIndex,
-              };
+              });
             }
           }
           node.properties.className = [
@@ -236,7 +262,7 @@ function rehypeQuizWordReveal() {
               tagName: 'span',
               properties: {
                 className: ['quiz-reveal-marker'],
-                style: { '--quiz-word-index': markerIndex },
+                style: paced({ '--quiz-word-index': markerIndex }),
                 ariaHidden: 'true',
               },
               children: [],
@@ -245,11 +271,14 @@ function rehypeQuizWordReveal() {
       }
     };
     visit(tree);
+    const step = quizRevealStepMs(index);
+    for (const style of styles) style['--quiz-word-step'] = `${step}ms`;
   };
 }
 const quizMarkdownRehypePlugins = [markdownMathRehypePlugin];
 export const QuizMarkdownAppearanceContext = createContext(DEFAULT_APPEARANCE);
-function SafeQuizMarkdownLink({ href, children, ...props }: any) {
+// react-markdown passes the source `node`; keep it out of the rendered DOM.
+function SafeQuizMarkdownLink({ href, children, node: _node, ...props }: any) {
   if (typeof href !== 'string') return <span>{children}</span>;
   try {
     const url = new URL(href);
@@ -266,7 +295,7 @@ function SafeQuizMarkdownLink({ href, children, ...props }: any) {
   }
 }
 function quizHeading(Heading: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') {
-  return function QuizHeading({ children, ...props }: any) {
+  return function QuizHeading({ children, node: _node, ...props }: any) {
     const appearance = useContext(QuizMarkdownAppearanceContext);
     return (
       <Heading
@@ -326,15 +355,15 @@ const quizMarkdownComponents = {
       </em>
     );
   },
-  pre: ({ children, ...props }: any) => {
+  pre: ({ children, node: _node, ...props }: any) => {
     const appearance = useContext(QuizMarkdownAppearanceContext);
     const child = Array.isArray(children) ? children[0] : children;
     if (child && typeof child === 'object' && 'props' in child) {
       const code = child.props as { className?: string; children?: unknown };
-      if (code.className?.split(/\\s+/).includes('language-mermaid'))
+      if (code.className?.split(/\s+/).includes('language-mermaid'))
         return (
           <MermaidBlock
-            source={String(code.children ?? '').replace(/\\n$/, '')}
+            source={String(code.children ?? '').replace(/\n$/, '')}
             appearance={appearance}
           />
         );
@@ -634,7 +663,9 @@ export const QuizMarkdown = memo(function QuizMarkdown({
         }
       >
         <ReactMarkdown
-          remarkPlugins={quizMarkdownRemarkPlugins}
+          remarkPlugins={
+            choice ? quizMarkdownRemarkPlugins : quizContentRemarkPlugins
+          }
           rehypePlugins={
             reveal
               ? [...quizMarkdownRehypePlugins, rehypeQuizWordReveal]

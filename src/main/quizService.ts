@@ -13,6 +13,10 @@ import {
   type QuizSession,
   type QuizSnapshot,
 } from '../shared/quizProtocol';
+import {
+  orderQuizChoices,
+  orderQuizMatchOptions,
+} from '../shared/quizChoiceOrder';
 import { QuizStore } from './quizStore';
 import {
   MAX_QUIZ_MESSAGE_IMAGES,
@@ -492,17 +496,26 @@ export class QuizService {
           }
         }
         const questionId = randomUUID();
+        // Presentation order is decided once here and persisted, so answer
+        // position carries no clue while IDs, scoring, submitted drafts and
+        // reattachment keep reading the stored order.
         const safeQuestion = {
           id: questionId,
           ...(request.studyBasis ? { studyBasis: request.studyBasis } : {}),
           ...(learning ? { learning } : {}),
           kind,
           prompt: request.question,
-          choices: structuredClone(choices),
+          choices:
+            kind === 'multiple-choice'
+              ? orderQuizChoices(structuredClone(choices), questionId)
+              : structuredClone(choices),
           ...(kind === 'matching'
             ? {
                 leftItems: structuredClone(request.leftItems!),
-                rightItems: structuredClone(request.rightItems!),
+                rightItems: orderQuizMatchOptions(
+                  structuredClone(request.rightItems!),
+                  questionId,
+                ),
               }
             : {}),
         };

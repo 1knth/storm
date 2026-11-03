@@ -21,6 +21,9 @@ import {
   QuizVerdict,
   QuizAnswerActions,
   QuizLearningTag,
+  quizRevealStepMs,
+  QUIZ_REVEAL_BUDGET_MS,
+  QUIZ_REVEAL_STEP_MS,
 } from './QuizPane';
 
 function render(markdown: string) {
@@ -111,7 +114,7 @@ describe('quiz word reveal', () => {
     assert.equal((html.match(/quiz-reveal-marker/g) ?? []).length, 4);
     assert.match(
       html,
-      /<li class="quiz-reveal-list-item"><span class="quiz-reveal-marker" style="--quiz-word-index:0" aria-hidden="true"><\/span><span><span class="quiz-reveal-word"/,
+      /<li class="quiz-reveal-list-item"><span class="quiz-reveal-marker" style="--quiz-word-index:0[^"]*" aria-hidden="true"><\/span><span><span class="quiz-reveal-word"/,
     );
     assert.match(html, /<ol>/);
     assert.match(html, /<ul>/);
@@ -129,11 +132,11 @@ describe('quiz word reveal', () => {
     assert.equal((html.match(/quiz-reveal-task-checkbox/g) ?? []).length, 3);
     assert.match(
       html,
-      /type="checkbox" disabled="" class="quiz-reveal-task-checkbox" style="--quiz-word-index:0"/,
+      /type="checkbox" disabled="" class="quiz-reveal-task-checkbox" style="--quiz-word-index:0[^"]*"/,
     );
     assert.match(
       html,
-      /type="checkbox" disabled="" class="quiz-reveal-task-checkbox" style="--quiz-word-index:1" checked=""/,
+      /type="checkbox" disabled="" class="quiz-reveal-task-checkbox" style="--quiz-word-index:1[^"]*" checked=""/,
     );
     assert.doesNotMatch(html, /aria-hidden/);
   });
@@ -149,7 +152,7 @@ describe('quiz word reveal', () => {
     assert.match(html, /quiz-reveal-marker" style="--quiz-word-index:0/);
     assert.match(
       html,
-      /class="quiz-reveal-unit" style="--quiz-word-index:0"><code>code-only<\/code>/,
+      /class="quiz-reveal-unit" style="--quiz-word-index:0[^"]*"><code>code-only<\/code>/,
     );
   });
 
@@ -163,11 +166,11 @@ describe('quiz word reveal', () => {
 
     assert.match(
       html,
-      /class="quiz-reveal-unit" style="--quiz-word-index:1"><span class="katex"/,
+      /class="quiz-reveal-unit" style="--quiz-word-index:1[^"]*"><span class="katex"/,
     );
     assert.match(
       html,
-      /class="quiz-reveal-unit" style="--quiz-word-index:3"><span class="katex-display"/,
+      /class="quiz-reveal-unit" style="--quiz-word-index:3[^"]*"><span class="katex-display"/,
     );
   });
 
@@ -186,7 +189,7 @@ describe('quiz word reveal', () => {
     assert.doesNotMatch(html, /quiz-reveal-word[^>]*>x/);
     assert.match(
       html,
-      /class="quiz-reveal-unit" style="--quiz-word-index:2"><span class="katex"/,
+      /class="quiz-reveal-unit" style="--quiz-word-index:2[^"]*"><span class="katex"/,
     );
     assert.match(html, /--quiz-word-index:3/);
   });
@@ -720,7 +723,7 @@ describe('quiz Markdown renderer', () => {
     assert.doesNotMatch(revealed, /quiz-reveal-word/);
     assert.match(
       revealed,
-      /class="quiz-reveal-unit" style="--quiz-word-index:0"/,
+      /class="quiz-reveal-unit" style="--quiz-word-index:0[^"]*"/,
     );
     assert.doesNotMatch(revealed, /language-mermaid/);
   });
@@ -742,6 +745,35 @@ Explain \(p\lor q\).`);
     assert.match(html, /class="katex-display"/);
     assert.equal((html.match(/class="katex"/g) ?? []).length, 2);
     assert.doesNotMatch(html, /katex-error/);
+  });
+
+  it('keeps bracket display math inside its list item, quotation, or sentence', () => {
+    const list = render(
+      String.raw`1. Solve:
+   \[
+   x^2 = 4
+   \]
+
+2. Next step`,
+    );
+    assert.match(list, /<li>\s*<p>Solve:<\/p>\s*<span class="katex-display"/);
+    assert.match(list, /<li>\s*(?:<p>)?Next step/);
+    assert.doesNotMatch(list, /<\/ol>[\s\S]*katex/);
+    assert.equal((list.match(/class="katex-display"/g) ?? []).length, 1);
+    assert.doesNotMatch(list, /\$\$/);
+
+    const quoted = render(String.raw`> Shown:
+> \[
+> y = 2
+> \]`);
+    assert.match(
+      quoted,
+      /<blockquote>[\s\S]*<span class="katex-display"[\s\S]*<\/blockquote>/,
+    );
+
+    const inline = render(String.raw`Text \[a+b\] tail`);
+    assert.match(inline, /<p>Text <span class="katex"[\s\S]*tail<\/p>/);
+    assert.doesNotMatch(inline, /\$\$/);
   });
 
   it('preserves LaTeX delimiters inside code and escaped delimiters', () => {
@@ -836,6 +868,125 @@ Explain \(p\lor q\).`);
   it('keeps numeric equations with trailing spaces and double-dollar math', () => {
     const html = render('$2 + 2 $ and $$2 $$');
     assert.equal((html.match(/class="katex"/g) ?? []).length, 2);
+  });
+
+  it('keeps react-markdown source nodes out of rendered attributes', () => {
+    const html = render(
+      '# Heading\n\n**bold** *italic* [link](https://example.com)\n\n```js\nconst x = 1;\n```\n\n| a |\n| --- |\n| 1 |\n\nText[^1]\n\n[^1]: footnote\n',
+    );
+    assert.doesNotMatch(html, / node=/);
+  });
+
+  it('paces word reveal so long answers still finish within the reveal budget', () => {
+    assert.equal(quizRevealStepMs(1), QUIZ_REVEAL_STEP_MS);
+    assert.equal(quizRevealStepMs(20), QUIZ_REVEAL_STEP_MS);
+    const words = Array.from({ length: 120 }, (_, index) => `word${index}`);
+    const html = renderToStaticMarkup(
+      React.createElement(QuizMarkdown, {
+        reveal: true,
+        children: words.join(' '),
+      }),
+    );
+    const step = Number(/--quiz-word-step:([\d.]+)ms/.exec(html)?.[1]);
+    assert.equal(step, quizRevealStepMs(words.length));
+    assert.ok(step < QUIZ_REVEAL_STEP_MS);
+    assert.ok((words.length - 1) * step <= QUIZ_REVEAL_BUDGET_MS);
+    assert.equal((html.match(/--quiz-word-step:/g) ?? []).length, words.length);
+  });
+});
+
+describe('quiz callouts', () => {
+  it('renders a labelled callout with its own title and body', () => {
+    const html = render('> [!NOTE]\n> Mind the loop guard.');
+    assert.match(
+      html,
+      /<div class="quiz-callout quiz-callout--note">\s*<div class="quiz-callout-title">Note<\/div>/,
+    );
+    assert.match(
+      html,
+      /<div class="quiz-callout-body">\s*<p>Mind the loop guard\.<\/p>/,
+    );
+  });
+
+  it('keeps an authored title, its inline formatting, and the whole body', () => {
+    const html = render(
+      '> [!TIP] Spotting the **invariant**\n> Check the guard.\n>\n> - one\n> - two',
+    );
+    assert.match(
+      html,
+      /quiz-callout-title">Spotting the <strong[^>]*>invariant<\/strong><\/div>/,
+    );
+    assert.match(html, /<p>Check the guard\.<\/p>/);
+    assert.match(html, /<li>one<\/li>/);
+    assert.match(html, /quiz-callout--tip/);
+  });
+
+  it('collapses hints and honours explicit open and closed markers', () => {
+    const hint = render('> [!HINT]\n> Try $x=2$.');
+    assert.match(
+      hint,
+      /<details class="quiz-callout quiz-callout--hint">\s*<summary class="quiz-callout-title">Hint<\/summary>/,
+    );
+    assert.doesNotMatch(hint, /<details[^>]* open/);
+    assert.match(hint, /class="katex"/);
+
+    const closed = render(
+      '> [!EXAMPLE]- Worked solution\n> Start from the base case.',
+    );
+    assert.match(
+      closed,
+      /<details class="quiz-callout quiz-callout--example">/,
+    );
+    assert.doesNotMatch(closed, /<details[^>]* open/);
+
+    const open = render('> [!warning]+ Careful\n> Mind the sign.');
+    assert.match(open, /<details[^>]* open=""/);
+    assert.match(open, /quiz-callout--warning/);
+    assert.match(
+      open,
+      /<summary class="quiz-callout-title">Careful<\/summary>/,
+    );
+  });
+
+  it('leaves ordinary and unrecognized blockquotes untouched', () => {
+    assert.match(render('> ordinary quotation'), /<blockquote>/);
+    const unknown = render('> [!FOO]\n> still a quotation');
+    assert.match(unknown, /<blockquote>/);
+    assert.match(unknown, /\[!FOO\]/);
+    assert.doesNotMatch(unknown, /quiz-callout/);
+  });
+
+  it('does not turn an answer choice into a titled panel', () => {
+    const choice = renderToStaticMarkup(
+      React.createElement(QuizMarkdown, {
+        choice: true,
+        children: '> [!NOTE]\n> inside a choice',
+      }),
+    );
+    assert.match(choice, /<blockquote>/);
+    assert.doesNotMatch(choice, /quiz-callout/);
+  });
+
+  it('nests a hint inside a callout and reveals callout text word by word', () => {
+    const nested = render(
+      '> [!NOTE] Outer\n> text\n>\n> > [!HINT] inner\n> > secret',
+    );
+    assert.match(
+      nested,
+      /quiz-callout--note[\s\S]*<details class="quiz-callout quiz-callout--hint">[\s\S]*secret/,
+    );
+
+    const revealed = renderToStaticMarkup(
+      React.createElement(QuizMarkdown, {
+        reveal: true,
+        children: '> [!TIP] Look here\n> alpha beta',
+      }),
+    );
+    assert.match(
+      revealed,
+      /quiz-callout-title"><span><span class="quiz-reveal-word"[^>]*>Look<\/span>/,
+    );
+    assert.equal((revealed.match(/quiz-reveal-word/g) ?? []).length, 4);
   });
 });
 

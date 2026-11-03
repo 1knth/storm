@@ -26,7 +26,20 @@ export function remarkQuizLatexDelimiters(this: any) {
           )
         )
           return match;
-        return display != null ? `$$\n${display.trim()}\n$$` : `$${inline}$`;
+        if (display == null) return `$${inline}$`;
+        // Keep the block inside its list item or blockquote: continuation
+        // lines need the same indentation or quote prefix as the opener.
+        const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+        const prefix = source.slice(lineStart, offset);
+        const lines = display
+          .trim()
+          .split('\n')
+          .map((line: string) => line.trim());
+        // Display delimiters used mid-sentence cannot open a block without
+        // splitting the paragraph; render that equation inline instead.
+        if (!/^[ \t>]*$/.test(prefix)) return `$$${lines.join(' ')}$$`;
+        const body = lines.map((line: string) => `${prefix}${line}`).join('\n');
+        return `$$\n${body}\n${prefix}$$`;
       },
     );
     if (normalized === source) return tree;
