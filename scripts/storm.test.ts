@@ -1301,11 +1301,15 @@ test('CLI stream forwards a small chunk before stdin EOF', async () => {
   const appendSeen = new Promise<void>((resolve) => {
     started = resolve;
   });
+  // The resolver is created before the generator runs: observing the append
+  // request does not prove the consumer has re-entered the generator body, so
+  // assigning `release` from inside it races with the release below.
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const stdin = (async function* () {
     yield Buffer.from('small 🌊');
-    await new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    await blocked;
   })();
   try {
     const running = runCli(
