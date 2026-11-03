@@ -160,7 +160,7 @@ function App() {
       ? JSON.stringify([activeVaultId, activePath])
       : null;
   const readingMode = readingModeKey
-    ? readingModes[readingModeKey] === true
+    ? (readingModes[readingModeKey] ?? true)
     : false;
   const activeVaultIdRef = useRef<string | null>(null);
   const vaultsRef = useRef(vaults);
@@ -2521,7 +2521,7 @@ function App() {
     if (!readingModeKey || !activeId) return;
     setReadingModes((modes) => ({
       ...modes,
-      [readingModeKey]: !modes[readingModeKey],
+      [readingModeKey]: !(modes[readingModeKey] ?? true),
     }));
   };
 
