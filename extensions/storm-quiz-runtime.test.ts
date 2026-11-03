@@ -142,6 +142,50 @@ describe('model-safe quiz context', () => {
     ).not.toContain('scope');
   });
 
+  test('attach provides adaptive practice and confidence policy without weakening Continue or Skip', () => {
+    const prompt = attachPrompt({ id: 'quiz', status: 'connected' });
+    for (const guidance of [
+      'After Continue and before choosing or posing a question, read storm_quiz with action learner',
+      'Tag every substantive question with concepts, level, and support',
+      'Reuse existing concept IDs',
+      'worked for a shown worked example, hinted for a given hint, independent otherwise',
+      'Levels are recall, explain, apply, transfer',
+      'independent performance, zpd',
+      'beyond (teach with support first)',
+      'explain new material before testing it',
+      'Target predicted independent success of 0.70–0.85',
+      'at most about a third of questions',
+      'easiest ZPD concept first at its recommended level and support',
+      'After two misses at one level, step down a level or add support',
+      'a worked example or contrasting case',
+      'Above the band independently, raise the level, offer transfer, or move on',
+      'Fade support from worked to hinted to independent',
+      'Once two or more concepts are introduced, mix earlier concepts in',
+      'data.confidence (0–100)',
+      'High-confidence errors (>=70) need an explicit, elaborated correction',
+      'low-confidence correct answers need brief reinforcement of why',
+      'calibration bias is large, mention it supportively and occasionally',
+      'Recommendations are advisory; explicit learner requests win',
+      'Never present model numbers as grades or mastery',
+      'Untagged or ungraded answers are not modelled',
+      'Keep the existing Continue and Skip rules',
+      'continue only after explicit Continue or learner Skip',
+      'use storm_quiz with action skip-question',
+    ])
+      expect(prompt).toContain(guidance);
+  });
+
+  test('attach states extension waiter ownership so the clipboard need not repeat it', () => {
+    const prompt = attachPrompt({ id: 'quiz', status: 'connected' });
+    for (const guidance of [
+      'The extension owns learner-event delivery in this session',
+      'do not start another attach, wait subprocess, listener, polling loop, or subagent',
+      'then end your turn',
+      'makes no idle model calls',
+    ])
+      expect(prompt).toContain(guidance);
+  });
+
   test('recurring learner notifications stay compact without repeating attach guidance', () => {
     const notice = learnerNotification(
       [{ cursor: 4, type: 'answer', data: { answer: '42' } }],

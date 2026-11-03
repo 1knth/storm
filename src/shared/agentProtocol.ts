@@ -7,6 +7,7 @@ import type {
   QuizSession,
   QuizSnapshot,
 } from './quizProtocol';
+import type { LearnerState } from './learnerModel';
 import type { StudyRequest, StudyValue } from './studyContext';
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 
@@ -253,6 +254,15 @@ export type AgentRequest =
       type: 'quiz';
       operation: 'request';
       request: QuizAgentRequest;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
+      /** Read-only learner model for the session's vault; requires the session capability. */
+      operation: 'learner';
+      sessionId: string;
+      agentToken: string;
     };
 
 export type AgentQuizSession = Omit<QuizSession, 'agentToken'>;
@@ -493,6 +503,14 @@ export type AgentResponse =
       type: 'quiz';
       operation: 'request';
       result: QuizResult<AgentQuizSession>;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'learner';
+      result: QuizResult<LearnerState>;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;

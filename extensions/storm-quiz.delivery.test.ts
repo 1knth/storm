@@ -314,6 +314,35 @@ test('model-facing schemas expose limits, context ownership, and Continue effect
     expect(prompt.text.args[0].maxLength).toBe(4000);
     expect(prompt.contextId).toBeDefined();
     expect(prompt.choices.args[0].args[0]).toHaveProperty('effect');
+    const schema = f.tools.get('storm_quiz').parameters.args[0];
+    const learner = variants.find(
+      (fields: any) => fields.action.args[0] === 'learner',
+    );
+    expect(Object.keys(learner)).toEqual(['action']);
+    expect(schema.action.args[0].map((value: any) => value.args[0])).toContain(
+      'learner',
+    );
+    const questions = variants.filter(
+      (fields: any) => fields.action.args[0] === 'question',
+    );
+    expect(questions).toHaveLength(4);
+    for (const fields of [schema, ...questions]) {
+      const concepts = fields.concepts.args[0];
+      expect(concepts.args[1]).toEqual({
+        minItems: 1,
+        maxItems: 3,
+        uniqueItems: true,
+      });
+      expect(concepts.args[0].args[0].pattern).toBe(
+        '^[a-z0-9][a-z0-9-]{0,63}$',
+      );
+      expect(
+        fields.level.args[0].args[0].map((value: any) => value.args[0]),
+      ).toEqual(['recall', 'explain', 'apply', 'transfer']);
+      expect(
+        fields.support.args[0].args[0].map((value: any) => value.args[0]),
+      ).toEqual(['independent', 'hinted', 'worked']);
+    }
   } finally {
     await f.close();
   }

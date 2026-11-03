@@ -145,6 +145,7 @@ if(a[0]==='study'){if(!s.study){ok({});}else if(op==='capabilities'){ok({schemaV
 else if(op==='list'){ok(s.list ?? [{id:'quiz-test',status:s.listStatus ?? s.status}]);}
 else if(op==='attach'){ok({agentToken:'synthetic-capability',snapshot:{session:{id,revision:s.revision,eventCursor:s.cursor,status:s.status,scope:s.scope ?? 'synthetic'},events:[]}});}
 else if(op==='wait'){if(s.waitError){process.stderr.write(JSON.stringify({error:{code:s.waitError}}));process.exitCode=1;}else if(s.waitSnapshot){process.stdout.write(JSON.stringify({ok:true,snapshot:s.waitSnapshot,after:s.waitSnapshot.session.eventCursor,timedOut:false}));}else {process.stdin.resume();setInterval(()=>{},1000);}}
+else if(op==='learner'){s.learnerCalls=(s.learnerCalls||[]).concat({args:a,authenticated:process.env.STORM_QUIZ_TOKEN==='synthetic-capability'});save();ok(s.learner ?? {concepts:[],next:[]});}
 else if(op==='status'){process.stdout.write(JSON.stringify({ok:true,operation:'snapshot',snapshot:{session:{id,revision:s.statusRevision ?? s.revision,eventCursor:s.statusCursor ?? s.cursor,status:s.status},events:[]}}));}
 else if(op==='request'){let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{s.requests.push(JSON.parse(b));s.revision++;save();ok({revision:s.revision,currentQuestion:null});});}
 else if(op==='activity'){s.activity.push(arg('--state'));save();ok({});}
@@ -279,6 +280,55 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await pi.shutdown();
   });
 
+  test('learner reads use the held token without context or write bookkeeping', async () => {
+    const learner = {
+      concepts: [{ id: 'loop-condition', zone: 'zpd' }],
+      next: [],
+      calibration: { rated: 0 },
+    };
+    const { stateFile } = await fixture({ learner });
+    const pi = makePi();
+    try {
+      await attach(pi);
+      const originalContext = pi.calls[0].command.match(
+        /"contextId":"([^"]+)"/,
+      )![1];
+      const tool = pi.tools.get('storm_quiz');
+      const result = await tool.execute('same-operation', {
+        action: 'learner',
+        contextId: undefined,
+      });
+      expect(JSON.parse(result.content[0].text)).toEqual(learner);
+      expect(result.content[0].text).not.toContain('contextId');
+      const stored = await state(stateFile);
+      expect(stored.learnerCalls).toEqual([
+        { args: ['quiz', 'learner', 'quiz-test'], authenticated: true },
+      ]);
+      expect(stored.requests).toEqual([]);
+      expect(stored.revision).toBe(8);
+      // The read neither reserves this operation ID nor invalidates the original context.
+      await tool.execute('same-operation', {
+        action: 'question',
+        contextId: originalContext,
+        kind: 'short-answer',
+        text: 'Explain the condition.',
+        concepts: ['loop-condition'],
+        level: 'explain',
+        support: 'hinted',
+      });
+      expect((await state(stateFile)).requests[0]).toMatchObject({
+        type: 'pose-question',
+        expectedRevision: 8,
+        handledThroughCursor: 3,
+        concepts: ['loop-condition'],
+        level: 'explain',
+        support: 'hinted',
+      });
+    } finally {
+      await pi.shutdown();
+    }
+  });
+
   test('tool question, feedback, and chat preserve structured payloads and nested response handling', async () => {
     const { stateFile } = await fixture();
     const pi = makePi();
@@ -307,12 +357,18 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
       promptId: 'prompt-1',
     });
     await tool.execute('m', { action: 'message', text: 'Explain' });
+    await tool.execute('skip', {
+      action: 'skip-question',
+      questionId: 'question-1',
+      text: 'Cleared without grading.',
+    });
     const requests = (await state(stateFile)).requests;
     expect(requests.map((r: any) => r.type)).toEqual([
       'pose-question',
       'feedback',
       'pose-prompt',
       'agent-message',
+      'skip-question',
     ]);
     expect(requests[0].leftItems).toEqual([{ id: 'a', text: 'A' }]);
     expect(requests[1].text).toBe('Correct');
@@ -327,7 +383,42 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
       ],
     });
     expect(requests[3].text).toBe('Explain');
+    expect(requests[4]).toMatchObject({
+      questionId: 'question-1',
+      text: 'Cleared without grading.',
+    });
+    expect(requests[4].verdict).toBeUndefined();
     expect(requests.every((r: any) => r.expectedRevision >= 8)).toBe(true);
+    await pi.shutdown();
+  });
+
+  test('learner Skip reaches the attached agent as an explicit next-question event', async () => {
+    const { stateFile } = await fixture();
+    const pi = makePi();
+    await attach(pi);
+    const s = await state(stateFile);
+    s.waitSnapshot = {
+      session: {
+        id: 'quiz-test',
+        revision: 8,
+        eventCursor: 4,
+        status: 'connected',
+        currentQuestion: null,
+      },
+      events: [{ cursor: 4, type: 'skip', data: { questionId: 'q1' } }],
+    };
+    await writeState(stateFile, s);
+    await pi.command('disconnect');
+    await attach(pi);
+    await flush();
+    await flush();
+    expect(
+      pi.calls.some(
+        (call) =>
+          call.command.includes('"type":"skip"') &&
+          call.command.includes('"questionId":"q1"'),
+      ),
+    ).toBe(true);
     await pi.shutdown();
   });
 
@@ -348,7 +439,11 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
         {
           cursor: 4,
           type: 'answer',
-          data: { answer: 'Exact café\nsecond line', reasoning: 'because' },
+          data: {
+            answer: 'Exact café\nsecond line',
+            reasoning: 'because',
+            confidence: 80,
+          },
         },
       ],
     };
@@ -361,6 +456,9 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
       pi.calls.some((call: any) =>
         call.command.includes('Exact café\\nsecond line'),
       ),
+    ).toBe(true);
+    expect(
+      pi.calls.some((call) => call.command.includes('"confidence":80')),
     ).toBe(true);
     await pi.shutdown();
     await flush();

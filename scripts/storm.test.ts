@@ -1884,7 +1884,28 @@ test('quiz CLI round-trips authenticated agent actions and UI learner events', a
         .map((request) => request.request.type),
       ['pose-question', 'feedback', 'pose-question'],
     );
+    const skipped = await invoke(
+      ['quiz', 'request', 'quiz-1', '--token', 'secret-token'],
+      JSON.stringify({
+        type: 'skip-question',
+        expectedRevision: revision,
+        questionId: 'q1',
+        text: 'Cleared without a grade.',
+      }),
+    );
+    assert.equal(skipped.code, 0, skipped.error);
+    assert.equal(requests.at(-1).request.type, 'skip-question');
+    assert.equal(requests.at(-1).request.questionId, 'q1');
+    assert.equal(requests.at(-1).request.text, 'Cleared without a grade.');
     for (const bad of [
+      { type: 'skip', expectedRevision: 1, questionId: 'q1' },
+      { type: 'skip-question', expectedRevision: 1, text: 'Missing ID' },
+      {
+        type: 'skip-question',
+        expectedRevision: 1,
+        questionId: 'q1',
+        text: '',
+      },
       { type: 'answer', expectedRevision: 1, choiceId: 'a', reasoning: 'x' },
       { type: 'continue', expectedRevision: 1 },
       { type: 'message', expectedRevision: 1, text: 'x' },
@@ -1949,6 +1970,187 @@ test('quiz CLI round-trips authenticated agent actions and UI learner events', a
     } finally {
       await failingEndpoint.close();
     }
+  } finally {
+    await endpoint.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('quiz learner authenticates with a flag or environment and rejects invalid arguments', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'storm-cli-learner-'));
+  const requests: any[] = [];
+  const learner = { concepts: [], next: [], band: { low: 0.7, high: 0.85 } };
+  const endpoint = await startAgentEndpoint({
+    userDataPath: directory,
+    broker: {
+      async handle(request: any) {
+        requests.push(request);
+        return {
+          protocol: 1,
+          requestId: request.requestId,
+          ok: true,
+          type: 'quiz',
+          operation: request.operation,
+          result: { ok: true, value: learner },
+        };
+      },
+    },
+  });
+  const previousToken = process.env.STORM_QUIZ_TOKEN;
+  const invoke = async (args: string[]) => {
+    let output = '',
+      error = '';
+    const code = await runCli(
+      ['--endpoint', endpoint.metadataPath, 'quiz', 'learner', ...args],
+      {
+        stdout: (text) => (output += text),
+        stderr: (text) => (error += text),
+      },
+    );
+    return { code, output, error };
+  };
+  try {
+    delete process.env.STORM_QUIZ_TOKEN;
+    const result = await invoke(['quiz-1', '--token', 'flag-token']);
+    assert.equal(result.code, 0, result.error);
+    assert.deepEqual(JSON.parse(result.output).result.value, learner);
+    assert.equal(JSON.parse(result.output).operation, 'learner');
+    assert.deepEqual(
+      (({ type, operation, sessionId, agentToken }) => ({
+        type,
+        operation,
+        sessionId,
+        agentToken,
+      }))(requests.at(-1)),
+      {
+        type: 'quiz',
+        operation: 'learner',
+        sessionId: 'quiz-1',
+        agentToken: 'flag-token',
+      },
+    );
+    assert.equal(requests.at(-1).expectedRevision, undefined);
+    assert.equal(requests.at(-1).after, undefined);
+    const count = requests.length;
+    for (const args of [
+      [],
+      ['--token', 'flag-token'],
+      ['quiz-1'],
+      ['quiz-1', '--token'],
+      ['quiz-1', '--token', '--compact'],
+      ['quiz-1', '--token', 'flag-token', '--unknown'],
+      ['quiz-1', '--token', 'flag-token', '--after', '1'],
+      ['quiz-1', '--token', 'flag-token', '--state', 'idle'],
+      ['quiz-1', '--token', 'flag-token', 'extra'],
+    ]) {
+      const invalid = await invoke(args);
+      assert.equal(invalid.code, 2, JSON.stringify(args));
+      assert.equal(JSON.parse(invalid.error).error.code, 'INVALID_ARGUMENT');
+    }
+    assert.equal(requests.length, count);
+    process.env.STORM_QUIZ_TOKEN = 'environment-token';
+    assert.equal((await invoke(['quiz-1'])).code, 0);
+    assert.equal(requests.at(-1).agentToken, 'environment-token');
+    assert.equal(
+      (await invoke(['quiz-1', '--token', 'override-token'])).code,
+      0,
+    );
+    assert.equal(requests.at(-1).agentToken, 'override-token');
+  } finally {
+    if (previousToken === undefined) delete process.env.STORM_QUIZ_TOKEN;
+    else process.env.STORM_QUIZ_TOKEN = previousToken;
+    await endpoint.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('quiz request validates learning tags before sending pose-question', async () => {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), 'storm-cli-learning-'),
+  );
+  const requests: any[] = [];
+  const endpoint = await startAgentEndpoint({
+    userDataPath: directory,
+    broker: {
+      async handle(request: any) {
+        requests.push(request);
+        return {
+          protocol: 1,
+          requestId: request.requestId,
+          ok: true,
+          type: 'quiz',
+          operation: 'request',
+          result: { ok: true, value: {} },
+        };
+      },
+    },
+  });
+  const invoke = async (tags: Record<string, unknown>) => {
+    let error = '';
+    const code = await runCli(
+      [
+        '--endpoint',
+        endpoint.metadataPath,
+        'quiz',
+        'request',
+        'quiz-1',
+        '--token',
+        'synthetic',
+      ],
+      {
+        stdin: Readable.from([
+          JSON.stringify({
+            type: 'pose-question',
+            kind: 'short-answer',
+            question: 'Explain this.',
+            expectedRevision: 1,
+            ...tags,
+          }),
+        ]),
+        stdout: () => {},
+        stderr: (text) => (error += text),
+      },
+    );
+    return { code, error };
+  };
+  try {
+    for (const tags of [
+      {},
+      { concepts: ['loop-condition'], level: 'recall' },
+      { concepts: ['loop-condition'], level: 'explain', support: 'hinted' },
+      { concepts: ['a', 'b', 'c'], level: 'apply', support: 'worked' },
+      { concepts: ['a'.repeat(64)], level: 'transfer', support: 'independent' },
+    ]) {
+      const valid = await invoke(tags);
+      assert.equal(valid.code, 0, valid.error);
+      for (const [key, value] of Object.entries(tags))
+        assert.deepEqual(requests.at(-1).request[key], value);
+    }
+    const count = requests.length;
+    for (const [tags, message] of [
+      [{ concepts: ['loop-condition'] }, /concepts and level/],
+      [{ level: 'recall' }, /concepts and level/],
+      [{ concepts: ['Bad Slug'], level: 'recall' }, /unique lowercase slugs/],
+      [{ concepts: ['a', 'b', 'c', 'd'], level: 'recall' }, /1-3/],
+      [{ support: 'hinted' }, /support requires concepts/],
+      [{ concepts: [], level: 'recall' }, /1-3/],
+      [{ concepts: ['a', 'a'], level: 'recall' }, /unique/],
+      [{ concepts: ['a'.repeat(65)], level: 'recall' }, /slugs/],
+      [{ concepts: ['a b'], level: 'recall' }, /slugs/],
+      [{ concepts: [1], level: 'recall' }, /slugs/],
+      [{ concepts: null, level: 'recall' }, /slugs/],
+      [{ concepts: 'a', level: 'recall' }, /slugs/],
+      [{ concepts: ['a'], level: 'master' }, /level must be/],
+      [
+        { concepts: ['a'], level: 'recall', support: 'helped' },
+        /support must be/,
+      ],
+    ] as const) {
+      const invalid = await invoke(tags);
+      assert.equal(invalid.code, 2, JSON.stringify(tags));
+      assert.match(JSON.parse(invalid.error).error.message, message);
+    }
+    assert.equal(requests.length, count);
   } finally {
     await endpoint.close();
     await rm(directory, { recursive: true, force: true });

@@ -240,3 +240,156 @@ test('cached reads detect external changes and do not expose mutable persisted s
     await rm(f.dir, { recursive: true, force: true });
   }
 });
+
+test('an accidental chat answer can be cleared without grading and replaced with an MCQ', async () => {
+  const f = await fixture();
+  try {
+    const posed = await f.send('pose-question', {
+      kind: 'short-answer',
+      question: 'Trace the program.',
+    });
+    const questionId = posed.currentQuestion!.id;
+    await f.send('answer', { answer: 'continue' }, true);
+    await f.send(
+      'message',
+      { text: 'clear it and give me a conceptual MCQ' },
+      true,
+    );
+    const clear = {
+      type: 'skip-question' as const,
+      sessionId: f.session.id,
+      agentToken: f.attached.agentToken,
+      expectedRevision: (await f.service.getSnapshot(f.session.id))!.session
+        .revision,
+      idempotencyKey: 'clear-accidental-answer',
+      questionId,
+      text: 'Cleared the tracing question without a grade.',
+    };
+    assert.deepEqual(
+      await f.service.request({ ...clear, questionId: 'wrong' }),
+      { ok: false, error: 'invalid-state' },
+    );
+    assert.deepEqual(await f.service.request({ ...clear, text: '' }), {
+      ok: false,
+      error: 'invalid-input',
+    });
+    assert.deepEqual(
+      await f.service.request({
+        ...clear,
+        expectedRevision: clear.expectedRevision - 1,
+      }),
+      { ok: false, error: 'stale-revision' },
+    );
+    assert.deepEqual(
+      await f.service.request({ ...clear, agentToken: 'wrong' }),
+      { ok: false, error: 'unauthorized' },
+    );
+    const cleared = value(await f.service.request(clear));
+    assert.equal(cleared.currentQuestion, null);
+    assert.equal(cleared.awaitingAgent, false);
+    assert.equal(
+      cleared.transcript.find((m) => m.kind === 'answer')?.text,
+      'continue',
+    );
+    assert.equal(
+      cleared.transcript.some((m) => m.question?.verdict),
+      false,
+    );
+    assert.equal(
+      value(await f.service.request(clear)).revision,
+      cleared.revision,
+    );
+    const snapshot = (await f.service.getSnapshot(f.session.id))!;
+    assert.equal(
+      snapshot.events.filter((e) => e.type === 'skip-question').length,
+      1,
+    );
+    assert.equal(
+      snapshot.events.some((e) => e.type === 'feedback'),
+      false,
+    );
+    const recovery = await f.request('snapshot', {
+      compact: true,
+      recover: true,
+    });
+    assert.equal(
+      (recovery as any).snapshot.recovery.pendingAction,
+      'wait-for-learner',
+    );
+    const next = await f.send('pose-question', {
+      question: 'Which statement describes a loop?',
+      choices: [{ id: 'a', text: 'It repeats a block.' }],
+    });
+    assert.equal(next.currentQuestion?.kind, 'multiple-choice');
+    assert.notEqual(next.currentQuestion?.id, questionId);
+    const persisted = await new QuizStore(f.path).get(f.session.id);
+    assert.equal(
+      persisted?.transcript.find((m) => m.kind === 'answer')?.text,
+      'continue',
+    );
+  } finally {
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
+test('learner Skip releases open and answered questions and recovers next-question activity', async () => {
+  const f = await fixture();
+  try {
+    for (const answered of [false, true]) {
+      const posed = await f.send('pose-question', {
+        kind: 'short-answer',
+        question: 'Trace it.',
+      });
+      if (answered) await f.send('answer', { answer: 'continue' }, true);
+      const before = (await f.service.getSnapshot(f.session.id))!.session;
+      const skip = {
+        type: 'skip' as const,
+        sessionId: f.session.id,
+        expectedRevision: before.revision,
+        idempotencyKey: `skip-${answered}`,
+        questionId: posed.currentQuestion!.id,
+      };
+      assert.deepEqual(
+        await f.service.request({ ...skip, agentToken: f.attached.agentToken }),
+        { ok: false, error: 'invalid-input' },
+      );
+      assert.deepEqual(
+        await f.service.learnerRequest({ ...skip, questionId: 'wrong' }),
+        { ok: false, error: 'invalid-state' },
+      );
+      const skipped = value(await f.service.learnerRequest(skip));
+      assert.equal(skipped.currentQuestion, null);
+      assert.equal(skipped.awaitingAgent, true);
+      assert.equal(
+        value(await f.service.learnerRequest(skip)).revision,
+        skipped.revision,
+      );
+      const recovery = await f.request('snapshot', {
+        compact: true,
+        recover: true,
+      });
+      assert.equal(
+        (recovery as any).snapshot.recovery.pendingAction,
+        'next-question',
+      );
+      assert.equal(
+        (recovery as any).snapshot.recovery.recentEvents.at(-1).type,
+        'skip',
+      );
+      assert.equal(
+        (recovery as any).snapshot.recovery.recentEvents.at(-1).data.questionId,
+        posed.currentQuestion!.id,
+      );
+      assert.deepEqual(
+        await f.service.learnerRequest({
+          ...skip,
+          idempotencyKey: 'empty-skip',
+          expectedRevision: skipped.revision,
+        }),
+        { ok: false, error: 'invalid-state' },
+      );
+    }
+  } finally {
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});

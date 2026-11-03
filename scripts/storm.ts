@@ -10,6 +10,12 @@ import {
   type AgentEndpointInfo,
 } from '../src/main/agentEndpoint';
 import type { AgentRequest } from '../src/shared/agentProtocol';
+import {
+  QUIZ_COGNITIVE_LEVELS,
+  QUIZ_CONCEPT_ID,
+  QUIZ_MAX_CONCEPTS,
+  QUIZ_SUPPORTS,
+} from '../src/shared/quizProtocol';
 import { isStudyRequest, type StudyRequest } from '../src/shared/studyContext';
 type RequestPayload<T> = T extends unknown
   ? Omit<T, 'protocol' | 'requestId'>
@@ -380,6 +386,7 @@ export async function runCli(
       | 'detach'
       | 'activity'
       | 'status'
+      | 'learner'
       | 'wait'
       | 'request'
       | 'image'
@@ -406,6 +413,7 @@ export async function runCli(
           'detach',
           'activity',
           'status',
+          'learner',
           'context',
           'wait',
           'request',
@@ -414,12 +422,14 @@ export async function runCli(
         ].includes(quizOperation ?? '')
       )
         throw new CliUsageError(
-          'quiz requires list|attach|status|wait|request',
+          'quiz requires list|attach|detach|activity|status|learner|context|wait|request|image|image-release',
         );
       quizSession = rest[2] && !rest[2]!.startsWith('--') ? rest[2] : undefined;
       const tail = rest.slice(quizSession ? 3 : 2);
       for (let i = 0; i < tail.length; i++) {
         const flag = tail[i]!;
+        if (quizOperation === 'learner' && flag !== '--token')
+          throw new CliUsageError(`Invalid quiz learner argument: ${flag}`);
         if (
           flag === '--compact' &&
           ['attach', 'status', 'wait'].includes(quizOperation ?? '')
@@ -428,6 +438,8 @@ export async function runCli(
           continue;
         }
         const value = tail[++i];
+        if (quizOperation === 'learner' && (!value || value.startsWith('--')))
+          throw new CliUsageError('quiz learner --token requires TOKEN');
         if (
           quizOperation === 'context' &&
           flag === '--section' &&
@@ -489,6 +501,7 @@ export async function runCli(
       if (
         [
           'status',
+          'learner',
           'context',
           'wait',
           'detach',
@@ -544,10 +557,11 @@ export async function runCli(
             'pose-prompt',
             'feedback',
             'agent-message',
+            'skip-question',
           ].includes(quizPayload.type)
         )
           throw new CliUsageError(
-            'quiz request type must be pose-question, pose-prompt, feedback, or agent-message',
+            'quiz request type must be pose-question, pose-prompt, feedback, agent-message, or skip-question',
           );
         if (
           !Number.isSafeInteger(quizPayload.expectedRevision) ||
@@ -555,6 +569,18 @@ export async function runCli(
         )
           throw new CliUsageError(
             'quiz request requires a nonnegative safe integer expectedRevision',
+          );
+        if (
+          quizPayload.type === 'skip-question' &&
+          (typeof quizPayload.questionId !== 'string' ||
+            !quizPayload.questionId.trim() ||
+            quizPayload.questionId.length > 128 ||
+            typeof quizPayload.text !== 'string' ||
+            !quizPayload.text.trim() ||
+            quizPayload.text.length > 10000)
+        )
+          throw new CliUsageError(
+            'skip-question requires questionId and explanation text of 1-10000 characters',
           );
         if (quizPayload.type === 'pose-prompt') {
           const choices = quizPayload.choices;
@@ -588,6 +614,37 @@ export async function runCli(
             );
         }
         if (quizPayload.type === 'pose-question') {
+          const { concepts, level, support } = quizPayload;
+          if ((concepts !== undefined) !== (level !== undefined))
+            throw new CliUsageError(
+              'pose-question concepts and level must be supplied together',
+            );
+          if (
+            concepts !== undefined &&
+            (!Array.isArray(concepts) ||
+              concepts.length < 1 ||
+              concepts.length > QUIZ_MAX_CONCEPTS ||
+              concepts.some(
+                (id: unknown) =>
+                  typeof id !== 'string' || !QUIZ_CONCEPT_ID.test(id),
+              ) ||
+              new Set(concepts).size !== concepts.length)
+          )
+            throw new CliUsageError(
+              `pose-question concepts must be 1-${QUIZ_MAX_CONCEPTS} unique lowercase slugs matching ${QUIZ_CONCEPT_ID.source}`,
+            );
+          if (level !== undefined && !QUIZ_COGNITIVE_LEVELS.includes(level))
+            throw new CliUsageError(
+              `pose-question level must be ${QUIZ_COGNITIVE_LEVELS.join('|')}`,
+            );
+          if (support !== undefined && concepts === undefined)
+            throw new CliUsageError(
+              'pose-question support requires concepts and level',
+            );
+          if (support !== undefined && !QUIZ_SUPPORTS.includes(support))
+            throw new CliUsageError(
+              `pose-question support must be ${QUIZ_SUPPORTS.join('|')}`,
+            );
           const question = quizPayload.question;
           const kind = quizPayload.kind ?? 'multiple-choice';
           const validItems = (items: unknown) =>
@@ -828,7 +885,9 @@ export async function runCli(
         const learnerEvents = events.filter(
           (event: any) =>
             typeof event.type === 'string' &&
-            (/^(answer|message|continue|respond-prompt)$/.test(event.type) ||
+            (/^(answer|message|continue|respond-prompt|skip)$/.test(
+              event.type,
+            ) ||
               event.type.startsWith('learner-')),
         );
         if (learnerEvents.length) {
@@ -883,7 +942,7 @@ export async function runCli(
               ...(quizCompact ? { compact: true } : {}),
             }
           : {}),
-        ...(operation === 'detach'
+        ...(operation === 'detach' || operation === 'learner'
           ? { agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN! }
           : {}),
         ...(operation === 'snapshot'

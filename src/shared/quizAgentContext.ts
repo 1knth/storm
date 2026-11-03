@@ -43,6 +43,15 @@ export function quizAgentQuestion(value: unknown): Record<string, any> | null {
     'studyBasis',
   ]);
   if (source.omitted) return { ...result, omitted: true, section: 'question' };
+  if (source.learning) {
+    const learning = object(source.learning);
+    result.learning = {
+      concepts: Array.isArray(learning.concepts)
+        ? learning.concepts.filter((item: unknown) => typeof item === 'string')
+        : [],
+      ...pick(learning, ['level', 'support']),
+    };
+  }
   if (source.choices) result.choices = items(source.choices);
   if (source.leftItems) result.leftItems = items(source.leftItems);
   if (source.rightItems) result.rightItems = items(source.rightItems);
@@ -50,7 +59,12 @@ export function quizAgentQuestion(value: unknown): Record<string, any> | null {
   if (source.status === 'answered' || source.status === 'feedback') {
     Object.assign(
       result,
-      pick(source, ['selectedChoiceId', 'reasoningDraft', 'textDraft']),
+      pick(source, [
+        'selectedChoiceId',
+        'reasoningDraft',
+        'textDraft',
+        'confidence',
+      ]),
     );
     if (source.matchesDraft) result.matchesDraft = strings(source.matchesDraft);
   }
@@ -79,10 +93,12 @@ export function quizAgentEvent(event: {
     'reasoning',
     'choiceId',
     'promptId',
+    'questionId',
     'choiceText',
     'detail',
     'verdict',
     'effect',
+    'confidence',
   ]);
   if (source.matches) data.matches = strings(source.matches);
   if (source.attachments)
@@ -231,12 +247,18 @@ export function quizRecovery(
   events: Array<{ type: string; cursor: number; [key: string]: unknown }>,
 ) {
   const latestLearner = events.findLast((event) =>
-    ['answer', 'message', 'continue', 'respond-prompt'].includes(event.type),
-  );
-  const latestOutput = events.findLast((event) =>
-    ['pose-question', 'pose-prompt', 'feedback', 'agent-message'].includes(
+    ['answer', 'message', 'continue', 'respond-prompt', 'skip'].includes(
       event.type,
     ),
+  );
+  const latestOutput = events.findLast((event) =>
+    [
+      'pose-question',
+      'pose-prompt',
+      'feedback',
+      'agent-message',
+      'skip-question',
+    ].includes(event.type),
   );
   const pendingCursor =
     session.pendingLearnerCursor ?? latestLearner?.cursor ?? 0;
@@ -261,6 +283,7 @@ export function quizRecovery(
   )
     pendingAction =
       latestLearner?.type === 'continue' ||
+      latestLearner?.type === 'skip' ||
       object(latestLearner?.data).effect === 'continue'
         ? 'next-question'
         : 'reply';
@@ -274,7 +297,7 @@ export function quizRecovery(
     recentEvents: quizEventPage(
       events
         .filter((event) =>
-          ['answer', 'message', 'continue', 'respond-prompt'].includes(
+          ['answer', 'message', 'continue', 'respond-prompt', 'skip'].includes(
             event.type,
           ),
         )

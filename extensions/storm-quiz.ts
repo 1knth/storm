@@ -2,6 +2,12 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { Type } from 'typebox';
 import {
+  QUIZ_COGNITIVE_LEVELS,
+  QUIZ_CONCEPT_ID,
+  QUIZ_MAX_CONCEPTS,
+  QUIZ_SUPPORTS,
+} from '../src/shared/quizProtocol';
+import {
   validateStudyEvidence,
   type StudyPacket,
 } from '../src/shared/studyContext';
@@ -155,6 +161,7 @@ function isLearnerActivity(event: QuizEvent): boolean {
     event.type === 'answer' ||
     event.type === 'message' ||
     event.type === 'continue' ||
+    event.type === 'skip' ||
     event.type === 'respond-prompt' ||
     event.type.startsWith('learner-')
   );
@@ -531,6 +538,21 @@ export default function (pi: ExtensionAPI) {
   });
   const choices = () => Type.Array(choice, { minItems: 1, maxItems: 6 });
   const common = { contextId: id(), operationId: Type.Optional(id()) };
+  const learning = {
+    concepts: Type.Optional(
+      Type.Array(Type.String({ pattern: QUIZ_CONCEPT_ID.source }), {
+        minItems: 1,
+        maxItems: QUIZ_MAX_CONCEPTS,
+        uniqueItems: true,
+      }),
+    ),
+    level: Type.Optional(
+      Type.Union(QUIZ_COGNITIVE_LEVELS.map((value) => Type.Literal(value))),
+    ),
+    support: Type.Optional(
+      Type.Union(QUIZ_SUPPORTS.map((value) => Type.Literal(value))),
+    ),
+  };
   const question = (kind: string, fields = {}) =>
     Type.Object({
       ...common,
@@ -538,10 +560,12 @@ export default function (pi: ExtensionAPI) {
       kind: Type.Literal(kind),
       text: text(4000),
       studyBasis: Type.Optional(id()),
+      ...learning,
       ...fields,
     });
   const actionSchemas = [
     Type.Object({ action: Type.Literal('status') }),
+    Type.Object({ action: Type.Literal('learner') }),
     Type.Object({
       action: Type.Literal('image'),
       imageId: id(),
@@ -570,6 +594,12 @@ export default function (pi: ExtensionAPI) {
     }),
     question('short-answer'),
     question('long-answer'),
+    Type.Object({
+      ...common,
+      action: Type.Literal('skip-question'),
+      questionId: id(),
+      text: text(10000),
+    }),
     Type.Object({
       ...common,
       action: Type.Literal('feedback'),
@@ -602,10 +632,12 @@ export default function (pi: ExtensionAPI) {
       action: Type.Union(
         [
           'status',
+          'learner',
           'context',
           'image',
           'question',
           'feedback',
+          'skip-question',
           'message',
           'prompt',
         ].map((value) => Type.Literal(value)),
@@ -619,7 +651,9 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
       operationId: Type.Optional(id()),
+      questionId: Type.Optional(id()),
       studyBasis: Type.Optional(id()),
+      ...learning,
       text: Type.Optional(
         Type.String({
           minLength: 1,
@@ -777,7 +811,7 @@ export default function (pi: ExtensionAPI) {
     name: 'storm_quiz',
     label: 'Storm Quiz',
     description:
-      'Every write requires contextId from the update it answers. Read status to reconcile stale contexts; context reads earlier or omitted source sections; image retrieves a historical attachment by ID when still available. Reuse operationId for an identical uncertain retry. Operate the explicitly attached Storm quiz. After /storm-quiz attach, use question after Continue, feedback for an answer, message for tutoring chat, prompt with kind next-steps or clarification and 1–6 choices for genuine learner choices, and status to inspect state. Feedback must set its explicit verdict field (correct, partial, or incorrect); Storm displays the verdict and selected option, so do not repeat a verdict heading or selected option in feedback text. Explain why and address supplied reasoning without duplicating Continue instructions. Continue only through explicit Continue. Do not use em dashes in original learner-facing prose; preserve exact source quotations. Write answer choices, matching items, and next-step labels as ordinary text with inline Markdown only (emphasis, code, or math when useful). Never use Markdown headings (# through ###### or setext underlines) or wrap an entire option in bold. For example, send "Check each employee’s hours to identify overtime payments.", not "### Check each employee’s hours to identify overtime payments." Reserve headings for sections in substantial explanations; short questions and feedback usually need paragraphs only. Format question stems with readable Markdown paragraphs and real newlines, and use structured choices instead of duplicating options in the stem. This tool is available only in the Pi session where the Storm quiz extension is loaded; attaching activates it in that session without changing other active tools.',
+      'Every write requires contextId from the update it answers. Read status to reconcile stale contexts; context reads earlier or omitted source sections; image retrieves a historical attachment by ID when still available. Reuse operationId for an identical uncertain retry. Operate the explicitly attached Storm quiz. After Continue and before posing a question, read learner (read-only; no contextId). Tag every substantive question with concepts/level/support. Reuse concept IDs from learner state; propose a new slug only for a genuinely new concept. Record help actually given: a worked example shown means worked, a hint given means hinted, otherwise independent. Answer events include learner confidence (data.confidence, 0–100). After /storm-quiz attach, use question after Continue, feedback for an answer, message for tutoring chat, prompt with kind next-steps or clarification and 1–6 choices for genuine learner choices, and status to inspect state. Feedback must set its explicit verdict field (correct, partial, or incorrect); Storm displays the verdict and selected option, so do not repeat a verdict heading or selected option in feedback text. Explain why and address supplied reasoning without duplicating Continue instructions. Continue only through explicit Continue or learner Skip. When the learner explicitly asks to skip, clear, or replace an ungraded question, use skip-question with its questionId and explanation text, then honor their requested next step. Never fabricate a verdict for a chat command submitted as an answer. Do not use em dashes in original learner-facing prose; preserve exact source quotations. Write answer choices, matching items, and next-step labels as ordinary text with inline Markdown only (emphasis, code, or math when useful). Never use Markdown headings (# through ###### or setext underlines) or wrap an entire option in bold. For example, send "Check each employee’s hours to identify overtime payments.", not "### Check each employee’s hours to identify overtime payments." Reserve headings for sections in substantial explanations; short questions and feedback usually need paragraphs only. Format question stems with readable Markdown paragraphs and real newlines, and use structured choices instead of duplicating options in the stem. This tool is available only in the Pi session where the Storm quiz extension is loaded; attaching activates it in that session without changing other active tools.',
     parameters: toolSchema,
     executionMode: 'sequential',
     async execute(_id, params) {
@@ -786,6 +820,21 @@ export default function (pi: ExtensionAPI) {
         throw new Error(
           'No Storm quiz attached; use /storm-quiz attach SESSION_ID.',
         );
+      if (params.action === 'learner') {
+        const content = responseValue(
+          await runCli(
+            cliArgs('learner', active.sessionId),
+            undefined,
+            active.token,
+          ),
+        );
+        if (state !== active)
+          throw new Error('Quiz detached during learner retrieval.');
+        return {
+          content: [{ type: 'text', text: JSON.stringify(content) }],
+          details: undefined,
+        };
+      }
       if (params.action === 'image') {
         const observed = active.contexts.get(params.contextId);
         if (!observed || observed.revision !== active.snapshot.revision)
@@ -930,14 +979,23 @@ export default function (pi: ExtensionAPI) {
           ? 'pose-question'
           : params.action === 'prompt'
             ? 'pose-prompt'
-            : params.action === 'feedback'
-              ? 'feedback'
-              : 'agent-message';
+            : params.action === 'skip-question'
+              ? 'skip-question'
+              : params.action === 'feedback'
+                ? 'feedback'
+                : 'agent-message';
       const fields =
         type === 'pose-question'
           ? {
               question: params.text,
               ...(params.studyBasis ? { studyBasis: params.studyBasis } : {}),
+              ...(params.concepts !== undefined
+                ? { concepts: params.concepts }
+                : {}),
+              ...(params.level !== undefined ? { level: params.level } : {}),
+              ...(params.support !== undefined
+                ? { support: params.support }
+                : {}),
               kind: params.kind ?? 'multiple-choice',
               ...(params.kind === 'matching'
                 ? { leftItems: params.leftItems, rightItems: params.rightItems }
@@ -955,6 +1013,9 @@ export default function (pi: ExtensionAPI) {
               }
             : {
                 text: params.text,
+                ...(type === 'skip-question'
+                  ? { questionId: params.questionId }
+                  : {}),
                 ...(params.verdict ? { verdict: params.verdict } : {}),
               };
       if (!operation) {

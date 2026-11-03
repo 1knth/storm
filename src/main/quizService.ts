@@ -1,14 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type {
-  QuizAgentRequest,
-  QuizChoice,
-  QuizEvent,
-  QuizMessage,
-  QuizLearnerRequest,
-  QuizResult,
-  QuizScope,
-  QuizSession,
-  QuizSnapshot,
+import {
+  isQuizConfidence,
+  quizLearningFromRequest,
+  type QuizAgentRequest,
+  type QuizChoice,
+  type QuizEvent,
+  type QuizMessage,
+  type QuizLearnerRequest,
+  type QuizQuestion,
+  type QuizResult,
+  type QuizScope,
+  type QuizSession,
+  type QuizSnapshot,
 } from '../shared/quizProtocol';
 import { QuizStore } from './quizStore';
 import {
@@ -60,6 +63,11 @@ export class QuizService {
       basis: string | undefined,
       operationId: string,
       revision: number,
+    ) => Promise<void>,
+    /** Records a graded, tagged answer in the learner model after the feedback commit. */
+    private readonly recordAttempt?: (
+      session: QuizSession,
+      question: QuizQuestion,
     ) => Promise<void>,
   ) {
     // A persisted connected state belongs to a prior process. Recover it once,
@@ -296,6 +304,7 @@ export class QuizService {
       request.type === 'answer' ||
       request.type === 'respond-prompt' ||
       request.type === 'continue' ||
+      request.type === 'skip' ||
       request.type === 'message'
     )
       return { ok: false, error: 'invalid-input' };
@@ -334,6 +343,7 @@ export class QuizService {
     if (
       request.type !== 'answer' &&
       request.type !== 'continue' &&
+      request.type !== 'skip' &&
       request.type !== 'message' &&
       request.type !== 'respond-prompt'
     )
@@ -462,6 +472,8 @@ export class QuizService {
           ].includes(kind)
         )
           return { ok: false, error: 'invalid-input' };
+        const learning = quizLearningFromRequest(request);
+        if (learning === null) return { ok: false, error: 'invalid-input' };
         if (request.studyBasis !== undefined) {
           if (
             typeof request.studyBasis !== 'string' ||
@@ -483,6 +495,7 @@ export class QuizService {
         const safeQuestion = {
           id: questionId,
           ...(request.studyBasis ? { studyBasis: request.studyBasis } : {}),
+          ...(learning ? { learning } : {}),
           kind,
           prompt: request.question,
           choices: structuredClone(choices),
@@ -515,6 +528,11 @@ export class QuizService {
         const question = next.currentQuestion;
         if (next.status !== 'connected' || question?.status !== 'open')
           return { ok: false, error: 'invalid-state' };
+        if (
+          request.confidence !== undefined &&
+          !isQuizConfidence(request.confidence)
+        )
+          return { ok: false, error: 'invalid-input' };
         let answerText: string;
         if ((question.kind ?? 'multiple-choice') === 'multiple-choice') {
           if (
@@ -568,6 +586,8 @@ export class QuizService {
           answerText = answer;
         }
         question.status = 'answered';
+        if (request.confidence !== undefined)
+          question.confidence = request.confidence;
         next.transcript.push({
           id: randomUUID(),
           role: 'learner',
@@ -633,6 +653,10 @@ export class QuizService {
             : undefined;
           next.transcript[next.transcript.length - 1]!.question = {
             id: question.id,
+            ...(question.learning ? { learning: question.learning } : {}),
+            ...(question.confidence !== undefined
+              ? { confidence: question.confidence }
+              : {}),
             kind: question.kind,
             prompt: question.prompt,
             choices: question.choices,
@@ -675,6 +699,31 @@ export class QuizService {
         if (choice.effect === 'continue') next.currentQuestion = null;
         break;
       }
+      case 'skip':
+      case 'skip-question': {
+        const question = next.currentQuestion;
+        if (
+          next.status !== 'connected' ||
+          next.currentPrompt ||
+          !question ||
+          question.id !== request.questionId ||
+          (question.status !== 'open' && question.status !== 'answered')
+        )
+          return { ok: false, error: 'invalid-state' };
+        if (
+          request.type === 'skip-question' &&
+          (typeof request.text !== 'string' ||
+            !request.text.trim() ||
+            request.text.length > 10000)
+        )
+          return { ok: false, error: 'invalid-input' };
+        addMessage(
+          request.type === 'skip' ? 'learner' : 'agent',
+          request.type === 'skip' ? 'Skipped question.' : request.text,
+        );
+        next.currentQuestion = null;
+        break;
+      }
       case 'continue':
         if (
           next.currentPrompt ||
@@ -714,6 +763,7 @@ export class QuizService {
       request.type === 'answer' ||
       request.type === 'respond-prompt' ||
       request.type === 'continue' ||
+      request.type === 'skip' ||
       request.type === 'message'
     ) {
       next.awaitingAgent = true;
@@ -722,6 +772,7 @@ export class QuizService {
       request.type === 'pose-question' ||
       request.type === 'pose-prompt' ||
       request.type === 'feedback' ||
+      request.type === 'skip-question' ||
       request.type === 'agent-message'
     ) {
       next.awaitingAgent = false;
@@ -773,7 +824,14 @@ export class QuizService {
               ...(request.answer !== undefined
                 ? { answer: request.answer }
                 : {}),
+              ...(request.confidence !== undefined
+                ? { confidence: request.confidence }
+                : {}),
             };
+          case 'skip':
+            return { questionId: request.questionId };
+          case 'skip-question':
+            return { questionId: request.questionId, text: request.text };
           case 'agent-message':
             return { text: request.text };
           case 'feedback':
@@ -804,6 +862,20 @@ export class QuizService {
         fingerprint,
       );
       if (updated.transcript.length > 0) await this.store.promote(updated.id);
+      if (
+        request.type === 'feedback' &&
+        request.verdict &&
+        updated.currentQuestion?.learning &&
+        this.recordAttempt
+      ) {
+        // The learner model is derived data: a recording failure must not turn an
+        // accepted feedback commit into a failed agent write.
+        try {
+          await this.recordAttempt(updated, updated.currentQuestion);
+        } catch {
+          /* Attempt is absent from the model; the transcript retains the verdict. */
+        }
+      }
       return { ok: true, value: updated };
     } catch (error) {
       return {

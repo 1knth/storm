@@ -19,6 +19,8 @@ import {
   QuizThinkingIndicator,
   scrollQuizTranscriptToBottom,
   QuizVerdict,
+  QuizAnswerActions,
+  QuizLearningTag,
 } from './QuizPane';
 
 function render(markdown: string) {
@@ -323,11 +325,8 @@ describe('quiz transcript autoscroll', () => {
 
 describe('selected prompt composer submission', () => {
   it('routes an empty chat draft with a selected prompt to prompt response', () => {
-    assert.equal(getQuizComposerIntent('', false, 0, true), 'prompt');
-    assert.equal(
-      getQuizComposerIntent('optional detail', false, 0, true),
-      'message',
-    );
+    assert.equal(getQuizComposerIntent('', 0, true), 'prompt');
+    assert.equal(getQuizComposerIntent('optional detail', 0, true), 'message');
   });
 
   it('sends on Enter when a prompt is selected, without auto-submitting', () => {
@@ -439,6 +438,164 @@ describe('quiz verdict renderer', () => {
   it('does not infer a verdict when metadata is absent', () => {
     assert.equal(
       renderToStaticMarkup(React.createElement(QuizVerdict, {})),
+      '',
+    );
+  });
+
+  it('shows submitted confidence with feedback and while waiting for a verdict', () => {
+    const feedback = renderToStaticMarkup(
+      React.createElement(QuizVerdict, { verdict: 'correct', confidence: 70 }),
+    );
+    assert.match(feedback, /Correct/);
+    assert.match(feedback, /Confidence 70%/);
+    const answered = renderToStaticMarkup(
+      React.createElement(QuizVerdict, { confidence: 0 }),
+    );
+    assert.match(answered, /Confidence 0%/);
+    assert.doesNotMatch(answered, /Correct|Incorrect|Partially correct/);
+  });
+});
+
+function elements(node: React.ReactNode): React.ReactElement<any>[] {
+  return React.Children.toArray(node).flatMap((child) => {
+    if (!React.isValidElement<{ children?: React.ReactNode }>(child)) return [];
+    return [child, ...elements(child.props.children)];
+  });
+}
+
+describe('question answer footer', () => {
+  const props = {
+    questionId: 'question-a',
+    confidence: null as number | null,
+    answerComplete: false,
+    connected: true,
+    busy: false,
+    onConfidenceChange: (_value: number) => {},
+    onSkip: () => {},
+    onSubmit: () => {},
+  };
+  const controls = (overrides: Partial<typeof props> = {}) =>
+    elements(QuizAnswerActions({ ...props, ...overrides }));
+  const submit = (overrides: Partial<typeof props> = {}) =>
+    controls(overrides).find(
+      (element) =>
+        element.type === 'button' && element.props.children === 'Submit answer',
+    )!;
+
+  it('enables Submit only with an answer, explicit confidence, connection, and no pending request', () => {
+    assert.equal(submit().props.disabled, true);
+    assert.equal(submit({ answerComplete: true }).props.disabled, true);
+    assert.equal(submit({ confidence: 70 }).props.disabled, true);
+    assert.equal(
+      submit({ answerComplete: true, confidence: 70 }).props.disabled,
+      false,
+    );
+    assert.equal(
+      submit({ answerComplete: true, confidence: 0 }).props.disabled,
+      false,
+    );
+    assert.equal(
+      submit({ answerComplete: true, confidence: 70, connected: false }).props
+        .disabled,
+      true,
+    );
+    assert.equal(
+      submit({ answerComplete: true, confidence: 70, busy: true }).props
+        .disabled,
+      true,
+    );
+  });
+
+  it('starts unrated with an associated label, a status hint, and a neutral slider', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(QuizAnswerActions, props),
+    );
+    assert.match(
+      html,
+      /<label for="quiz-confidence-question-a"[^>]*>How confident are you\?/,
+    );
+    assert.match(
+      html,
+      /type="range" min="0" max="100" step="5" aria-valuetext="Not rated"/,
+    );
+    assert.match(html, /quiz-confidence-slider--unrated/);
+    assert.match(html, /role="status"/);
+    assert.match(
+      html,
+      /Complete your answer and rate your confidence to submit\./,
+    );
+    const rated = renderToStaticMarkup(
+      React.createElement(QuizAnswerActions, {
+        ...props,
+        answerComplete: true,
+        confidence: 70,
+      }),
+    );
+    assert.match(rated, /70% · Fairly sure/);
+    assert.doesNotMatch(rated, /role="status"|quiz-confidence-slider--unrated/);
+  });
+
+  it('commits an unchanged thumb value on pointer-up and keyboard navigation, without rating on Tab', () => {
+    const ratings: number[] = [];
+    const slider = controls({
+      onConfidenceChange: (value) => ratings.push(value),
+    }).find((element) => element.type === 'input')!;
+    const currentTarget = { valueAsNumber: 50 };
+    slider.props.onPointerUp({ currentTarget });
+    slider.props.onKeyUp({ key: 'ArrowRight', currentTarget });
+    slider.props.onKeyUp({ key: 'Home', currentTarget: { valueAsNumber: 0 } });
+    slider.props.onKeyUp({ key: 'Tab', currentTarget });
+    slider.props.onChange({ currentTarget: { valueAsNumber: 75 } });
+    assert.deepEqual(ratings, [50, 50, 0, 75]);
+  });
+
+  it('places low-emphasis Skip alongside Submit in the question footer with separate actions', () => {
+    let skips = 0;
+    let submissions = 0;
+    const footer = controls({
+      answerComplete: true,
+      confidence: 70,
+      onSkip: () => skips++,
+      onSubmit: () => submissions++,
+    });
+    const skip = footer.find(
+      (element) =>
+        element.type === 'button' && element.props.children === 'Skip question',
+    )!;
+    const primary = footer.find(
+      (element) =>
+        element.type === 'button' && element.props.children === 'Submit answer',
+    )!;
+    assert.equal(skip.props.title, 'Skip this question without a grade');
+    assert.equal(skip.props.type, 'button');
+    assert.doesNotMatch(skip.props.className, /quiz-action-button/);
+    assert.match(primary.props.className, /quiz-action-button/);
+    skip.props.onClick();
+    primary.props.onClick();
+    assert.equal(skips, 1);
+    assert.equal(submissions, 1);
+    assert.equal(getQuizComposerIntent(''), null);
+    assert.equal(getQuizComposerIntent('A chat message'), 'message');
+  });
+});
+
+describe('question learning tag', () => {
+  it('shows a subtle level and support label with concepts only in the tooltip', () => {
+    for (const [support, suffix] of [
+      ['independent', ''],
+      ['hinted', ' · with hints'],
+      ['worked', ' · worked example'],
+    ] as const) {
+      const html = renderToStaticMarkup(
+        React.createElement(QuizLearningTag, {
+          learning: { level: 'apply', support, concepts: ['loop-condition'] },
+        }),
+      );
+      assert.match(html, /title="loop-condition"/);
+      assert.ok(html.endsWith(`>Apply${suffix}</p>`));
+    }
+    assert.equal(
+      renderToStaticMarkup(React.createElement(QuizLearningTag, {})),
       '',
     );
   });

@@ -17,6 +17,8 @@ import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
 import { QuizStore } from './main/quizStore';
 import { QuizService } from './main/quizService';
+import { LearnerStore } from './main/learnerStore';
+import { isQuizConfidence } from './shared/quizProtocol';
 import { StudyContextService } from './main/studyContextService';
 import { StudyContextStore } from './main/studyContextStore';
 import { readStudySource } from './vault/studySourceReader';
@@ -77,6 +79,9 @@ const vaultService = new VaultService();
 const vaultRegistry = new VaultRegistry(app.getPath('userData'));
 const quizStore = new QuizStore(
   path.join(app.getPath('userData'), 'quiz-sessions.json'),
+);
+const learnerStore = new LearnerStore(
+  path.join(app.getPath('userData'), 'learner-model.json'),
 );
 const quizService = new QuizService(
   quizStore,
@@ -144,6 +149,7 @@ const quizService = new QuizService(
       `pending:${sessionId}:${operationId}`,
       revision,
     ),
+  (session, question) => learnerStore.recordQuestion(session, question),
 );
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;
@@ -257,7 +263,9 @@ agentBroker = new AgentBroker({
   },
   withVaultLifecycle: runVaultLifecycleExclusive,
   renderer: agentTransport,
-  quiz: createQuizAgentHandler(quizService),
+  quiz: createQuizAgentHandler(quizService, (scope) =>
+    learnerStore.state(scope),
+  ),
   discover: async (vaultId, query, limit, options) =>
     discoverVaultNotes(
       () => vaultRegistry.list(),
@@ -467,7 +475,7 @@ ipcMain.handle('quiz:learner-request', async (event, value: unknown) => {
     return { ok: false, error: 'invalid-input' };
   const request = value as Record<string, unknown>;
   if (
-    !['answer', 'message', 'continue', 'respond-prompt'].includes(
+    !['answer', 'message', 'continue', 'respond-prompt', 'skip'].includes(
       String(request.type),
     ) ||
     typeof request.sessionId !== 'string' ||
@@ -488,6 +496,8 @@ ipcMain.handle('quiz:learner-request', async (event, value: unknown) => {
       !optionalString('choiceId', 128) ||
       !optionalString('reasoning', 65536) ||
       !optionalString('answer', 20000) ||
+      (request.confidence !== undefined &&
+        !isQuizConfidence(request.confidence)) ||
       (matches !== undefined &&
         (!matches ||
           typeof matches !== 'object' ||

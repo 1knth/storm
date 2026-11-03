@@ -12,6 +12,8 @@ import {
   quizRecovery,
   submittedQuizQuestion,
 } from '../shared/quizAgentContext';
+import type { LearnerState } from '../shared/learnerModel';
+import type { QuizScope } from '../shared/quizProtocol';
 
 const publicSession = (
   session: import('../shared/quizProtocol').QuizSession,
@@ -76,6 +78,7 @@ export function createQuizAgentHandler(
     | 'getImageForAgent'
     | 'releaseImageForAgent'
   >,
+  learnerState?: (scope: QuizScope | undefined) => Promise<LearnerState>,
 ) {
   return async (
     request: Extract<AgentRequest, { type: 'quiz' }>,
@@ -230,6 +233,32 @@ export function createQuizAgentHandler(
                 request.offset,
               ),
             },
+          },
+        };
+      }
+      case 'learner': {
+        const snapshot = await service.getSnapshot(request.sessionId);
+        if (!snapshot || snapshot.session.agentToken !== request.agentToken)
+          return {
+            ...base,
+            operation: 'learner',
+            result: {
+              ok: false,
+              error: snapshot ? 'unauthorized' : 'not-found',
+            },
+          };
+        if (!learnerState)
+          return {
+            ...base,
+            operation: 'learner',
+            result: { ok: false, error: 'study-unavailable' },
+          };
+        return {
+          ...base,
+          operation: 'learner',
+          result: {
+            ok: true,
+            value: await learnerState(snapshot.session.scope),
           },
         };
       }

@@ -5,6 +5,7 @@ import {
   type StudyValue,
 } from '../shared/studyContext';
 import { isAgentEditPlan } from '../shared/agentEditValidation';
+import { quizLearningFromRequest } from '../shared/quizProtocol';
 import type {
   AgentBridgeRequest,
   AgentBridgeResult,
@@ -958,6 +959,7 @@ function isQuizAgentRequest(value: unknown): boolean {
     return false;
   if (r.type === 'attach') return true;
   if (r.type === 'pose-question') {
+    if (quizLearningFromRequest(r) === null) return false;
     if (
       r.studyBasis !== undefined &&
       (typeof r.studyBasis !== 'string' || !/^[a-f0-9]{64}$/.test(r.studyBasis))
@@ -1045,6 +1047,15 @@ function isQuizAgentRequest(value: unknown): boolean {
           r.promptId.length <= 128))
     );
   }
+  if (r.type === 'skip-question')
+    return (
+      typeof r.questionId === 'string' &&
+      !!r.questionId.trim() &&
+      r.questionId.length <= 128 &&
+      typeof r.text === 'string' &&
+      !!r.text.trim() &&
+      r.text.length <= 10000
+    );
   if (r.type === 'feedback' || r.type === 'agent-message')
     return (
       typeof r.text === 'string' &&
@@ -1099,6 +1110,15 @@ function isRequest(v: unknown): v is AgentRequest {
         typeof r.imageId === 'string' &&
         r.imageId.length > 0 &&
         r.imageId.length <= 128
+      );
+    if (r.operation === 'learner')
+      return (
+        typeof r.sessionId === 'string' &&
+        r.sessionId.length > 0 &&
+        r.sessionId.length <= 128 &&
+        typeof r.agentToken === 'string' &&
+        r.agentToken.length > 0 &&
+        r.agentToken.length <= 512
       );
     if (r.operation === 'context')
       return (

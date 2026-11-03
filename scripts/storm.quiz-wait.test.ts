@@ -153,3 +153,26 @@ test('quiz wait returns disconnected status from the broker snapshot field', asy
   assert.equal(result.output.disconnected, true);
   assert.equal(result.calls, 1);
 });
+
+test('quiz wait wakes for learner Skip and ignores agent skip-question events', async () => {
+  const result = await runWait(
+    [
+      snapshot([
+        {
+          cursor: 1,
+          revision: 1,
+          type: 'skip-question',
+          data: { questionId: 'q1' },
+        },
+      ]),
+      snapshot([
+        { cursor: 2, revision: 2, type: 'skip', data: { questionId: 'q2' } },
+      ]),
+    ],
+    2,
+  );
+  assert.equal(result.code, 0, result.error);
+  assert.equal(result.output.timedOut, false);
+  assert.equal(result.output.after, 2);
+  assert.equal(result.calls, 2);
+});

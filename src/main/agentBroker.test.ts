@@ -155,10 +155,24 @@ describe('quiz broker requests', () => {
       }),
       pose({ kind: 'short-answer' }),
       pose({ kind: 'long-answer' }),
+      pose({
+        type: 'skip-question',
+        questionId: 'q',
+        text: 'Cleared on request.',
+      }),
+      pose({
+        choices: [{ id: 'a', text: 'A' }],
+        concepts: ['while-loop'],
+        level: 'apply',
+        support: 'hinted',
+      }),
+      req('quiz', { operation: 'learner', sessionId: 's', agentToken: 't' }),
     ])
       assert.equal((await broker.handle(request)).ok, true);
     for (const request of [
       pose({ choices: [] }),
+      pose({ type: 'skip-question', text: 'Missing question ID' }),
+      pose({ type: 'skip-question', questionId: 'q', text: '' }),
       pose({
         kind: 'multiple-choice',
         choices: Array.from({ length: 7 }, (_, index) => ({
@@ -179,6 +193,13 @@ describe('quiz broker requests', () => {
       }),
       pose({ kind: 'short-answer', choices: [{ id: 'a', text: 'A' }] }),
       pose({ kind: 'unknown' }),
+      pose({
+        choices: [{ id: 'a', text: 'A' }],
+        concepts: ['Loops'],
+        level: 'apply',
+      }),
+      pose({ choices: [{ id: 'a', text: 'A' }], support: 'hinted' }),
+      req('quiz', { operation: 'learner', sessionId: 's' }),
     ])
       assert.equal((await broker.handle(request)).ok, false);
     const malformedSnapshot = await broker.handle(
@@ -192,20 +213,21 @@ describe('quiz broker requests', () => {
     assert.equal(malformedSnapshot.ok, false);
     if (!malformedSnapshot.ok)
       assert.equal(malformedSnapshot.error.code, 'INVALID_REQUEST');
-    const learnerActions = ['answer', 'continue', 'message'].map((type) =>
-      req('quiz', {
-        operation: 'request',
-        request: {
-          type,
-          sessionId: 's',
-          agentToken: 't',
-          expectedRevision: 0,
-          idempotencyKey: 'k',
-          choiceId: 'a',
-          reasoning: 'x',
-          text: 'x',
-        },
-      }),
+    const learnerActions = ['answer', 'continue', 'message', 'skip'].map(
+      (type) =>
+        req('quiz', {
+          operation: 'request',
+          request: {
+            type,
+            sessionId: 's',
+            agentToken: 't',
+            expectedRevision: 0,
+            idempotencyKey: 'k',
+            choiceId: 'a',
+            reasoning: 'x',
+            text: 'x',
+          },
+        }),
     );
     for (const attempted of learnerActions) {
       const response = await broker.handle(attempted);

@@ -22,10 +22,14 @@ import type { Appearance } from '../appearance';
 import { DEFAULT_APPEARANCE } from '../appearance';
 import {
   getClipboardImages,
+  getQuizAnswerFields,
+  getQuizConfidenceLabel,
   getQuizComposerIntent,
   handleQuizComposerEnter,
   shouldClearSubmittedDraft,
   isCompleteQuestionAnswer,
+  quizPiAttachCommand,
+  quizCliInstructions,
 } from './quizComposer';
 import { FaListUl, FaPencil, FaTelegram, FaTrash } from 'react-icons/fa6';
 import { FaPlus } from 'react-icons/fa';
@@ -37,6 +41,7 @@ import { useToast } from './Toast';
 import type {
   QuizDraft,
   QuizLearnerRequest,
+  QuizLearning,
   QuizScope,
   QuizSession,
   QuizSessionSummary,
@@ -432,32 +437,169 @@ export function getQuizComposerActions(
 export function QuizVerdict({
   verdict,
   answerLabel,
+  confidence,
 }: {
   verdict?: 'correct' | 'incorrect' | 'partial';
   answerLabel?: string;
+  confidence?: number;
 }) {
-  if (!verdict) return null;
+  if (!verdict && confidence === undefined) return null;
   const label =
     verdict === 'correct'
       ? 'Correct'
       : verdict === 'incorrect'
         ? 'Incorrect'
-        : 'Partially correct';
+        : verdict === 'partial'
+          ? 'Partially correct'
+          : undefined;
   return (
     <div
-      className={`quiz-verdict quiz-verdict--${verdict} mb-2 flex items-center gap-2`}
+      className={`quiz-verdict ${verdict ? `quiz-verdict--${verdict}` : ''} mb-2 flex flex-wrap items-center gap-2`}
       aria-label={label}
     >
       {verdict === 'incorrect' ? (
         <TbXboxXFilled aria-hidden="true" />
-      ) : (
+      ) : verdict ? (
         <IoIosCheckmarkCircle aria-hidden="true" />
+      ) : null}
+      {label && (
+        <span>
+          {label}
+          {answerLabel ? ` · Selected: ${answerLabel}` : ''}
+        </span>
       )}
-      <span>
-        {label}
-        {answerLabel ? ` · Selected: ${answerLabel}` : ''}
-      </span>
+      {confidence !== undefined && (
+        <span className="text-xs font-normal text-white/50">
+          Confidence {confidence}%
+        </span>
+      )}
     </div>
+  );
+}
+
+export function QuizAnswerActions({
+  questionId,
+  confidence,
+  answerComplete,
+  connected,
+  busy,
+  onConfidenceChange,
+  onSkip,
+  onSubmit,
+}: {
+  questionId: string;
+  confidence: number | null;
+  answerComplete: boolean;
+  connected: boolean;
+  busy: boolean;
+  onConfidenceChange: (value: number) => void;
+  onSkip: () => void;
+  onSubmit: () => void;
+}) {
+  const confidenceId = `quiz-confidence-${questionId}`;
+  const confidenceText =
+    confidence === null
+      ? 'Not rated'
+      : `${confidence}% · ${getQuizConfidenceLabel(confidence)}`;
+  const disabled = !connected || busy;
+  const missingAnswer = !answerComplete || confidence === null;
+  return (
+    <div className="quiz-answer-actions mt-3 border-t border-white/10 pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+        <label htmlFor={confidenceId} className="text-white/70">
+          How confident are you?
+        </label>
+        <output htmlFor={confidenceId} className="text-white/50">
+          {confidenceText}
+        </output>
+      </div>
+      <input
+        id={confidenceId}
+        type="range"
+        min={0}
+        max={100}
+        step={5}
+        // The neutral thumb position is visual only; null remains unrated until interaction.
+        value={confidence ?? 50}
+        aria-valuetext={confidenceText}
+        disabled={disabled}
+        className={`quiz-confidence-slider my-2 block w-full cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed ${confidence === null ? 'quiz-confidence-slider--unrated' : ''}`}
+        onChange={(event) =>
+          onConfidenceChange(event.currentTarget.valueAsNumber)
+        }
+        onPointerUp={(event) => {
+          if (!disabled) onConfidenceChange(event.currentTarget.valueAsNumber);
+        }}
+        onKeyUp={(event) => {
+          if (
+            !disabled &&
+            [
+              'ArrowLeft',
+              'ArrowRight',
+              'ArrowUp',
+              'ArrowDown',
+              'Home',
+              'End',
+              'PageUp',
+              'PageDown',
+            ].includes(event.key)
+          )
+            onConfidenceChange(event.currentTarget.valueAsNumber);
+        }}
+      />
+      {missingAnswer && (
+        <p role="status" className="mb-2 text-xs text-white/45">
+          {answerComplete
+            ? 'Rate your confidence to submit.'
+            : confidence === null
+              ? 'Complete your answer and rate your confidence to submit.'
+              : 'Complete your answer to submit.'}
+        </p>
+      )}
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          disabled={disabled}
+          title="Skip this question without a grade"
+          className="cursor-pointer rounded px-2 py-1.5 text-xs text-white/50 hover:bg-white/5 hover:text-white/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={onSkip}
+        >
+          Skip question
+        </button>
+        <button
+          type="button"
+          disabled={disabled || missingAnswer}
+          className="quiz-action-button shrink-0 cursor-pointer rounded px-3.5 py-1.5 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed"
+          onClick={onSubmit}
+        >
+          Submit answer
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function QuizLearningTag({ learning }: { learning?: QuizLearning }) {
+  if (!learning) return null;
+  const level = {
+    recall: 'Recall',
+    explain: 'Explain',
+    apply: 'Apply',
+    transfer: 'Transfer',
+  }[learning.level];
+  const support = {
+    independent: '',
+    hinted: ' · with hints',
+    worked: ' · worked example',
+  }[learning.support];
+  return (
+    <p
+      className="mb-2 text-xs text-white/45"
+      title={learning.concepts.join(', ')}
+    >
+      {level}
+      {support}
+    </p>
   );
 }
 
@@ -539,6 +681,10 @@ export default function QuizPane({
   const [showSessionList, setShowSessionList] = useState(true);
   const [sessionSearch, setSessionSearch] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confidenceRating, setConfidenceRating] = useState<{
+    questionId: string | null;
+    value: number | null;
+  }>({ questionId: null, value: null });
   const [stopping, setStopping] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -569,6 +715,12 @@ export default function QuizPane({
   const saveQueue = useRef(Promise.resolve());
   const draftRevision = useRef<number | null>(null);
   sessionRef.current = session;
+  useEffect(() => {
+    setConfidenceRating({
+      questionId: session?.currentQuestion?.id ?? null,
+      value: null,
+    });
+  }, [session?.id, session?.currentQuestion?.id]);
   useEffect(
     () => () => {
       for (const [sessionId, images] of Object.entries(imagesRef.current)) {
@@ -677,6 +829,21 @@ export default function QuizPane({
     showSessionList,
     visible,
   ]);
+  const copyQuizInstructions = useCallback(
+    async (text: string, copied: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        notifySuccess(copied);
+      } catch (error) {
+        notifyError(
+          error instanceof Error && error.message
+            ? `Could not copy instructions: ${error.message}`
+            : 'Could not copy instructions.',
+        );
+      }
+    },
+    [notifyError, notifySuccess],
+  );
   const persistDraft = useCallback(
     (id: string, immediate = false) => {
       if (!bridge) return;
@@ -951,7 +1118,7 @@ export default function QuizPane({
   const connected = session?.status === 'connected';
   const question = session?.currentQuestion;
   const questionKind = question?.kind ?? 'multiple-choice';
-  const canSubmitAnswer =
+  const answerComplete =
     !!question &&
     question.status === 'open' &&
     isCompleteQuestionAnswer(questionKind, {
@@ -960,13 +1127,20 @@ export default function QuizPane({
       matches: question.matchesDraft,
       text: question.textDraft,
     });
+  const confidence =
+    confidenceRating.questionId === question?.id
+      ? confidenceRating.value
+      : null;
+  const answerFields = question
+    ? getQuizAnswerFields(question, confidence)
+    : null;
+  const canSubmitAnswer = connected && !busy && answerFields !== null;
   const prompt = session?.currentPrompt;
   const composerActions = getQuizComposerActions(question?.status, !!connected);
   const canRespondPrompt = !!prompt?.selectedChoiceId;
   const sessionImages = session ? (pendingImages[session.id] ?? []) : [];
   const composerIntent = getQuizComposerIntent(
     draft,
-    canSubmitAnswer,
     sessionImages.length,
     canRespondPrompt,
   );
@@ -974,7 +1148,9 @@ export default function QuizPane({
   const sendComposer = () => {
     if (composerIntent) send(composerIntent);
   };
-  const send = (type: 'answer' | 'message' | 'continue' | 'prompt') => {
+  const send = (
+    type: 'answer' | 'message' | 'continue' | 'prompt' | 'skip',
+  ) => {
     if (!session || !bridge || !connected || busy) return;
     const base = {
       sessionId: session.id,
@@ -983,6 +1159,10 @@ export default function QuizPane({
     };
     if (type === 'continue')
       void update(() => bridge.request({ ...base, type }));
+    else if (type === 'skip' && question)
+      void update(() =>
+        bridge.request({ ...base, type, questionId: question.id }),
+      );
     else if (type === 'prompt' && session.currentPrompt?.selectedChoiceId) {
       const p = session.currentPrompt;
       void update(() =>
@@ -1035,26 +1215,12 @@ export default function QuizPane({
         }
         return result;
       });
-    } else if (
-      type === 'answer' &&
-      session.currentQuestion &&
-      canSubmitAnswer
-    ) {
-      const q = session.currentQuestion;
+    } else if (type === 'answer' && canSubmitAnswer && answerFields) {
       void update(() =>
         bridge.request({
           ...base,
           type,
-          ...(questionKind === 'multiple-choice'
-            ? { choiceId: q.selectedChoiceId! }
-            : {}),
-          ...(questionKind === 'matching' ? { matches: q.matchesDraft } : {}),
-          ...(questionKind === 'short-answer' || questionKind === 'long-answer'
-            ? { answer: q.textDraft }
-            : {}),
-          ...(questionKind === 'multiple-choice' || questionKind === 'matching'
-            ? { reasoning: q.reasoningDraft }
-            : {}),
+          ...answerFields,
         }),
       );
     }
@@ -1124,25 +1290,15 @@ export default function QuizPane({
                     </button>
                     <button
                       type="button"
-                      aria-label="Copy quiz agent instructions"
-                      title="Copy quiz agent instructions"
+                      aria-label="Copy Pi attach command"
+                      title="Copy Pi attach command"
                       className="inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
-                      onClick={async () => {
-                        const sourceGuidance = session.scope
-                          ? 'Inspect scope, current question, transcript, and relevant source material.'
-                          : 'Sources not selected. Ask the learner for notes or a directory to use as source material.';
-                        const instructions = `Pi with the Storm quiz extension loaded (recommended): use /storm-quiz attach ${session.id}. Do not run a second CLI attach. The extension sends you the initial snapshot and instructions; ${sourceGuidance} Keep the extension-held capability private. Use the storm_quiz tool for status, questions, feedback, and tutoring messages. The extension owns learner-event waiting in this Pi session: do not launch a wait subprocess, listener, polling loop, or subagent. After each learner response, reply appropriately, then pause for the extension's next event; it makes no idle model calls. Continue only after explicit learner Continue. The extension disconnects its waiter on Pi session switch or shutdown.\n\nOther agents without this Pi extension: use the manual Storm quiz CLI. Run \`storm quiz attach ${session.id}\` (or \`bun scripts/storm.ts quiz attach ${session.id}\` in a Storm source checkout). Read \`result.value.snapshot\` and retain \`result.value.agentToken\` privately; never print, log, or include the token in chat or saved notes. Use \`storm quiz wait ${session.id} --token TOKEN --after CURSOR\` between responses; wait is indefinite by default and does not return during idle periods. Advance CURSOR from events, consider both selected option and reasoning, and continue only after explicit Continue. Send feedback/questions/messages via \`storm quiz request ${session.id} --token TOKEN\` with JSON on stdin.`;
-                        try {
-                          await navigator.clipboard.writeText(instructions);
-                          notifySuccess('Copied instructions');
-                        } catch (error) {
-                          notifyError(
-                            error instanceof Error && error.message
-                              ? `Could not copy instructions: ${error.message}`
-                              : 'Could not copy instructions.',
-                          );
-                        }
-                      }}
+                      onClick={() =>
+                        copyQuizInstructions(
+                          quizPiAttachCommand(session.id),
+                          'Copied attach command',
+                        )
+                      }
                     >
                       <span className="group relative inline-flex h-5 w-5 shrink-0 items-center justify-center text-white/45 hover:text-white/80">
                         <IoIosInformationCircle aria-hidden="true" size={17} />
@@ -1151,15 +1307,31 @@ export default function QuizPane({
                           role="tooltip"
                           className="pointer-events-none absolute left-0 top-full z-50 mt-2 hidden w-max max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal rounded-xl border border-white/15 bg-[#22252a]/95 p-3 text-xs font-normal leading-relaxed text-white/90 shadow-xl backdrop-blur-md group-hover:block"
                         >
-                          The session and transcript are preserved. Copy these
-                          instructions into your agent to start or resume the
-                          quiz. Pi with the Storm quiz extension should use the
-                          extension route; other agents can use the manual CLI
-                          fallback.
+                          The session and transcript are preserved. In Pi with
+                          the Storm quiz extension loaded, paste this command to
+                          start or resume the quiz; the extension then sends the
+                          snapshot and full instructions. Agents without the
+                          extension need the CLI instructions instead.
                         </span>
                       </span>
                       <span className="quiz-instructions-label truncate">
-                        Instructions
+                        Pi command
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Copy CLI agent instructions"
+                      title="Copy CLI agent instructions"
+                      className="inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
+                      onClick={() =>
+                        copyQuizInstructions(
+                          quizCliInstructions(session.id, !!session.scope),
+                          'Copied instructions',
+                        )
+                      }
+                    >
+                      <span className="quiz-instructions-label truncate">
+                        CLI
                       </span>
                     </button>
                   </>
@@ -1323,6 +1495,15 @@ export default function QuizPane({
                               key={m.question.id}
                               className={`${revealingContentId === m.question.id ? 'quiz-new-question' : ''} w-full rounded-xl border border-white/10 bg-white/[0.04] p-3 text-left`}
                             >
+                              <QuizLearningTag learning={m.question.learning} />
+                              <QuizVerdict
+                                verdict={m.question.verdict}
+                                answerLabel={
+                                  m.question.answerLabel ??
+                                  m.question.chosenChoiceText
+                                }
+                                confidence={m.question.confidence}
+                              />
                               <div className="quiz-agent-markdown">
                                 <QuizMarkdown>{m.question.prompt}</QuizMarkdown>
                               </div>
@@ -1458,10 +1639,10 @@ export default function QuizPane({
                             {prompt.choices.map((choice) => (
                               <label
                                 key={choice.id}
-                                className={`quiz-choice-card mb-2 flex cursor-pointer gap-2 break-words rounded-md border border-transparent bg-white/10 px-3 py-2 transition-colors hover:bg-white/20 ${prompt.selectedChoiceId === choice.id ? 'quiz-choice-card--selected' : ''}`}
+                                className={`quiz-choice-card mb-2 flex cursor-pointer gap-2 break-words rounded-md border border-transparent bg-white/10 px-3 py-2 transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-white ${prompt.selectedChoiceId === choice.id ? 'quiz-choice-card--selected' : ''}`}
                               >
                                 <input
-                                  className="sr-only"
+                                  className="quiz-choice-radio mt-1 h-4 w-4 shrink-0"
                                   type="radio"
                                   name={`quiz-prompt-${session.id}`}
                                   checked={
@@ -1475,7 +1656,9 @@ export default function QuizPane({
                                   }
                                 />
                                 <span className="quiz-agent-markdown min-w-0">
-                                  <QuizMarkdown choice>{choice.text}</QuizMarkdown>
+                                  <QuizMarkdown choice>
+                                    {choice.text}
+                                  </QuizMarkdown>
                                 </span>
                               </label>
                             ))}
@@ -1493,6 +1676,7 @@ export default function QuizPane({
                           </div>
                         )
                       : (session.currentQuestion?.status === 'open' ||
+                          session.currentQuestion?.status === 'answered' ||
                           session.currentQuestion?.status === 'feedback') && (
                           <>
                             {qaExpanded && (
@@ -1504,15 +1688,20 @@ export default function QuizPane({
                                 id="quiz-qa-content"
                                 className={`${revealingContentId === (session.currentQuestion?.id ?? session.currentPrompt?.id) ? 'quiz-new-question' : ''} min-w-0 p-2`}
                               >
+                                <QuizLearningTag
+                                  learning={session.currentQuestion.learning}
+                                />
                                 <div className="quiz-agent-markdown mb-3 break-words font-medium">
                                   <QuizMarkdown>
                                     {session.currentQuestion.prompt}
                                   </QuizMarkdown>
                                 </div>
-                                {session.currentQuestion.status ===
-                                  'feedback' && (
+                                {session.currentQuestion.status !== 'open' && (
                                   <QuizVerdict
                                     verdict={session.currentQuestion.verdict}
+                                    confidence={
+                                      session.currentQuestion.confidence
+                                    }
                                   />
                                 )}
                                 {questionKind === 'multiple-choice' &&
@@ -1520,10 +1709,10 @@ export default function QuizPane({
                                     (choice) => (
                                       <label
                                         key={choice.id}
-                                        className={`quiz-choice-card mb-2 flex cursor-pointer gap-2 break-words rounded-md border border-transparent bg-white/10 px-3 py-2 transition-colors hover:bg-white/20 focus-within:outline focus-within:outline-2 focus-within:outline-white ${session.currentQuestion!.selectedChoiceId === choice.id ? 'quiz-choice-card--selected' : ''}`}
+                                        className={`quiz-choice-card mb-2 flex cursor-pointer gap-2 break-words rounded-md border border-transparent bg-white/10 px-3 py-2 transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-white ${session.currentQuestion!.selectedChoiceId === choice.id ? 'quiz-choice-card--selected' : ''}`}
                                       >
                                         <input
-                                          className="sr-only"
+                                          className="quiz-choice-radio mt-1 h-4 w-4 shrink-0"
                                           type="radio"
                                           name={`quiz-choice-${session.id}`}
                                           disabled={
@@ -1624,7 +1813,7 @@ export default function QuizPane({
                                           </select>
                                         </label>
                                       ))}
-                                      {!canSubmitAnswer && (
+                                      {!answerComplete && (
                                         <p
                                           className="mt-2 text-xs text-white/55"
                                           role="status"
@@ -1686,6 +1875,23 @@ export default function QuizPane({
                                       />
                                     </>
                                   )}
+                                {session.currentQuestion.status === 'open' && (
+                                  <QuizAnswerActions
+                                    questionId={session.currentQuestion.id}
+                                    confidence={confidence}
+                                    answerComplete={answerComplete}
+                                    connected={connected}
+                                    busy={busy}
+                                    onConfidenceChange={(value) =>
+                                      setConfidenceRating({
+                                        questionId: session.currentQuestion!.id,
+                                        value,
+                                      })
+                                    }
+                                    onSkip={() => send('skip')}
+                                    onSubmit={() => send('answer')}
+                                  />
+                                )}
                               </div>
                             )}
                           </>
@@ -1811,9 +2017,7 @@ export default function QuizPane({
                                 },
                                 connected &&
                                   !busy &&
-                                  (hasChatMessage ||
-                                    canSubmitAnswer ||
-                                    canRespondPrompt),
+                                  (hasChatMessage || canRespondPrompt),
                                 sendComposer,
                               )
                             }
@@ -1832,23 +2036,17 @@ export default function QuizPane({
                             disabled={
                               !connected ||
                               busy ||
-                              (!hasChatMessage &&
-                                !canSubmitAnswer &&
-                                !canRespondPrompt)
+                              (!hasChatMessage && !canRespondPrompt)
                             }
                             aria-label={
-                              hasChatMessage
-                                ? 'Send message'
-                                : canRespondPrompt
-                                  ? 'Respond to prompt'
-                                  : 'Submit answer'
+                              !hasChatMessage && canRespondPrompt
+                                ? 'Respond to prompt'
+                                : 'Send message'
                             }
                             title={
-                              hasChatMessage
-                                ? 'Send message'
-                                : canRespondPrompt
-                                  ? 'Respond to prompt'
-                                  : 'Submit answer'
+                              !hasChatMessage && canRespondPrompt
+                                ? 'Respond to prompt'
+                                : 'Send message'
                             }
                             className="absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-white/75 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                           >

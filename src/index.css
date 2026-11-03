@@ -743,8 +743,27 @@
   backdrop-filter: blur(16px);
 }
 
+.quiz-choice-card:hover:not(.quiz-choice-card--selected) {
+  background-color: rgb(255 255 255 / 16%);
+}
+
 .quiz-choice-card--selected {
-  border-color: rgb(255 255 255 / 35%);
+  border-color: #0a84ff;
+  background-color: rgb(10 132 255 / 14%);
+}
+
+.quiz-choice-radio {
+  accent-color: #0a84ff;
+  color-scheme: dark;
+}
+
+.quiz-confidence-slider {
+  accent-color: #0a84ff;
+}
+
+.quiz-confidence-slider--unrated {
+  accent-color: #8e8e93;
+  opacity: 0.55;
 }
 
 .quiz-action-button {

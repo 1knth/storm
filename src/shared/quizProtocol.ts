@@ -22,9 +22,39 @@ export type QuizQuestionKind =
   | 'matching'
   | 'short-answer'
   | 'long-answer';
+/** Ordinal task demand used by the learner model; difficulty attaches to levels, not generated items. */
+export type QuizCognitiveLevel = 'recall' | 'explain' | 'apply' | 'transfer';
+export const QUIZ_COGNITIVE_LEVELS: readonly QuizCognitiveLevel[] = [
+  'recall',
+  'explain',
+  'apply',
+  'transfer',
+];
+/** Help offered with the task. Assisted success locates the zone of proximal development. */
+export type QuizSupport = 'independent' | 'hinted' | 'worked';
+export const QUIZ_SUPPORTS: readonly QuizSupport[] = [
+  'independent',
+  'hinted',
+  'worked',
+];
+/** Stable lowercase concept slug, e.g. `while-loop-condition`. */
+export const QUIZ_CONCEPT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export const QUIZ_MAX_CONCEPTS = 3;
+/** Agent-declared learning metadata. Missing metadata means the attempt is not modelled. */
+export type QuizLearning = {
+  concepts: string[];
+  level: QuizCognitiveLevel;
+  support: QuizSupport;
+};
+export function isQuizConfidence(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 100;
+}
 export type QuizQuestion = {
   id: string;
   studyBasis?: string;
+  learning?: QuizLearning;
+  /** Submitted learner confidence (0-100); absent for historical or unrated answers. */
+  confidence?: number;
   /** Missing kind denotes a historical multiple-choice question. */
   kind?: QuizQuestionKind;
   prompt: string;
@@ -56,6 +86,8 @@ export type QuizMessage = {
   question?: {
     id: string;
     studyBasis?: string;
+    learning?: QuizLearning;
+    confidence?: number;
     kind?: QuizQuestionKind;
     prompt: string;
     choices: QuizChoice[];
@@ -109,6 +141,10 @@ export type QuizAgentRequest = (
   | {
       type: 'pose-question';
       studyBasis?: string;
+      /** Optional learner-model metadata; concepts and level must be supplied together. */
+      concepts?: string[];
+      level?: QuizCognitiveLevel;
+      support?: QuizSupport;
       sessionId: string;
       agentToken: string;
       expectedRevision: number;
@@ -129,6 +165,7 @@ export type QuizAgentRequest = (
       reasoning?: string;
       matches?: Record<string, string>;
       answer?: string;
+      confidence?: number;
     }
   | {
       type: 'respond-prompt';
@@ -160,6 +197,15 @@ export type QuizAgentRequest = (
       text: string;
     }
   | {
+      type: 'skip-question';
+      sessionId: string;
+      agentToken: string;
+      expectedRevision: number;
+      idempotencyKey: string;
+      questionId: string;
+      text: string;
+    }
+  | {
       type: 'feedback';
       sessionId: string;
       agentToken: string;
@@ -167,6 +213,14 @@ export type QuizAgentRequest = (
       idempotencyKey: string;
       text: string;
       verdict?: 'correct' | 'incorrect' | 'partial';
+    }
+  | {
+      type: 'skip';
+      sessionId: string;
+      agentToken: string;
+      expectedRevision: number;
+      idempotencyKey: string;
+      questionId: string;
     }
   | {
       type: 'continue';
@@ -196,6 +250,7 @@ export type QuizLearnerRequest =
       reasoning?: string;
       matches?: Record<string, string>;
       answer?: string;
+      confidence?: number;
     }
   | {
       type: 'respond-prompt';
@@ -205,6 +260,13 @@ export type QuizLearnerRequest =
       promptId: string;
       choiceId: string;
       detail?: string;
+    }
+  | {
+      type: 'skip';
+      sessionId: string;
+      expectedRevision: number;
+      idempotencyKey: string;
+      questionId: string;
     }
   | {
       type: 'continue';
@@ -252,3 +314,35 @@ export type QuizResult<T> =
         | 'study-unavailable'
         | 'unauthorized';
     };
+
+/**
+ * Validate optional pose-question learning metadata. Returns undefined when absent,
+ * null when invalid. Concepts and level travel together; support defaults to independent.
+ */
+export function quizLearningFromRequest(request: {
+  concepts?: unknown;
+  level?: unknown;
+  support?: unknown;
+}): QuizLearning | undefined | null {
+  const { concepts, level, support } = request;
+  if (concepts === undefined && level === undefined && support === undefined)
+    return undefined;
+  if (
+    !Array.isArray(concepts) ||
+    concepts.length < 1 ||
+    concepts.length > QUIZ_MAX_CONCEPTS ||
+    concepts.some(
+      (concept) =>
+        typeof concept !== 'string' || !QUIZ_CONCEPT_ID.test(concept),
+    ) ||
+    new Set(concepts).size !== concepts.length ||
+    !QUIZ_COGNITIVE_LEVELS.includes(level as QuizCognitiveLevel) ||
+    (support !== undefined && !QUIZ_SUPPORTS.includes(support as QuizSupport))
+  )
+    return null;
+  return {
+    concepts: [...(concepts as string[])],
+    level: level as QuizCognitiveLevel,
+    support: (support as QuizSupport | undefined) ?? 'independent',
+  };
+}
