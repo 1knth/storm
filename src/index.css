@@ -760,7 +760,7 @@
 }
 
 .quiz-choice-card:hover:not(.quiz-choice-card--selected) {
-  background-color: rgb(255 255 255 / 16%);
+  background-color: rgb(255 255 255 / 20%);
 }
 
 .quiz-choice-card--selected {
@@ -1111,32 +1111,46 @@ body,
 
 /* macOS-style context menus share the same treatment with their submenus. */
 .macos-context-menu {
-  border: 1px solid rgb(255 255 255 / 24%);
-  border-radius: 9px;
-  background: rgb(38 38 40 / 96%);
+  border: 1px solid rgb(0 0 0 / 70%);
+  border-radius: 7px;
+  background: rgb(65 63 63 / 96%);
   color: #dedede;
   box-shadow:
     0 10px 30px rgb(0 0 0 / 40%),
-    inset 0 0 0 1px rgb(0 0 0 / 20%);
+    inset 0 0 0 1px rgb(255 255 255 / 22%);
   padding: 5px;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
   line-height: 1.35;
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
 }
 
 .macos-context-menu .app-popup-row {
-  min-height: 25px;
+  min-height: 22px;
   border-radius: 4px;
-  padding: 3px 9px;
+  padding: 2px 9px;
   transition: none;
 }
 
-.macos-context-menu .app-popup-row:hover:not([aria-disabled='true']),
-.macos-context-menu .app-popup-row:focus-visible:not([aria-disabled='true']),
-.macos-context-menu .app-popup-row[aria-expanded='true'] {
-  background-color: #0a64d8;
+/* Main-menu highlighting follows one active row, including during submenu aim. */
+.macos-context-menu .app-popup-row:hover,
+.macos-context-menu .app-popup-row:focus-visible {
+  background-color: transparent;
+  color: inherit;
+  outline: none;
+}
+
+.macos-context-menu .app-popup-row[data-active='true'],
+.macos-context-menu
+  .app-popup-row[data-submenu-option]:hover:not([aria-disabled='true']),
+.macos-context-menu
+  .app-popup-row[data-submenu-option]:focus-visible:not(
+    [aria-disabled='true']
+  ) {
+  background-color: #0064d8;
   color: white;
 }
 
@@ -1146,8 +1160,8 @@ body,
 
 .macos-context-menu-separator {
   height: 1px;
-  margin: 5px 9px;
-  background-color: rgb(255 255 255 / 16%);
+  margin: 6px 9px;
+  background-color: rgb(255 255 255 / 20%);
 }
 
 .macos-context-menu-chevron {

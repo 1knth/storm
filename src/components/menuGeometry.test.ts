@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { clampMenuPosition, positionSubmenu } from './menuGeometry';
+import {
+  clampMenuPosition,
+  positionSubmenu,
+  isMovingIntoSubmenu,
+} from './menuGeometry';
 import { nextEnabledMenuIndex } from './ContextMenu';
 import type { ContextMenuItem } from './ContextMenu';
 
@@ -113,6 +117,44 @@ describe('nextEnabledMenuIndex', () => {
     assert.equal(
       nextEnabledMenuIndex([{ type: 'separator', id: 'only' }], 0, -1),
       -1,
+    );
+  });
+});
+
+describe('submenu pointer intent', () => {
+  const right = { left: 200, right: 300, top: 50, bottom: 200 };
+  it('protects diagonal paths into a submenu, including across another row and the gap', () => {
+    assert.equal(
+      isMovingIntoSubmenu({ x: 100, y: 60 }, { x: 160, y: 130 }, right),
+      true,
+    );
+    assert.equal(
+      isMovingIntoSubmenu({ x: 100, y: 60 }, { x: 198, y: 170 }, right),
+      true,
+    );
+  });
+  it('switches immediately for vertical movement and movement away from the submenu', () => {
+    assert.equal(
+      isMovingIntoSubmenu({ x: 100, y: 60 }, { x: 100, y: 90 }, right),
+      false,
+    );
+    assert.equal(
+      isMovingIntoSubmenu({ x: 100, y: 60 }, { x: 90, y: 70 }, right),
+      false,
+    );
+    assert.equal(
+      isMovingIntoSubmenu({ x: 100, y: 60 }, { x: 120, y: 180 }, right),
+      false,
+    );
+  });
+  it('protects left-opening and vertically clamped submenus', () => {
+    assert.equal(
+      isMovingIntoSubmenu({ x: 400, y: 60 }, { x: 340, y: 130 }, right),
+      true,
+    );
+    assert.equal(
+      isMovingIntoSubmenu({ x: 100, y: 240 }, { x: 160, y: 180 }, right),
+      true,
     );
   });
 });

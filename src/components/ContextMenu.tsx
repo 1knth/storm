@@ -1,6 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { clampMenuPosition, positionSubmenu } from './menuGeometry';
+import {
+  clampMenuPosition,
+  positionSubmenu,
+  isMovingIntoSubmenu,
+} from './menuGeometry';
 
 export type ContextMenuPosition = { x: number; y: number };
 export type ContextMenuItem =
@@ -85,6 +89,9 @@ export default function ContextMenu({
   const submenuElement = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: anchor.x, top: anchor.y });
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const focusSubmenu = useRef(false);
+  const submenuOrigin = useRef<{ x: number; y: number } | null>(null);
   const actions = items.filter(
     (item): item is Extract<ContextMenuItem, { label: string }> =>
       item.type !== 'separator',
@@ -135,9 +142,12 @@ export default function ContextMenu({
 
   useLayoutEffect(() => {
     if (!openSubmenu) return;
-    submenuElement.current
-      ?.querySelector<HTMLButtonElement>('button:not([aria-disabled="true"])')
-      ?.focus();
+    if (focusSubmenu.current) {
+      submenuElement.current
+        ?.querySelector<HTMLButtonElement>('button:not([aria-disabled="true"])')
+        ?.focus();
+      focusSubmenu.current = false;
+    }
     const update = () => {
       const anchorElement = menu.current?.querySelector<HTMLElement>(
         `[data-menu-id="${CSS.escape(openSubmenu)}"]`,
@@ -164,6 +174,59 @@ export default function ContextMenu({
       observer.disconnect();
       window.removeEventListener('resize', update);
       window.removeEventListener('scroll', update, true);
+    };
+  }, [openSubmenu, items]);
+
+  useLayoutEffect(() => {
+    let origin = submenuOrigin.current;
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    let pendingId: string | null = null;
+    const cancel = () => {
+      clearTimeout(pending);
+      pending = undefined;
+      pendingId = null;
+    };
+    const move = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') return;
+      const target = event.target as HTMLElement;
+      if (submenuElement.current?.contains(target)) {
+        origin = null;
+        submenuOrigin.current = null;
+        cancel();
+        return;
+      }
+      const row = target.closest<HTMLElement>('[data-menu-id]');
+      if (!row || !menu.current?.contains(row)) return;
+      const item = actions.find(
+        (candidate) => candidate.id === row.dataset.menuId,
+      );
+      if (!item) return;
+      const point = { x: event.clientX, y: event.clientY };
+      if (item.id === openSubmenu) {
+        origin = point;
+        submenuOrigin.current = point;
+        cancel();
+        return;
+      }
+      const select = () => {
+        cancel();
+        submenuOrigin.current = item.submenu ? point : null;
+        setActiveId(item.disabled ? null : item.id);
+        setOpenSubmenu(!item.disabled && item.submenu ? item.id : null);
+      };
+      const rect = submenuElement.current?.getBoundingClientRect();
+      if (origin && rect && isMovingIntoSubmenu(origin, point, rect)) {
+        if (pendingId !== item.id) {
+          cancel();
+          pendingId = item.id;
+          pending = setTimeout(select, 300);
+        }
+      } else select();
+    };
+    document.addEventListener('pointermove', move);
+    return () => {
+      cancel();
+      document.removeEventListener('pointermove', move);
     };
   }, [openSubmenu, items]);
 
@@ -227,7 +290,16 @@ export default function ContextMenu({
           );
           if (item?.submenu) {
             event.preventDefault();
-            setOpenSubmenu(item.id);
+            if (openSubmenu === item.id) {
+              submenuElement.current
+                ?.querySelector<HTMLButtonElement>(
+                  'button:not([aria-disabled="true"])',
+                )
+                ?.focus();
+            } else {
+              focusSubmenu.current = true;
+              setOpenSubmenu(item.id);
+            }
           }
         } else if (event.key === 'ArrowLeft') {
           if (openSubmenu) {
@@ -247,9 +319,10 @@ export default function ContextMenu({
           );
           if (item) {
             event.preventDefault();
-            if (item.submenu)
+            if (item.submenu) {
+              focusSubmenu.current = true;
               setOpenSubmenu(openSubmenu === item.id ? null : item.id);
-            else activate(item);
+            } else activate(item);
           }
         }
       }}
@@ -271,14 +344,18 @@ export default function ContextMenu({
             tabIndex={-1}
             aria-haspopup={item.submenu ? 'menu' : undefined}
             aria-expanded={item.submenu ? openSubmenu === item.id : undefined}
-            onMouseEnter={() => {
-              if (item.submenu) setOpenSubmenu(item.id);
+            data-active={activeId === item.id || undefined}
+            onFocus={() => {
+              setActiveId(item.disabled ? null : item.id);
+              if (item.id !== openSubmenu) setOpenSubmenu(null);
             }}
-            onClick={() =>
-              item.submenu
-                ? setOpenSubmenu(openSubmenu === item.id ? null : item.id)
-                : activate(item)
-            }
+            onClick={() => {
+              if (item.disabled) return;
+              if (item.submenu) {
+                setActiveId(item.id);
+                setOpenSubmenu(openSubmenu === item.id ? null : item.id);
+              } else activate(item);
+            }}
             className={`app-popup-row flex w-full items-center justify-between gap-6 px-2 py-1.5 text-left ${item.disabled ? 'cursor-default opacity-45' : ''} ${item.danger ? 'text-red-300' : ''}`}
           >
             <span className="flex items-center gap-2">
@@ -333,13 +410,18 @@ export default function ContextMenu({
                   if (!item.submenu) return;
                   const buttons = Array.from(
                     event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                      'button',
+                      'button:not([aria-disabled="true"])',
                     ),
                   );
                   const index = buttons.indexOf(
                     document.activeElement as HTMLButtonElement,
                   );
-                  if (event.key === 'Escape' || event.key === 'ArrowLeft') {
+                  if (event.key === 'Tab') {
+                    onClose('outside');
+                  } else if (
+                    event.key === 'Escape' ||
+                    event.key === 'ArrowLeft'
+                  ) {
                     event.preventDefault();
                     setOpenSubmenu(null);
                     menu.current

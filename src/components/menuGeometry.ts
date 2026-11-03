@@ -47,3 +47,19 @@ export function clampMenuPosition(
     top: Math.max(gutter, Math.min(y, viewportHeight - gutter - boundedHeight)),
   };
 }
+
+/** The triangle from the last parent-row point to the submenu's near edge. */
+export function isMovingIntoSubmenu(
+  origin: { x: number; y: number },
+  point: { x: number; y: number },
+  submenu: { left: number; right: number; top: number; bottom: number },
+): boolean {
+  const edge = origin.x <= submenu.left ? submenu.left : submenu.right;
+  const distance = edge - origin.x;
+  if (!distance) return false;
+  const progress = (point.x - origin.x) / distance;
+  if (progress <= 0 || progress > 1) return false;
+  const top = origin.y + (submenu.top - 6 - origin.y) * progress;
+  const bottom = origin.y + (submenu.bottom + 6 - origin.y) * progress;
+  return point.y >= top && point.y <= bottom;
+}
