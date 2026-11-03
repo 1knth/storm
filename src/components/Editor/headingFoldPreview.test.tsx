@@ -29,7 +29,7 @@ describe('preview heading section rendering', () => {
     });
     assert.match(
       html,
-      /style="--preview-bold-color:#123456;--preview-italic-color:#abcdef"/,
+      /style="[^"]*--preview-bold-color:#123456;--preview-italic-color:#abcdef"/,
     );
     assert.match(html, /<strong[^>]*>bold<\/strong>/);
     assert.match(html, /<em[^>]*>italic<\/em>/);

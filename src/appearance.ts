@@ -6,6 +6,7 @@ export const DEFAULT_APPEARANCE = {
   activeLine: '#e0bfff',
   cursor: '#027DFF',
   folderIcon: '#9EE4FF',
+  previewHeadingSpacing: 100,
   previewBoldColor: null as string | null,
   previewItalicColor: null as string | null,
   listMarkerColor: null as string | null,
@@ -72,6 +73,13 @@ export function validateAppearance(value: unknown): Appearance {
     activeLine: color(input.activeLine, DEFAULT_APPEARANCE.activeLine),
     cursor: color(input.cursor, DEFAULT_APPEARANCE.cursor),
     folderIcon: color(input.folderIcon, DEFAULT_APPEARANCE.folderIcon),
+    previewHeadingSpacing:
+      typeof input.previewHeadingSpacing === 'number' &&
+      Number.isFinite(input.previewHeadingSpacing) &&
+      input.previewHeadingSpacing >= 0 &&
+      input.previewHeadingSpacing <= 200
+        ? input.previewHeadingSpacing
+        : DEFAULT_APPEARANCE.previewHeadingSpacing,
     previewBoldColor:
       input.previewBoldColor === null || input.previewBoldColor === undefined
         ? null

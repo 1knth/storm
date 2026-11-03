@@ -12,6 +12,30 @@ import {
 } from './appearance';
 
 describe('appearance preferences', () => {
+  it('defaults, validates, and persists preview heading spacing', () => {
+    strictEqual(validateAppearance({}).previewHeadingSpacing, 100);
+    for (const value of [-1, 201, NaN, Infinity, '50', null]) {
+      strictEqual(
+        validateAppearance({ previewHeadingSpacing: value })
+          .previewHeadingSpacing,
+        100,
+      );
+    }
+    let saved = '';
+    const storage = {
+      getItem: () => saved || null,
+      setItem: (_key: string, value: string) => {
+        saved = value;
+      },
+    };
+    for (const value of [0, 50, 100, 200]) {
+      saveAppearance(storage, {
+        ...DEFAULT_APPEARANCE,
+        previewHeadingSpacing: value,
+      });
+      strictEqual(loadAppearance(storage).previewHeadingSpacing, value);
+    }
+  });
   it('validates malformed colors and incomplete heading palettes', () => {
     const result = validateAppearance({
       selection: 'red',

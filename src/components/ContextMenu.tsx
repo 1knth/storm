@@ -179,7 +179,7 @@ export default function ContextMenu({
       ref={menu}
       role="menu"
       aria-label={label}
-      className="app-popup-surface fixed z-[1000] min-w-36 max-w-[calc(100vw-16px)] overflow-auto p-1 text-sm select-none"
+      className="app-popup-surface macos-context-menu fixed z-[1000] min-w-36 max-w-[calc(100vw-16px)] overflow-auto p-1 text-sm select-none"
       style={{
         left: position.left,
         top: position.top,
@@ -259,7 +259,7 @@ export default function ContextMenu({
           <div
             key={item.id}
             role="separator"
-            className="my-1 border-t border-white/10"
+            className="macos-context-menu-separator"
           />
         ) : (
           <button
@@ -292,8 +292,16 @@ export default function ContextMenu({
               {item.label}
             </span>
             {item.submenu ? (
-              <span aria-hidden="true" className="text-white/50">
-                ›
+              <span aria-hidden="true" className="macos-context-menu-chevron">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path
+                    d="m4.5 2.5 3.5 3.5-3.5 3.5"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
               </span>
             ) : (
               item.shortcut && (
@@ -368,7 +376,7 @@ export default function ContextMenu({
                     (document.activeElement as HTMLButtonElement)?.click();
                   }
                 }}
-                className={`app-popup-surface fixed z-[1001] ${item.submenu.type === 'swatches' ? 'grid grid-cols-4 gap-1.5' : 'flex min-w-44 flex-col'} p-2`}
+                className={`app-popup-surface macos-context-menu fixed z-[1001] ${item.submenu.type === 'swatches' ? 'grid grid-cols-4 gap-1.5' : 'flex min-w-44 flex-col'} p-2`}
                 style={{
                   left: position.left + 150,
                   top: position.top,

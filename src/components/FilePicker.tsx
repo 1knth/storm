@@ -107,7 +107,7 @@ export default function FilePicker({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/20 p-8 pt-[15vh]"
+      className="command-palette-backdrop fixed inset-0 z-50 flex items-start justify-center bg-black/20 p-8 pt-[15vh]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}

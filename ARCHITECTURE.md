@@ -8,6 +8,7 @@ Storm is an Electron application. This maintained map describes the shipped impl
 - `src/preload.ts` exposes the narrow `window.vault` bridge to the renderer. `src/shared/` holds types and code shared across processes.
 - `src/renderer.ts` starts the React renderer. `src/main.tsx` owns application-level UI state, including open tabs, tab groups, active focus, and vault selection; it coordinates persistence through the preload API.
 - `src/components/Editor/Editor.tsx` owns an individual editor's editing, save binding, and preview behavior. Pure tab layout/group decisions live in `src/components/Editor/tabGroups.ts` and `savedTabLayout.ts`; close-tab fallback decisions live in `tabTransitions.ts`, with focused tests alongside them.
+- `src/components/Settings/SettingsDialog.tsx` owns the settings window: its category rail, panes, and the local state those panes need (unload confirmation, CLI install state). `src/components/fileExplorer.tsx` owns only the entry points that open it. Pure navigation and appearance-field decisions live in `settingsNavigation.ts` and `appearanceSettings.ts` with tests alongside them; `settings.css` holds the window's styling so it does not compete with the shared chrome in `src/index.css`.
 - `src/vault/` owns vault operations and persistence services invoked by main-process IPC. UI components request operations through the preload bridge rather than directly owning vault filesystem writes.
 - `forge.config.mts` and the Vite config files configure packaging and process-specific builds.
 

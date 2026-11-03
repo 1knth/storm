@@ -28,9 +28,25 @@
   color: var(--preview-list-marker-color, inherit);
 }
 
+.markdown-preview-content .preview-fold-heading {
+  margin-top: calc(0.625rem * var(--preview-heading-spacing, 1));
+  margin-bottom: calc(0.25rem * var(--preview-heading-spacing, 1));
+}
+
+.markdown-preview-content h1.preview-fold-heading {
+  margin-top: calc(0.75rem * var(--preview-heading-spacing, 1));
+  margin-bottom: calc(0.5rem * var(--preview-heading-spacing, 1));
+}
+
+.markdown-preview-content h2.preview-fold-heading {
+  margin-top: calc(0.75rem * var(--preview-heading-spacing, 1));
+  margin-bottom: calc(0.375rem * var(--preview-heading-spacing, 1));
+}
+
 /* Keep the preview's fold affordance out of normal heading layout. */
 .preview-fold-heading {
   position: relative;
+  line-height: 1.2;
 }
 
 .preview-fold-heading-text {
@@ -1085,4 +1101,56 @@ body,
 
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* Blur the workspace across the whole picker backdrop, keeping its contents sharp. */
+.command-palette-backdrop {
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+/* macOS-style context menus share the same treatment with their submenus. */
+.macos-context-menu {
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 9px;
+  background: rgb(38 38 40 / 96%);
+  color: #dedede;
+  box-shadow:
+    0 10px 30px rgb(0 0 0 / 40%),
+    inset 0 0 0 1px rgb(0 0 0 / 20%);
+  padding: 5px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+}
+
+.macos-context-menu .app-popup-row {
+  min-height: 25px;
+  border-radius: 4px;
+  padding: 3px 9px;
+  transition: none;
+}
+
+.macos-context-menu .app-popup-row:hover:not([aria-disabled='true']),
+.macos-context-menu .app-popup-row:focus-visible:not([aria-disabled='true']),
+.macos-context-menu .app-popup-row[aria-expanded='true'] {
+  background-color: #0a64d8;
+  color: white;
+}
+
+.macos-context-menu .app-popup-row[aria-disabled='true'] {
+  background-color: transparent;
+}
+
+.macos-context-menu-separator {
+  height: 1px;
+  margin: 5px 9px;
+  background-color: rgb(255 255 255 / 16%);
+}
+
+.macos-context-menu-chevron {
+  display: inline-flex;
+  color: inherit;
 }
