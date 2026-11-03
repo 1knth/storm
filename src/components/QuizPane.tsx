@@ -17,6 +17,7 @@ import {
 } from './Editor/markdownMath';
 import { remarkSoftBreaks } from './Editor/markdownSoftBreaks';
 import { remarkQuizCurrency } from './quizMarkdownCurrency';
+import { remarkQuizLatexDelimiters } from './quizMarkdownMath';
 import MermaidBlock from './Editor/MermaidBlock';
 import type { Appearance } from '../appearance';
 import { DEFAULT_APPEARANCE } from '../appearance';
@@ -138,6 +139,7 @@ export function updateQuizRevealHistory(
 
 const quizMarkdownRemarkPlugins = [
   markdownMathRemarkPlugin,
+  remarkQuizLatexDelimiters,
   remarkQuizCurrency,
   remarkGfm,
   remarkSoftBreaks,

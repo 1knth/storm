@@ -732,6 +732,30 @@ describe('quiz Markdown renderer', () => {
     assert.match(html, /<math xmlns=/);
   });
 
+  it('renders LaTeX bracket and parenthesis delimiters in quiz content', () => {
+    const html = render(String.raw`Simplify:
+\[
+\neg(p\lor q)\lor(p\land\neg q)
+\]
+
+Explain \(p\lor q\).`);
+    assert.match(html, /class="katex-display"/);
+    assert.equal((html.match(/class="katex"/g) ?? []).length, 2);
+    assert.doesNotMatch(html, /katex-error/);
+  });
+
+  it('preserves LaTeX delimiters inside code and escaped delimiters', () => {
+    const html = render('`\\(x\\)`\n\n```tex\n\\[x\\]\n```\n\n\\\\(x\\\\)');
+    assert.doesNotMatch(html, /class="katex"/);
+    assert.match(html, /<code>\\\(x\\\)<\/code>/);
+  });
+
+  it('renders LaTeX math alongside ordinary currency', () => {
+    const html = render(String.raw`Solve \(x^2=4\). Pay $5 or $10.`);
+    assert.equal((html.match(/class="katex"/g) ?? []).length, 1);
+    assert.match(html, /Pay \$5 or \$10/);
+  });
+
   it('renders authored quiz formatting and preserves ordinary line breaks', () => {
     const html = render(
       'A writer argues,\n*“The college should extend evening library hours.”* or `“The college should extend evening library hours.”`\nWhich addition identifies an exception— a **circumstance** in which that recommendation might not apply—rather than **evidence**, a **warrant**, or a **qualifier**?',
