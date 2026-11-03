@@ -29,7 +29,7 @@ Use the repository's pinned package manager (`pnpm`, see `package.json`) to inst
 - `pnpm test` — the source test suite (Bun required).
 - `pnpm typecheck` — strict TypeScript checks for the app, CLI/build scripts, and portable quiz extension runtime.
 - `pnpm lint` — Oxlint and formatting check.
-- `pnpm audit` — the complete dependency graph, including the shipped Electron runtime.
+- `pnpm audit` — the complete dependency graph, including the shipped Electron runtime. Advisories in transitive build tooling are resolved with pinned `overrides` in `pnpm-workspace.yaml` rather than by relaxing the audit level. An advisory is added to `auditConfig.ignoreGhsas` only when no override can patch it without breaking a supported packaging path, and each entry records that reason beside it.
 - `pnpm test:packaged` — isolated macOS app/bundled CLI smoke check after `pnpm package`.
 
 The checks workflow runs these checks and packaging on macOS. The host-specific Pi extension entry point is covered by runtime integration tests; its host API is supplied by Pi rather than the app's TypeScript environment.
