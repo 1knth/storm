@@ -52,6 +52,19 @@ test('clipboard images use item data when files is empty and deduplicate fallbac
   assert.deepEqual(result, [file]);
 });
 
+test('clipboard images ignore distinct duplicate File objects from files', () => {
+  const fromItem = { type: 'image/png' } as File;
+  const fromFiles = { type: 'image/png' } as File;
+  const result = getClipboardImages({
+    items: [{ kind: 'file', type: 'image/png', getAsFile: () => fromItem }],
+    files: [fromFiles],
+  });
+  assert.deepEqual(result, [fromItem]);
+  assert.deepEqual(getClipboardImages({ items: [], files: [fromFiles] }), [
+    fromFiles,
+  ]);
+});
+
 test('successful sends clear the exact submitted draft, not normalized text or later typing', () => {
   const multiline = 'first line\nsecond line\n';
   assert.equal(shouldClearSubmittedDraft(multiline, multiline), true);

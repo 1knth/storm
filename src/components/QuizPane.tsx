@@ -7,6 +7,8 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -23,6 +25,7 @@ import MermaidBlock from './Editor/MermaidBlock';
 import type { Appearance } from '../appearance';
 import { DEFAULT_APPEARANCE } from '../appearance';
 import {
+  QUIZ_IMAGE_TYPES,
   getClipboardImages,
   getQuizAnswerFields,
   getQuizConfidenceLabel,
@@ -36,7 +39,13 @@ import {
 import { FaListUl, FaPencil, FaTelegram, FaTrash } from 'react-icons/fa6';
 import { FaPlus } from 'react-icons/fa';
 import { FiStopCircle } from 'react-icons/fi';
-import { IoChevronDown, IoChevronUp, IoClose } from 'react-icons/io5';
+import {
+  IoArrowForward,
+  IoChevronDown,
+  IoChevronUp,
+  IoClose,
+  IoImageOutline,
+} from 'react-icons/io5';
 import { IoIosCheckmarkCircle, IoIosInformationCircle } from 'react-icons/io';
 import { TbXboxXFilled } from 'react-icons/tb';
 import { useToast } from './Toast';
@@ -610,6 +619,75 @@ export function QuizAnswerActions({
   );
 }
 
+const QUIZ_ANSWER_FORMATTING = /[$*_`#\\]|^\s*(?:[-+]|\d+\.)\s/m;
+
+export function QuizAnswerAssist({
+  text,
+  imageCount,
+  onPickImages,
+}: {
+  text: string;
+  imageCount: number;
+  onPickImages: (files: File[]) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [previewOpen, setPreviewOpen] = useState(true);
+  const showPreview = QUIZ_ANSWER_FORMATTING.test(text);
+  return (
+    <div className="quiz-answer-assist mt-1">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-white/45">
+        <span>
+          Markdown and LaTeX (<code>$x^2$</code>) supported
+          {' · '}
+          <kbd>⌘</kbd>
+          <kbd>↵</kbd> to submit
+        </span>
+        <span className="flex items-center gap-1">
+          {showPreview && (
+            <button
+              type="button"
+              className="cursor-pointer rounded px-1.5 py-0.5 hover:bg-white/10 hover:text-white/80"
+              aria-pressed={previewOpen}
+              onClick={() => setPreviewOpen((open) => !open)}
+            >
+              {previewOpen ? 'Hide preview' : 'Show preview'}
+            </button>
+          )}
+          <button
+            type="button"
+            title="Attach images of your work"
+            className="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 hover:bg-white/10 hover:text-white/80"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <IoImageOutline aria-hidden="true" />
+            {imageCount ? `${imageCount} attached` : 'Attach image'}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={[...QUIZ_IMAGE_TYPES].join(',')}
+            multiple
+            hidden
+            onChange={(event) => {
+              const input = event.currentTarget;
+              onPickImages(getClipboardImages({ files: input.files }));
+              input.value = '';
+            }}
+          />
+        </span>
+      </div>
+      {showPreview && previewOpen && (
+        <div
+          aria-label="Answer preview"
+          className="quiz-agent-markdown quiz-answer-preview mt-1.5 rounded-lg border border-white/10 bg-white/[3%] px-2.5 py-1.5 text-sm"
+        >
+          <QuizMarkdown>{text}</QuizMarkdown>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function QuizLearningTag({ learning }: { learning?: QuizLearning }) {
   if (!learning) return null;
   const level = {
@@ -1178,6 +1256,84 @@ export default function QuizPane({
     canRespondPrompt,
   );
   const hasChatMessage = composerIntent === 'message';
+  const markImagesSent = (sessionId: string, images: typeof sessionImages) => {
+    setSentImages((current) => ({
+      ...current,
+      [sessionId]: [...(current[sessionId] ?? []), ...images],
+    }));
+    setPendingImages((current) => ({
+      ...current,
+      [sessionId]: (current[sessionId] ?? []).filter(
+        (image) => !images.includes(image),
+      ),
+    }));
+  };
+  const handleAnswerKeyDown = (event: {
+    key: string;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    preventDefault(): void;
+    stopPropagation(): void;
+  }) => {
+    if (event.key !== 'Enter') return;
+    event.stopPropagation();
+    if (!(event.metaKey || event.ctrlKey)) return;
+    event.preventDefault();
+    if (canSubmitAnswer && answerComplete && confidence !== null)
+      send('answer');
+  };
+  const addImageFiles = (files: File[]) => {
+    if (!files.length || !session || !bridge) return;
+    void (async () => {
+      if (deletedSessions.current.has(session.id)) return;
+      const existing = imagesRef.current[session.id] ?? [];
+      let remainingBytes = Math.max(
+        0,
+        10 * 1024 * 1024 - existing.reduce((sum, image) => sum + image.size, 0),
+      );
+      for (const file of files.slice(0, Math.max(0, 4 - existing.length))) {
+        if (file.size > remainingBytes) {
+          setError('Images are limited to 10 MB per message.');
+          continue;
+        }
+        remainingBytes -= file.size;
+        const result = await bridge.addImage(session.id, {
+          mimeType: file.type,
+          data: new Uint8Array(await file.arrayBuffer()),
+        });
+        if (!result.ok) {
+          setError(`Could not add image: ${result.error}`);
+          continue;
+        }
+        if (deletedSessions.current.has(session.id)) {
+          void bridge
+            .removeImage(session.id, result.value.id)
+            .catch(() => undefined);
+          continue;
+        }
+        const image = {
+          ...result.value,
+          url: URL.createObjectURL(file),
+        };
+        setPendingImages((current) => ({
+          ...current,
+          [session.id]: [...(current[session.id] ?? []), image],
+        }));
+      }
+    })().catch(() => setError('Could not read image.'));
+  };
+  const handleImagePaste = (event: ReactClipboardEvent) => {
+    const files = getClipboardImages(event.clipboardData);
+    if (!files.length || !session || !bridge) return;
+    event.preventDefault();
+    addImageFiles(files);
+  };
+  const handleImageDrop = (event: ReactDragEvent) => {
+    const files = getClipboardImages(event.dataTransfer);
+    if (!files.length) return;
+    event.preventDefault();
+    addImageFiles(files);
+  };
   const sendComposer = () => {
     if (composerIntent) send(composerIntent);
   };
@@ -1235,27 +1391,34 @@ export default function QuizPane({
               );
             }
           }
-          setSentImages((current) => ({
-            ...current,
-            [session.id]: [...(current[session.id] ?? []), ...images],
-          }));
-          setPendingImages((current) => ({
-            ...current,
-            [session.id]: (current[session.id] ?? []).filter(
-              (image) => !images.includes(image),
-            ),
-          }));
+          markImagesSent(session.id, images);
         }
         return result;
       });
     } else if (type === 'answer' && canSubmitAnswer && answerFields) {
-      void update(() =>
-        bridge.request({
+      const images = sessionImages;
+      void update(async () => {
+        const result = await bridge.request({
           ...base,
           type,
           ...answerFields,
-        }),
-      );
+        });
+        if (!result.ok || !images.length) return result;
+        // Answers carry text only, so images pasted while answering follow
+        // as a learner message the agent receives alongside the answer.
+        const followUp = await bridge.request({
+          sessionId: session.id,
+          expectedRevision: result.value.revision,
+          idempotencyKey: crypto.randomUUID(),
+          type: 'message',
+          text: 'Image attached to my answer.',
+          attachments: images.map((image) => image.id),
+        });
+        if (!followUp.ok) return result;
+        if (!deletedSessions.current.has(session.id))
+          markImagesSent(session.id, images);
+        return followUp;
+      });
     }
   };
   return (
@@ -1606,7 +1769,12 @@ export default function QuizPane({
                             <div className="quiz-learner-message w-fit max-w-[85%] text-left text-[0.95rem]">
                               {displayedText}
                               {m.attachments?.map((attachment) => {
-                                const preview = Object.values(sentImages)
+                                // The transcript can update before the sent
+                                // images move out of the pending tray.
+                                const preview = [
+                                  ...Object.values(sentImages),
+                                  ...Object.values(pendingImages),
+                                ]
                                   .flat()
                                   .find((image) => image.id === attachment.id);
                                 return preview ? (
@@ -1860,40 +2028,55 @@ export default function QuizPane({
                                 {(questionKind === 'short-answer' ||
                                   questionKind === 'long-answer') &&
                                   session.currentQuestion.status === 'open' && (
-                                    <label className="mt-2 block">
-                                      Your answer
-                                      <textarea
-                                        aria-label="Your answer"
-                                        rows={
-                                          questionKind === 'long-answer' ? 6 : 2
-                                        }
-                                        className="mt-1 w-full resize-y rounded-lg border border-white/15 bg-black/20 p-2"
-                                        value={
+                                    <>
+                                      <label className="mt-2 block">
+                                        Your answer
+                                        <textarea
+                                          aria-label="Your answer"
+                                          rows={
+                                            questionKind === 'long-answer'
+                                              ? 6
+                                              : 2
+                                          }
+                                          className="quiz-answer-input mt-1 w-full resize-y rounded-lg border border-white/15 bg-black/20 p-2"
+                                          placeholder="Type your answer, or paste a photo of your work"
+                                          onPaste={handleImagePaste}
+                                          onDrop={handleImageDrop}
+                                          value={
+                                            session.currentQuestion.textDraft ??
+                                            ''
+                                          }
+                                          onChange={(e) =>
+                                            updateContentDraft(
+                                              'currentQuestion',
+                                              {
+                                                textDraft: e.target.value,
+                                              },
+                                            )
+                                          }
+                                          onKeyDown={handleAnswerKeyDown}
+                                        />
+                                      </label>
+                                      <QuizAnswerAssist
+                                        text={
                                           session.currentQuestion.textDraft ??
                                           ''
                                         }
-                                        onChange={(e) =>
-                                          updateContentDraft(
-                                            'currentQuestion',
-                                            {
-                                              textDraft: e.target.value,
-                                            },
-                                          )
-                                        }
-                                        onKeyDown={(e) => {
-                                          if (questionKind === 'long-answer')
-                                            e.stopPropagation();
-                                        }}
+                                        imageCount={sessionImages.length}
+                                        onPickImages={addImageFiles}
                                       />
-                                    </label>
+                                    </>
                                   )}
                                 {(questionKind === 'multiple-choice' ||
                                   questionKind === 'matching') &&
                                   session.currentQuestion.status === 'open' && (
                                     <>
                                       <textarea
-                                        className="mt-3 w-full rounded-lg border border-white/15 bg-black/20 p-2"
+                                        className="quiz-answer-input mt-3 w-full rounded-lg border border-white/15 bg-black/20 p-2"
                                         placeholder="Your reasoning (optional)"
+                                        onPaste={handleImagePaste}
+                                        onDrop={handleImageDrop}
+                                        onKeyDown={handleAnswerKeyDown}
                                         value={
                                           session.currentQuestion.reasoningDraft
                                         }
@@ -1929,21 +2112,38 @@ export default function QuizPane({
                             )}
                           </>
                         )}
+                    {composerActions.showContinue && (
+                      <div className="flex justify-end px-1 pb-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={!connected || busy}
+                          className="quiz-action-button inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed"
+                          onClick={() => send('continue')}
+                        >
+                          Continue
+                          <IoArrowForward aria-hidden="true" />
+                        </button>
+                      </div>
+                    )}
                     <div className="flex min-w-0 items-center gap-1">
                       <div className="flex min-w-0 flex-1 flex-col">
                         {!!sessionImages.length && (
-                          <div className="flex flex-wrap gap-2 px-2 pt-2">
+                          <div className="flex flex-wrap gap-2 px-2 pb-1 pt-2">
                             {sessionImages.map((image) => (
-                              <span key={image.id} className="relative">
+                              <span
+                                key={image.id}
+                                className="quiz-attachment-thumb group relative"
+                              >
                                 <img
                                   src={image.url}
                                   alt="Image attachment preview"
-                                  className="h-16 w-16 rounded object-cover"
+                                  className="h-14 w-14 rounded-lg border border-white/15 object-cover"
                                 />
                                 <button
                                   type="button"
                                   aria-label="Remove image attachment"
-                                  className="absolute -right-1 -top-1 rounded-full bg-black px-1"
+                                  title="Remove"
+                                  className="absolute -right-1.5 -top-1.5 inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-neutral-800 text-white/80 shadow hover:bg-neutral-700 hover:text-white"
                                   onClick={() => {
                                     void bridge.removeImage(
                                       session.id,
@@ -1960,7 +2160,7 @@ export default function QuizPane({
                                     }));
                                   }}
                                 >
-                                  ×
+                                  <IoClose aria-hidden="true" size={12} />
                                 </button>
                               </span>
                             ))}
@@ -1969,73 +2169,8 @@ export default function QuizPane({
                         <div className="relative flex min-w-0">
                           <textarea
                             ref={messageInputRef}
-                            onPaste={(event) => {
-                              const files = getClipboardImages(
-                                event.clipboardData,
-                              );
-                              if (!files.length || !session || !bridge) return;
-                              event.preventDefault();
-                              void (async () => {
-                                if (deletedSessions.current.has(session.id))
-                                  return;
-                                const existing =
-                                  imagesRef.current[session.id] ?? [];
-                                let remainingBytes = Math.max(
-                                  0,
-                                  10 * 1024 * 1024 -
-                                    existing.reduce(
-                                      (sum, image) => sum + image.size,
-                                      0,
-                                    ),
-                                );
-                                for (const file of files.slice(
-                                  0,
-                                  Math.max(0, 4 - existing.length),
-                                )) {
-                                  if (file.size > remainingBytes) {
-                                    setError(
-                                      'Images are limited to 10 MB per message.',
-                                    );
-                                    continue;
-                                  }
-                                  remainingBytes -= file.size;
-                                  const result = await bridge.addImage(
-                                    session.id,
-                                    {
-                                      mimeType: file.type,
-                                      data: new Uint8Array(
-                                        await file.arrayBuffer(),
-                                      ),
-                                    },
-                                  );
-                                  if (!result.ok) {
-                                    setError(
-                                      `Could not add image: ${result.error}`,
-                                    );
-                                    continue;
-                                  }
-                                  if (deletedSessions.current.has(session.id)) {
-                                    void bridge
-                                      .removeImage(session.id, result.value.id)
-                                      .catch(() => undefined);
-                                    continue;
-                                  }
-                                  const image = {
-                                    ...result.value,
-                                    url: URL.createObjectURL(file),
-                                  };
-                                  setPendingImages((current) => ({
-                                    ...current,
-                                    [session.id]: [
-                                      ...(current[session.id] ?? []),
-                                      image,
-                                    ],
-                                  }));
-                                }
-                              })().catch(() =>
-                                setError('Could not read clipboard image.'),
-                              );
-                            }}
+                            onPaste={handleImagePaste}
+                            onDrop={handleImageDrop}
                             rows={1}
                             className="quiz-composer-input min-w-0 flex-1 rounded-2xl border-0 py-1.5 pl-3 pr-10 outline-none"
                             placeholder="Write a message"
@@ -2087,16 +2222,6 @@ export default function QuizPane({
                           </button>
                         </div>
                       </div>
-                      {composerActions.showContinue && (
-                        <button
-                          type="button"
-                          disabled={!connected || busy}
-                          className="quiz-action-button shrink-0 rounded px-3.5 py-1.5 text-xs disabled:opacity-40"
-                          onClick={() => send('continue')}
-                        >
-                          Continue
-                        </button>
-                      )}
                       {session.currentQuestion?.status === 'open' && (
                         <button
                           type="button"

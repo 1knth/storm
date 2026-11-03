@@ -1,7 +1,11 @@
 import { isQuizConfidence } from '../shared/quizProtocol';
 import type { QuizLearnerRequest, QuizQuestion } from '../shared/quizProtocol';
 
-const QUIZ_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+export const QUIZ_IMAGE_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
 
 export function getClipboardImages(data: {
   items?: ArrayLike<{
@@ -23,7 +27,10 @@ export function getClipboardImages(data: {
     if (item.kind === 'file' && QUIZ_IMAGE_TYPES.has(item.type))
       add(item.getAsFile());
   }
-  for (const file of Array.from(data.files ?? [])) add(file);
+  // Chromium exposes the same pasted image through both `items` and `files`
+  // as distinct File objects, so only fall back to `files` when `items` is empty.
+  if (!images.length)
+    for (const file of Array.from(data.files ?? [])) add(file);
   return images;
 }
 

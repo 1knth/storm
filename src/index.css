@@ -843,6 +843,28 @@
   background-color: #2794ff;
 }
 
+.quiz-answer-input {
+  field-sizing: content;
+  min-height: 2.75rem;
+  max-height: 16rem;
+}
+
+.quiz-answer-assist kbd {
+  margin-left: 1px;
+  border-radius: 3px;
+  background-color: rgb(255 255 255 / 8%);
+  padding: 0 3px;
+  font-family: inherit;
+}
+
+.quiz-answer-preview > :first-child {
+  margin-top: 0;
+}
+
+.quiz-answer-preview > :last-child {
+  margin-bottom: 0;
+}
+
 .quiz-composer-input {
   align-self: center;
   box-sizing: border-box;
