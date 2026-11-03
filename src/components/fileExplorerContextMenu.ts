@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from './ContextMenu';
+import { menuSections, type ContextMenuItem } from './ContextMenu';
 
 type ExplorerTarget = {
   path: string;
@@ -79,29 +79,19 @@ export function getExplorerContextMenuItems(
         ]
       : [];
 
-  if (target && target.kind !== 'folder') {
-    return [
-      ...openAction,
-      ...renameAction,
-      ...copyPathAction,
-      ...locationAction,
-      ...deleteAction,
-    ];
-  }
+  const createActions: ContextMenuItem[] =
+    target && target.kind !== 'folder'
+      ? []
+      : (['note', 'folder'] as const).map((kind) => ({
+          id: `new-${kind}`,
+          label: `New ${kind}`,
+          onSelect: () => onCreate(kind, parent),
+        }));
 
-  return [
-    ...(['note', 'folder'] as const).map((kind) => ({
-      id: `new-${kind}`,
-      label: `New ${kind}`,
-      onSelect: () => onCreate(kind, parent),
-    })),
-    ...(target &&
-    (copyPathAction.length || locationAction.length || deleteAction.length)
-      ? [{ type: 'separator' as const, id: 'entry-actions' }]
-      : []),
-    ...renameAction,
-    ...copyPathAction,
-    ...locationAction,
-    ...deleteAction,
-  ];
+  return menuSections(
+    [...createActions, ...openAction],
+    renameAction,
+    [...copyPathAction, ...locationAction],
+    deleteAction,
+  );
 }

@@ -16,7 +16,11 @@ import {
 import type { TabAssignments, TabGroup } from './tabGroups';
 import ContextMenu from '../ContextMenu';
 import type { ContextMenuItem, ContextMenuPosition } from '../ContextMenu';
-import { contextMenuPointForElement, isContextMenuKey } from '../ContextMenu';
+import {
+  contextMenuPointForElement,
+  isContextMenuKey,
+  menuSections,
+} from '../ContextMenu';
 
 type Props = {
   tabs: TabSnapshot[];
@@ -326,13 +330,15 @@ export default function TabBar({
     position: ContextMenuPosition,
     returnFocusTo: HTMLElement | null,
   ) => {
-    const items: ContextMenuItem[] = [
-      {
-        id: 'create-group',
-        label: 'Create group…',
-        onSelect: () => setDialog({ value: '' }),
-      },
-      ...groups.map((group) => ({
+    const items = menuSections(
+      [
+        {
+          id: 'create-group',
+          label: 'Create group…',
+          onSelect: () => setDialog({ value: '' }),
+        },
+      ],
+      groups.map((group) => ({
         id: `move-${group.id}`,
         label: `${assignments[tabId] === group.id ? '✓ ' : ''}Move to ${group.name}`,
         onSelect: () => {
@@ -344,7 +350,7 @@ export default function TabBar({
           );
         },
       })),
-      ...(assignments[tabId]
+      assignments[tabId]
         ? [
             {
               id: 'ungroup',
@@ -353,8 +359,8 @@ export default function TabBar({
                 onAssignmentsChange(assignTab(assignments, tabId, null)),
             },
           ]
-        : []),
-    ];
+        : [],
+    );
     setMenu({ position, returnFocusTo, items });
   };
   const showGroupMenu = (
@@ -390,11 +396,13 @@ export default function TabBar({
             })),
           },
         },
+        { type: 'separator', id: 'edit-section' },
         {
           id: 'rename',
           label: 'Rename group…',
           onSelect: () => setDialog({ id: group.id, value: group.name }),
         },
+        { type: 'separator', id: 'remove-section' },
         {
           id: 'remove',
           label: 'Remove group (keep tabs)',

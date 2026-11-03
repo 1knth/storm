@@ -59,10 +59,12 @@ export default function FilePicker({
           onClick={() => {
             void Promise.resolve(onOpen(entry)).then(onClose);
           }}
-          className={`app-popup-row w-full px-3 py-2 text-left text-sm ${index === highlightedIndex ? 'bg-white/10' : ''}`}
+          className={`app-popup-row command-palette-row w-full px-3 py-1.5 text-left ${index === highlightedIndex ? 'is-highlighted' : ''}`}
         >
-          <span className="block truncate">{entry.name}</span>
-          <span className="block truncate text-xs text-white/45">
+          <span className="block truncate text-[13px] leading-5">
+            {entry.name}
+          </span>
+          <span className="command-palette-row-detail block truncate text-[11px] leading-4">
             {entry.path}
           </span>
         </button>
@@ -107,7 +109,7 @@ export default function FilePicker({
 
   return (
     <div
-      className="command-palette-backdrop fixed inset-0 z-50 flex items-start justify-center bg-black/20 p-8 pt-[15vh]"
+      className="command-palette-backdrop fixed inset-0 z-50 flex items-start justify-center p-8 pt-[15vh]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -132,23 +134,23 @@ export default function FilePicker({
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           disabled={!hasVault}
-          className="app-input w-full rounded-none border-0 border-b border-white/10 bg-transparent px-5 py-4 outline-none placeholder:text-white/40 focus-visible:border-white/10"
+          className="app-input w-full rounded-none border-0 border-b border-white/[0.08] bg-transparent px-5 py-3.5 text-[17px] outline-none placeholder:text-white/35 focus-visible:border-white/[0.08]"
         />
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          <ul className="min-h-0 max-h-[30vh] w-full overflow-y-auto p-2 md:max-h-none md:w-1/2 md:border-r md:border-white/10">
+          <ul className="min-h-0 max-h-[30vh] w-full overflow-y-auto p-1.5 md:max-h-none md:w-1/2 md:border-r md:border-white/[0.08]">
             {fileList}
           </ul>
           <section
             aria-label="File preview"
             className="flex min-h-[28vh] w-full min-w-0 flex-col overflow-hidden md:min-h-[50vh] md:w-1/2"
           >
-            <h3 className="shrink-0 border-b border-white/10 px-4 py-3 text-xs font-medium text-white/50">
+            <h3 className="shrink-0 border-b border-white/[0.08] px-4 py-2 text-[11px] font-medium text-white/45">
               Preview
             </h3>
             {previewContent}
           </section>
         </div>
-        <p className="shrink-0 border-t border-white/10 px-5 py-3 text-xs text-white/40">
+        <p className="shrink-0 border-t border-white/[0.08] px-5 py-2 text-[11px] text-white/35">
           ↑↓ to navigate · Enter to open · Esc to close
         </p>
       </section>

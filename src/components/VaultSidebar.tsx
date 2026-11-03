@@ -158,13 +158,6 @@ export default function VaultSidebar({
                 ),
             },
             {
-              id: 'unload',
-              label: 'Unload vault',
-              disabled: busy,
-              danger: true,
-              onSelect: () => onRemove(vault.id),
-            },
-            {
               id: 'move-to-group',
               label: 'Group',
               disabled: busy,
@@ -198,6 +191,14 @@ export default function VaultSidebar({
                 ],
               },
             },
+            { type: 'separator', id: 'unload-section' },
+            {
+              id: 'unload',
+              label: 'Unload vault',
+              disabled: busy,
+              danger: true,
+              onSelect: () => onRemove(vault.id),
+            },
           ];
         })()
       : menu?.target.kind === 'group'
@@ -226,6 +227,7 @@ export default function VaultSidebar({
                   })),
                 },
               },
+              { type: 'separator', id: 'edit-section' },
               {
                 id: 'rename',
                 label: 'Rename',
@@ -234,6 +236,7 @@ export default function VaultSidebar({
                   requestAnimationFrame(() => formInput.current?.focus());
                 },
               },
+              { type: 'separator', id: 'delete-section' },
               {
                 id: 'delete',
                 label: 'Delete group',

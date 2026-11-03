@@ -51,6 +51,19 @@ export type ContextMenuProps = {
   label?: string;
 };
 
+/** Joins non-empty item groups with macOS-style section dividers. */
+export function menuSections(
+  ...sections: ContextMenuItem[][]
+): ContextMenuItem[] {
+  return sections
+    .filter((section) => section.length > 0)
+    .flatMap((section, index) =>
+      index === 0
+        ? section
+        : [{ type: 'separator' as const, id: `section-${index}` }, ...section],
+    );
+}
+
 export function contextMenuPointForElement(
   element: HTMLElement,
 ): ContextMenuPosition {
@@ -438,18 +451,10 @@ export default function ContextMenu({
                     ].includes(event.key)
                   ) {
                     event.preventDefault();
-                    const isActions = item.submenu.type === 'actions';
-                    const delta = isActions
-                      ? event.key === 'ArrowUp' || event.key === 'ArrowLeft'
+                    const delta =
+                      event.key === 'ArrowUp' || event.key === 'ArrowLeft'
                         ? -1
-                        : 1
-                      : event.key === 'ArrowLeft'
-                        ? -1
-                        : event.key === 'ArrowRight'
-                          ? 1
-                          : event.key === 'ArrowUp'
-                            ? -4
-                            : 4;
+                        : 1;
                     buttons[
                       (index + delta + buttons.length) % buttons.length
                     ]?.focus();
@@ -458,7 +463,7 @@ export default function ContextMenu({
                     (document.activeElement as HTMLButtonElement)?.click();
                   }
                 }}
-                className={`app-popup-surface macos-context-menu fixed z-[1001] ${item.submenu.type === 'swatches' ? 'grid grid-cols-4 gap-1.5' : 'flex min-w-44 flex-col'} p-2`}
+                className={`app-popup-surface macos-context-menu fixed z-[1001] flex min-w-44 flex-col`}
                 style={{
                   left: position.left + 150,
                   top: position.top,
@@ -467,55 +472,44 @@ export default function ContextMenu({
                   overflow: 'auto',
                 }}
               >
-                {item.submenu.type === 'swatches'
-                  ? item.submenu.items.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        role="menuitem"
-                        aria-label={option.label}
-                        title={option.label}
-                        aria-checked={option.selected || undefined}
-                        onClick={() => {
-                          onClose('select');
-                          option.onSelect();
-                        }}
-                        className={`h-7 w-7 rounded-full border-2 ${option.selected ? 'border-white ring-1 ring-white/60' : 'border-white/25 hover:border-white/80'}`}
-                        style={{ backgroundColor: option.color }}
-                      />
-                    ))
-                  : item.submenu.items.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        role="menuitemradio"
-                        data-submenu-option
-                        aria-checked={option.selected || false}
-                        aria-disabled={option.disabled || undefined}
-                        tabIndex={-1}
-                        onClick={() => {
-                          if (option.disabled) return;
-                          onClose('select');
-                          option.onSelect();
-                        }}
-                        className={`app-popup-row flex w-full items-center justify-between gap-4 px-2 py-1.5 text-left ${option.disabled ? 'cursor-default opacity-45' : ''}`}
-                      >
-                        <span className="flex items-center gap-2">
-                          {(option.indicatorColor ?? option.color) && (
-                            <span
-                              aria-hidden="true"
-                              className="h-2.5 w-2.5 shrink-0 rounded-full"
-                              style={{
-                                backgroundColor:
-                                  option.indicatorColor ?? option.color,
-                              }}
-                            />
-                          )}
-                          {option.label}
-                        </span>
-                        {option.selected && <span aria-hidden="true">✓</span>}
-                      </button>
-                    ))}
+                {item.submenu.items.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="menuitemradio"
+                    data-submenu-option
+                    aria-checked={option.selected || false}
+                    aria-disabled={
+                      ('disabled' in option && option.disabled) || undefined
+                    }
+                    tabIndex={-1}
+                    onClick={() => {
+                      if ('disabled' in option && option.disabled) return;
+                      onClose('select');
+                      option.onSelect();
+                    }}
+                    className={`app-popup-row flex w-full items-center justify-between gap-4 px-2 py-1.5 text-left ${'disabled' in option && option.disabled ? 'cursor-default opacity-45' : ''}`}
+                  >
+                    <span className="flex items-center gap-2">
+                      {('indicatorColor' in option
+                        ? (option.indicatorColor ?? option.color)
+                        : option.color) && (
+                        <span
+                          aria-hidden="true"
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{
+                            backgroundColor:
+                              'indicatorColor' in option
+                                ? (option.indicatorColor ?? option.color)
+                                : option.color,
+                          }}
+                        />
+                      )}
+                      {option.label}
+                    </span>
+                    {option.selected && <span aria-hidden="true">✓</span>}
+                  </button>
+                ))}
               </div>,
               document.body,
               `submenu-${item.id}`,
