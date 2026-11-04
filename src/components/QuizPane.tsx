@@ -1576,18 +1576,55 @@ export default function QuizPane({
         aria-label="Quiz"
       >
         <header
-          className="quiz-pane-header @container flex flex-col gap-1.5 border-b border-white/10 px-4 py-2"
+          className="quiz-pane-header @container flex flex-col gap-0 border-b border-white/10 px-4 py-2"
           data-pane="quiz"
         >
-          <div className="flex min-h-9 items-center justify-between">
+          <div className="flex min-h-8 items-center justify-between">
             <div className="flex min-w-0 flex-1 items-center text-[15px] font-semibold">
               {session && !showSessionList ? (
-                <QuizSessionName
-                  key={session.id}
-                  name={session.name}
-                  onRename={(name) => renameSessionById(session.id, name)}
-                  className="-ml-1.5"
-                />
+                <>
+                  <QuizSessionName
+                    key={session.id}
+                    name={session.name}
+                    onRename={(name) => renameSessionById(session.id, name)}
+                    className="-ml-1.5"
+                  />
+                  <div className="ml-1 min-w-0 shrink text-sm font-normal">
+                    <QuizScopePicker
+                      scope={session.scope}
+                      vaultId={vaultId}
+                      notePath={notePath}
+                      onChange={async (scope) => {
+                        if (!bridge) return;
+                        try {
+                          const result = await bridge.setSessionScope(
+                            session.id,
+                            scope,
+                          );
+                          if (!result.ok) {
+                            notifyError(
+                              `Could not change study context: ${result.error}`,
+                            );
+                            return;
+                          }
+                          setSession(result.value);
+                          setSessions((items) =>
+                            items.map((item) =>
+                              item.id === session.id ? result.value : item,
+                            ),
+                          );
+                          notifySuccess(
+                            scope
+                              ? 'Study context attached'
+                              : 'Study context removed',
+                          );
+                        } catch {
+                          notifyError('Could not change study context.');
+                        }
+                      }}
+                    />
+                  </div>
+                </>
               ) : (
                 <span>{showSessionList ? 'Sessions' : 'Quiz'}</span>
               )}
@@ -1674,40 +1711,7 @@ export default function QuizPane({
             </div>
           </div>
           {session && !showSessionList && (
-            <div className="flex min-w-0 items-center gap-2 text-xs">
-              <QuizScopePicker
-                scope={session.scope}
-                vaultId={vaultId}
-                notePath={notePath}
-                onChange={async (scope) => {
-                  if (!bridge) return;
-                  try {
-                    const result = await bridge.setSessionScope(
-                      session.id,
-                      scope,
-                    );
-                    if (!result.ok) {
-                      notifyError(
-                        `Could not change study context: ${result.error}`,
-                      );
-                      return;
-                    }
-                    setSession(result.value);
-                    setSessions((items) =>
-                      items.map((item) =>
-                        item.id === session.id ? result.value : item,
-                      ),
-                    );
-                    notifySuccess(
-                      scope
-                        ? 'Study context attached'
-                        : 'Study context removed',
-                    );
-                  } catch {
-                    notifyError('Could not change study context.');
-                  }
-                }}
-              />
+            <div className="flex min-w-0 items-center gap-3 text-xs">
               <span
                 className={`inline-flex shrink-0 items-center gap-1.5 ${connected ? 'text-emerald-400' : 'text-white/50'}`}
                 title={`Agent ${connected ? 'connected' : 'not connected'}`}
@@ -1716,11 +1720,9 @@ export default function QuizPane({
                   aria-hidden="true"
                   className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-emerald-400' : 'bg-white/30'}`}
                 />
-                <span className="hidden @[22rem]:inline">
-                  {connected ? 'Connected' : 'Not connected'}
-                </span>
+                {connected ? 'Connected' : 'Not connected'}
               </span>
-              <div className="ml-auto flex shrink-0 items-center gap-1">
+              <div className="flex shrink-0 items-center gap-1">
                 {connected ? (
                   <button
                     type="button"
