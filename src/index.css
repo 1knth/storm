@@ -1600,3 +1600,25 @@ body,
   background-color: rgb(255 255 255 / 14%);
   color: white;
 }
+
+/* Quiz header icon buttons: no fill; hover and "on" brighten and glow the icon. */
+.quiz-header-icon {
+  background-color: transparent;
+  color: rgb(255 255 255 / 60%);
+  transition:
+    color 120ms ease,
+    filter 120ms ease;
+}
+
+.quiz-header-icon:hover,
+.quiz-header-icon:focus-visible,
+.quiz-header-icon[aria-pressed='true'] {
+  background-color: transparent;
+  color: white;
+  filter: drop-shadow(0 0 4px rgb(255 255 255 / 55%));
+}
+
+.quiz-header-icon:focus-visible {
+  outline: 1px solid rgb(255 255 255 / 60%);
+  outline-offset: 0;
+}

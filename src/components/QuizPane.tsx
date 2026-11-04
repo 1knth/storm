@@ -1637,7 +1637,7 @@ export default function QuizPane({
                   aria-keyshortcuts="Control+Shift+Q"
                   title={`${fullscreen ? 'Exit full screen' : 'Full screen'} (${navigator.platform.toLowerCase().includes('mac') ? '⌃⇧Q' : 'Ctrl+Shift+Q'})`}
                   aria-pressed={fullscreen}
-                  className="rounded p-2 text-white/70 hover:bg-white/10 focus-visible:bg-transparent hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                  className="quiz-header-icon rounded p-2"
                   onClick={onToggleFullscreen}
                 >
                   {fullscreen ? (
@@ -1652,7 +1652,7 @@ export default function QuizPane({
                   type="button"
                   aria-label="Create new session"
                   title="Create new session"
-                  className="rounded p-2 text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                  className="quiz-header-icon rounded p-2"
                   onClick={() => {
                     if (sessionRef.current)
                       persistDraft(sessionRef.current.id, true);
@@ -1686,7 +1686,7 @@ export default function QuizPane({
                 type="button"
                 aria-label="Show quiz sessions"
                 title="Show quiz sessions"
-                className="rounded p-2 text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                className="quiz-header-icon rounded p-2"
                 onClick={() => {
                   if (showSessionList) {
                     if (sessionRef.current) setShowSessionList(false);
@@ -1704,7 +1704,7 @@ export default function QuizPane({
                 type="button"
                 aria-label="Close Quiz"
                 title="Close Quiz"
-                className="rounded p-2 text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                className="quiz-header-icon rounded p-2"
                 onClick={onClose}
               >
                 <IoClose aria-hidden="true" size={20} />
