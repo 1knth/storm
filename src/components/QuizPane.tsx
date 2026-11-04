@@ -618,7 +618,7 @@ export function QuizAnswerActions({
     <div className="quiz-answer-actions mt-3 border-t border-white/10 pt-3">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
         <label htmlFor={confidenceId} className="text-white/70">
-          How confident are you?
+          Confidence meter
         </label>
         <output htmlFor={confidenceId} className="text-white/50">
           {confidenceText}
@@ -633,7 +633,6 @@ export function QuizAnswerActions({
         // The neutral thumb position is visual only; null remains unrated until interaction.
         value={confidence ?? 50}
         aria-valuetext={confidenceText}
-        aria-describedby={`${confidenceId}-help`}
         disabled={disabled}
         className={`quiz-confidence-slider my-2 block w-full cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed ${confidence === null ? 'quiz-confidence-slider--unrated' : ''}`}
         onChange={(event) =>
@@ -659,20 +658,6 @@ export function QuizAnswerActions({
             onConfidenceChange(event.currentTarget.valueAsNumber);
         }}
       />
-      <p id={`${confidenceId}-help`} className="mb-2 text-[11px] text-white/45">
-        How likely is your whole answer to be correct? 100% means certain. Your
-        confidence helps choose feedback and practice; it does not change your
-        grade.
-      </p>
-      {missingAnswer && (
-        <p role="status" className="mb-2 text-xs text-white/45">
-          {answerComplete
-            ? 'Rate your confidence to submit.'
-            : confidence === null
-              ? 'Complete your answer and rate your confidence to submit.'
-              : 'Complete your answer to submit.'}
-        </p>
-      )}
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
@@ -769,18 +754,21 @@ export const QuizMarkdown = memo(function QuizMarkdown({
   children,
   reveal = false,
   choice = false,
+  inline = false,
   appearance,
 }: {
   children: string;
   reveal?: boolean;
   choice?: boolean;
+  inline?: boolean;
   appearance?: Appearance;
 }) {
   const inheritedAppearance = useContext(QuizMarkdownAppearanceContext);
   const configuredAppearance = appearance ?? inheritedAppearance;
+  const Container = inline ? 'span' : 'div';
   return (
     <QuizMarkdownAppearanceContext.Provider value={configuredAppearance}>
-      <div
+      <Container
         className="quiz-agent-markdown"
         style={
           {
@@ -805,12 +793,17 @@ export const QuizMarkdown = memo(function QuizMarkdown({
           components={
             choice
               ? { ...quizMarkdownComponents, ...quizChoiceHeadingComponents }
-              : quizMarkdownComponents
+              : inline
+                ? {
+                    ...quizMarkdownComponents,
+                    p: ({ children }) => <span>{children}</span>,
+                  }
+                : quizMarkdownComponents
           }
         >
           {children}
         </ReactMarkdown>
-      </div>
+      </Container>
     </QuizMarkdownAppearanceContext.Provider>
   );
 });
@@ -2174,8 +2167,9 @@ export default function QuizPane({
                                               )
                                             }
                                             onKeyDown={handleAnswerKeyDown}
-                                            renderMarkdown={(text) => (
+                                            renderMarkdown={(text, inline) => (
                                               <QuizMarkdown
+                                                inline={inline}
                                                 appearance={appearance}
                                               >
                                                 {text}

@@ -9,7 +9,7 @@ import {
   placeholder,
 } from '@codemirror/view';
 import { markdown } from '@codemirror/lang-markdown';
-import { syntaxTree } from '@codemirror/language';
+import { answerPreviewRanges } from './quizAnswerDecorations';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { createMarkdownSyntaxHighlighting } from './Editor/markdownHighlighting';
 
@@ -18,15 +18,18 @@ class MarkdownWidget extends WidgetType {
   constructor(
     private text: string,
     private render: (text: string) => ReactNode,
+    private block = true,
   ) {
     super();
   }
   eq(other: MarkdownWidget) {
-    return this.text === other.text;
+    return this.text === other.text && this.block === other.block;
   }
   toDOM() {
-    const element = document.createElement('div');
-    element.className = 'quiz-answer-rendered';
+    const element = document.createElement(this.block ? 'div' : 'span');
+    element.className = this.block
+      ? 'quiz-answer-rendered'
+      : 'quiz-answer-rendered quiz-answer-inline';
     this.root = createRoot(element);
     this.root.render(this.render(this.text));
     return element;
@@ -46,7 +49,7 @@ type Props = {
   long: boolean;
   onChange: (text: string) => void;
   onKeyDown: (event: KeyboardEvent) => void;
-  renderMarkdown: (text: string) => ReactNode;
+  renderMarkdown: (text: string, inline?: boolean) => ReactNode;
 };
 
 /** Render completed Markdown blocks in place; reveal source around the caret. */
@@ -76,28 +79,20 @@ export default function QuizAnswerEditor(props: Props) {
       provide: (field) => EditorView.decorations.from(field),
     });
     function decorate(state: EditorState) {
-      const ranges = [];
-      const selection = state.selection.main;
-      const cursorBlock = syntaxTree(state).topNode;
-      for (let node = cursorBlock.firstChild; node; node = node.nextSibling) {
-        if (
-          state.field(focused) &&
-          selection.from <= node.to &&
-          selection.to >= node.from
-        )
-          continue;
-        ranges.push(
+      return Decoration.set(
+        answerPreviewRanges(state, state.field(focused)).map((range) =>
           Decoration.replace({
             widget: new MarkdownWidget(
-              state.sliceDoc(node.from, node.to),
-              (text) => latest.current.renderMarkdown(text),
+              state.sliceDoc(range.from, range.to),
+              (text) => latest.current.renderMarkdown(text, !range.block),
+              range.block,
             ),
-            block: true,
-          }).range(node.from, node.to),
-        );
-      }
-      return Decoration.set(ranges);
+            block: range.block,
+          }).range(range.from, range.to),
+        ),
+      );
     }
+
     const view = new EditorView({
       parent: host.current!,
       state: EditorState.create({
@@ -132,11 +127,13 @@ export default function QuizAnswerEditor(props: Props) {
               latest.current.onChange(update.state.doc.toString());
           }),
           EditorView.theme({
-            '&': { backgroundColor: 'transparent' },
+            '&': { backgroundColor: 'transparent', cursor: 'text' },
             '&.cm-focused': { outline: 'none' },
             '.cm-content': {
               minHeight: props.long ? '9rem' : '3rem',
               fontFamily: 'inherit',
+              caretColor: 'white',
+              cursor: 'text',
               padding: '8px',
             },
             '.cm-scroller': {
@@ -144,7 +141,7 @@ export default function QuizAnswerEditor(props: Props) {
               maxHeight: '16rem',
               overflow: 'auto',
             },
-            '.cm-line': { padding: '0' },
+            '.cm-line': { padding: '0', cursor: 'text' },
           }),
         ],
       }),

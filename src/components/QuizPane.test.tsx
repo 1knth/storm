@@ -513,27 +513,20 @@ describe('question answer footer', () => {
     );
   });
 
-  it('starts unrated with an associated label, a status hint, and a neutral slider', () => {
+  it('starts unrated with an associated label, a rating, and a neutral slider', () => {
     const html = renderToStaticMarkup(
       React.createElement(QuizAnswerActions, props),
     );
     assert.match(
       html,
-      /<label for="quiz-confidence-question-a"[^>]*>How confident are you\?/,
+      /<label for="quiz-confidence-question-a"[^>]*>Confidence meter/,
     );
     assert.match(
       html,
       /type="range" min="0" max="100" step="5" aria-valuetext="Not rated"/,
     );
-    assert.match(html, /aria-describedby="quiz-confidence-question-a-help"/);
-    assert.match(html, /How likely is your whole answer to be correct/);
-    assert.match(html, /does not change your grade/);
     assert.match(html, /quiz-confidence-slider--unrated/);
-    assert.match(html, /role="status"/);
-    assert.match(
-      html,
-      /Complete your answer and rate your confidence to submit\./,
-    );
+    assert.doesNotMatch(html, /How likely|Complete your answer|role="status"/);
     const rated = renderToStaticMarkup(
       React.createElement(QuizAnswerActions, {
         ...props,
@@ -1011,4 +1004,16 @@ describe('quiz choice formatting', () => {
     assert.match(html, /<code>hours<\/code>/);
     assert.match(render('## Explanation'), /<h2/);
   });
+});
+
+it('renders composer inline previews without block wrappers', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(QuizMarkdown, {
+      inline: true,
+      children: '**bold** and $x^2$',
+    }),
+  );
+  assert.match(html, /<strong/);
+  assert.match(html, /katex/);
+  assert.doesNotMatch(html, /<(?:div|p)[ >]/);
 });
