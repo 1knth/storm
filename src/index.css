@@ -1287,6 +1287,23 @@ body,
   background-color: transparent;
 }
 
+/* The study-context picker is a menu without roving focus, so hover highlights. */
+.quiz-scope-menu .app-popup-row:hover:not(:disabled),
+.quiz-scope-menu .app-popup-row:focus-visible:not(:disabled) {
+  background-color: #0064d8;
+  color: white;
+}
+
+.quiz-scope-filter {
+  border-color: rgb(255 255 255 / 14%);
+  background-color: rgb(0 0 0 / 20%);
+}
+
+.quiz-scope-filter:focus-visible {
+  border-color: rgb(255 255 255 / 30%);
+  background-color: rgb(0 0 0 / 20%);
+}
+
 .macos-context-menu-separator {
   height: 1px;
   margin: 5px 10px;
@@ -1301,7 +1318,7 @@ body,
 /* Click-to-copy LaTeX in rendered previews (see latexCopy.ts). */
 .katex[data-latex-copy] {
   position: relative;
-  cursor: copy;
+  cursor: pointer;
   border-radius: 4px;
   transition: background-color 120ms ease;
 }

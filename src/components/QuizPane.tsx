@@ -2461,7 +2461,7 @@ export default function QuizPane({
                       }
                     }}
                     placeholder="Search sessions"
-                    className="h-8 w-full border-0 bg-transparent text-[13px] text-white placeholder:text-white/40 focus:outline-none"
+                    className="h-8 w-full border-0 bg-transparent text-[13px] text-white placeholder:text-white/40 focus:outline-none focus-visible:bg-transparent"
                   />
                 </div>
                 {(() => {

@@ -91,7 +91,7 @@ export default function QuizScopePicker({
   const otherVault = !!scope && !!vaultId && scope.vaultId !== vaultId;
   const noteFolder = notePath ? parentFolder(notePath) : null;
   const item =
-    'block w-full truncate rounded px-2 py-1 text-left text-sm text-white/80 hover:bg-white/10 disabled:opacity-40';
+    'app-popup-row block w-full truncate text-left disabled:opacity-40';
 
   return (
     <div ref={root} className="relative">
@@ -114,17 +114,17 @@ export default function QuizScopePicker({
         <div
           role="dialog"
           aria-label="Choose study context"
-          className="absolute left-0 top-full z-20 mt-1 w-72 rounded-md border border-white/15 bg-neutral-900 p-2 shadow-lg"
+          className="app-popup-surface macos-context-menu quiz-scope-menu absolute left-0 top-full z-20 mt-1 w-72 select-none"
         >
-          <p className="mb-2 text-xs text-white/50">
+          <p className="px-2.5 pt-0.5 pb-1 text-xs text-white/50">
             The tutor can read Markdown in this context. It cannot edit notes.
           </p>
           {!vaultId ? (
-            <p className="text-sm text-white/60">Open a vault first.</p>
+            <p className="px-2.5 py-0.5 text-white/60">Open a vault first.</p>
           ) : (
             <>
               {otherVault && (
-                <p className="mb-2 text-xs text-amber-300">
+                <p className="px-2.5 pb-1 text-xs text-amber-300">
                   Current context belongs to another vault.
                 </p>
               )}
@@ -156,12 +156,13 @@ export default function QuizScopePicker({
               >
                 Entire vault
               </button>
+              <div role="separator" className="macos-context-menu-separator" />
               <input
                 aria-label="Filter folders"
                 placeholder="Filter folders"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value)}
-                className="my-2 w-full rounded border border-white/15 bg-transparent px-2 py-1 text-sm text-white placeholder:text-white/40"
+                className="quiz-scope-filter mx-1 mb-1 w-[calc(100%-0.5rem)] rounded-[5px] border px-2 py-0.5 text-white placeholder:text-white/40 focus:outline-none"
               />
               <div className="max-h-56 overflow-y-auto">
                 {visible.map((folder) => (
@@ -169,14 +170,27 @@ export default function QuizScopePicker({
                     key={folder}
                     type="button"
                     disabled={busy}
-                    className={`${item} ${scope?.folderPath === folder && !otherVault ? 'text-sky-300' : ''}`}
+                    className={`${item} relative pl-6`}
+                    aria-current={
+                      scope?.folderPath === folder && !otherVault
+                        ? 'true'
+                        : undefined
+                    }
                     onClick={() => choose(scoped({ folderPath: folder }))}
                   >
+                    {scope?.folderPath === folder && !otherVault && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute left-2 top-1/2 -translate-y-1/2"
+                      >
+                        ✓
+                      </span>
+                    )}
                     {folder}
                   </button>
                 ))}
                 {!visible.length && (
-                  <p className="px-2 py-1 text-sm text-white/40">
+                  <p className="px-2.5 py-0.5 text-white/40">
                     No folders found.
                   </p>
                 )}
@@ -184,14 +198,17 @@ export default function QuizScopePicker({
             </>
           )}
           {scope && (
-            <button
-              type="button"
-              disabled={busy}
-              className={`${item} mt-2 border-t border-white/10 pt-2 text-red-300`}
-              onClick={() => choose(null)}
-            >
-              Remove context
-            </button>
+            <>
+              <div role="separator" className="macos-context-menu-separator" />
+              <button
+                type="button"
+                disabled={busy}
+                className={`${item} text-red-300`}
+                onClick={() => choose(null)}
+              >
+                Remove context
+              </button>
+            </>
           )}
         </div>
       )}
