@@ -17,6 +17,7 @@ import type {
 import { deriveVisibleVaults } from './shared/vaultGroups';
 import Editor from './components/Editor/Editor';
 import QuizPane from './components/QuizPane';
+import { installLatexCopy } from './components/latexCopy';
 import FilePicker from './components/FilePicker';
 import { filterPickerEntries } from './components/filePickerEntries';
 import type { EditorHandle, TabSnapshot } from './components/Editor/Editor';
@@ -2985,6 +2986,7 @@ function App() {
     </main>
   );
 }
+installLatexCopy();
 createRoot(document.getElementById('root')!).render(
   <ToastProvider>
     <App />

@@ -12,6 +12,7 @@ import {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import QuizAnswerEditor from './QuizAnswerEditor';
+import { recordConfidenceObservation } from './quizConfidenceMetrics';
 import remarkGfm from 'remark-gfm';
 import 'katex/dist/katex.min.css';
 import {
@@ -508,7 +509,7 @@ export function QuizTurnHint({
     >
       <span>
         {hint === 'answer'
-          ? 'Your turn: answer the question above, or ask a follow-up.'
+          ? 'Your turn: answer the question below, or ask a follow-up.'
           : 'Your turn: reply below, or continue to the next step.'}
       </span>
       {hint === 'reply' && (
@@ -546,10 +547,12 @@ export function QuizVerdict({
   verdict,
   answerLabel,
   confidence,
+  compact = false,
 }: {
   verdict?: 'correct' | 'incorrect' | 'partial';
   answerLabel?: string;
   confidence?: number;
+  compact?: boolean;
 }) {
   if (!verdict && confidence === undefined) return null;
   const label =
@@ -562,7 +565,7 @@ export function QuizVerdict({
           : undefined;
   return (
     <div
-      className={`quiz-verdict ${verdict ? `quiz-verdict--${verdict}` : ''} mb-2 flex flex-wrap items-center gap-2`}
+      className={`quiz-verdict ${verdict ? `quiz-verdict--${verdict}` : ''} ${compact ? '' : 'mb-2'} flex flex-wrap items-center gap-2`}
       aria-label={label}
     >
       {verdict === 'incorrect' ? (
@@ -630,6 +633,7 @@ export function QuizAnswerActions({
         // The neutral thumb position is visual only; null remains unrated until interaction.
         value={confidence ?? 50}
         aria-valuetext={confidenceText}
+        aria-describedby={`${confidenceId}-help`}
         disabled={disabled}
         className={`quiz-confidence-slider my-2 block w-full cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed ${confidence === null ? 'quiz-confidence-slider--unrated' : ''}`}
         onChange={(event) =>
@@ -655,6 +659,11 @@ export function QuizAnswerActions({
             onConfidenceChange(event.currentTarget.valueAsNumber);
         }}
       />
+      <p id={`${confidenceId}-help`} className="mb-2 text-[11px] text-white/45">
+        How likely is your whole answer to be correct? 100% means certain. Your
+        confidence helps choose feedback and practice; it does not change your
+        grade.
+      </p>
       {missingAnswer && (
         <p role="status" className="mb-2 text-xs text-white/45">
           {answerComplete
@@ -854,6 +863,10 @@ export default function QuizPane({
     sessionId: null,
     ids: new Set(),
   });
+  const confidenceObservation = useRef<{
+    startedAt: number;
+    ratedAfterMs: number | null;
+  } | null>(null);
   const [revealingMessageIds, setRevealingMessageIds] = useState<Set<string>>(
     new Set(),
   );
@@ -876,6 +889,41 @@ export default function QuizPane({
       value: null,
     });
   }, [session?.id, session?.currentQuestion?.id]);
+  useEffect(() => {
+    const currentQuestion = session?.currentQuestion;
+    if (!visible || currentQuestion?.status !== 'open') return;
+    const observation = {
+      startedAt: Date.now(),
+      ratedAfterMs:
+        confidenceRating.questionId === currentQuestion.id &&
+        confidenceRating.value !== null
+          ? 0
+          : (null as number | null),
+    };
+    confidenceObservation.current = observation;
+    return () => {
+      const latestSession = sessionRef.current;
+      const latestQuestion =
+        latestSession && latestSession.id === session?.id
+          ? latestSession.currentQuestion
+          : null;
+      recordConfidenceObservation({
+        ratedAfterMs: observation.ratedAfterMs,
+        durationMs: Date.now() - observation.startedAt,
+        submitted:
+          latestQuestion?.id === currentQuestion.id &&
+          (latestQuestion.status === 'answered' ||
+            latestQuestion.status === 'feedback'),
+      });
+      if (confidenceObservation.current === observation)
+        confidenceObservation.current = null;
+    };
+  }, [
+    visible,
+    session?.id,
+    session?.currentQuestion?.id,
+    session?.currentQuestion?.status,
+  ]);
   useEffect(
     () => () => {
       for (const [sessionId, images] of Object.entries(imagesRef.current)) {
@@ -1746,7 +1794,15 @@ export default function QuizPane({
                               Agent
                             </b>
                           )}
-                          {m.kind === 'question' && m.question ? (
+                          {m.kind === 'question' &&
+                          m.question &&
+                          qaExpanded &&
+                          session.currentQuestion?.status === 'open' &&
+                          session.currentQuestion.id === m.question.id ? (
+                            <div className="quiz-question-stub rounded-lg border border-dashed border-white/15 px-3 py-1.5 text-xs text-white/55">
+                              Question open in the composer below
+                            </div>
+                          ) : m.kind === 'question' && m.question ? (
                             <div
                               key={m.question.id}
                               className={`${revealingContentId === m.question.id ? 'quiz-new-question' : ''} w-full rounded-xl border border-white/10 bg-white/[0.04] p-3 text-left`}
@@ -1858,6 +1914,16 @@ export default function QuizPane({
                             </div>
                           ) : (
                             <div className="quiz-agent-markdown w-full text-[0.95rem] text-white/95">
+                              {m.question?.verdict && (
+                                <QuizVerdict
+                                  verdict={m.question.verdict}
+                                  answerLabel={
+                                    m.question.chosenChoiceText ??
+                                    m.question.answerLabel
+                                  }
+                                  confidence={m.question.confidence}
+                                />
+                              )}
                               <QuizMarkdown
                                 reveal={revealingMessageIds.has(m.id)}
                               >
@@ -1943,9 +2009,7 @@ export default function QuizPane({
                             />
                           </div>
                         )
-                      : (session.currentQuestion?.status === 'open' ||
-                          session.currentQuestion?.status === 'answered' ||
-                          session.currentQuestion?.status === 'feedback') && (
+                      : session.currentQuestion?.status === 'open' && (
                           <>
                             {qaExpanded && (
                               <div
@@ -1964,14 +2028,6 @@ export default function QuizPane({
                                     {session.currentQuestion.prompt}
                                   </QuizMarkdown>
                                 </div>
-                                {session.currentQuestion.status !== 'open' && (
-                                  <QuizVerdict
-                                    verdict={session.currentQuestion.verdict}
-                                    confidence={
-                                      session.currentQuestion.confidence
-                                    }
-                                  />
-                                )}
                                 {questionKind === 'multiple-choice' &&
                                   session.currentQuestion.choices.map(
                                     (choice) => (
@@ -2165,12 +2221,20 @@ export default function QuizPane({
                                     answerComplete={answerComplete}
                                     connected={connected}
                                     busy={busy}
-                                    onConfidenceChange={(value) =>
+                                    onConfidenceChange={(value) => {
+                                      const observation =
+                                        confidenceObservation.current;
+                                      if (
+                                        observation &&
+                                        observation.ratedAfterMs === null
+                                      )
+                                        observation.ratedAfterMs =
+                                          Date.now() - observation.startedAt;
                                       setConfidenceRating({
                                         questionId: session.currentQuestion!.id,
                                         value,
-                                      })
-                                    }
+                                      });
+                                    }}
                                     onSkip={() => send('skip')}
                                     onSubmit={() => send('answer')}
                                   />
@@ -2179,19 +2243,39 @@ export default function QuizPane({
                             )}
                           </>
                         )}
-                    {composerActions.showContinue && (
-                      <div className="flex justify-end px-1 pb-2 pt-1">
-                        <button
-                          type="button"
-                          disabled={!connected || busy}
-                          className="quiz-action-button inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed"
-                          onClick={() => send('continue')}
+                    {!prompt &&
+                      (session.currentQuestion?.status === 'answered' ||
+                        session.currentQuestion?.status === 'feedback') && (
+                        <div
+                          className="quiz-composer-status flex min-w-0 items-center gap-2 px-2 py-1 text-xs text-white/60"
+                          role="status"
                         >
-                          Continue
-                          <IoArrowForward aria-hidden="true" />
-                        </button>
-                      </div>
-                    )}
+                          {session.currentQuestion.status === 'answered' ? (
+                            <span className="truncate">
+                              Answer submitted · waiting for feedback
+                            </span>
+                          ) : session.currentQuestion.verdict ? (
+                            <QuizVerdict
+                              compact
+                              verdict={session.currentQuestion.verdict}
+                            />
+                          ) : (
+                            <span className="truncate">Feedback received</span>
+                          )}
+                          <span className="flex-1" />
+                          {composerActions.showContinue && (
+                            <button
+                              type="button"
+                              disabled={!connected || busy}
+                              className="quiz-action-button inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed"
+                              onClick={() => send('continue')}
+                            >
+                              Continue
+                              <IoArrowForward aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     <div className="flex min-w-0 items-center gap-1">
                       <div className="flex min-w-0 flex-1 flex-col">
                         {!!sessionImages.length && (

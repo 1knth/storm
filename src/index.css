@@ -1227,3 +1227,34 @@ body,
   display: inline-flex;
   color: inherit;
 }
+
+/* Click-to-copy LaTeX in rendered previews (see latexCopy.ts). */
+.katex[data-latex-copy] {
+  position: relative;
+  cursor: copy;
+  border-radius: 4px;
+  transition: background-color 120ms ease;
+}
+
+.katex[data-latex-copy]:hover {
+  background-color: rgb(255 255 255 / 8%);
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 8%);
+}
+
+.katex[data-latex-copied]::after {
+  content: 'Copied LaTeX';
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgb(30 32 36 / 95%);
+  color: rgb(255 255 255 / 85%);
+  font:
+    500 11px/1.4 -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+}
