@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { FaPencil } from 'react-icons/fa6';
 
 /**
  * Inline session title. Click to edit in place; Enter or blur saves, Escape
@@ -94,16 +93,11 @@ export default function QuizSessionName({
       title="Rename session"
       aria-label={`Rename session ${name || placeholder}`}
       onClick={() => setEditing(true)}
-      className={`group/name flex min-w-0 max-w-full cursor-text items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-white/[0.06] focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/60 ${className}`}
+      className={`flex min-w-0 max-w-full cursor-text items-center rounded-md px-1.5 py-0.5 text-left hover:bg-white/[0.06] focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/60 ${className}`}
     >
       <span className={`truncate ${name ? '' : 'text-white/50'}`}>
         {name || placeholder}
       </span>
-      <FaPencil
-        aria-hidden="true"
-        size={10}
-        className="shrink-0 text-white/40 opacity-0 transition-opacity group-hover/name:opacity-100 group-focus-visible/name:opacity-100"
-      />
     </button>
   );
 }

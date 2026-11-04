@@ -1637,7 +1637,7 @@ export default function QuizPane({
                   aria-keyshortcuts="Control+Shift+Q"
                   title={`${fullscreen ? 'Exit full screen' : 'Full screen'} (${navigator.platform.toLowerCase().includes('mac') ? '⌃⇧Q' : 'Ctrl+Shift+Q'})`}
                   aria-pressed={fullscreen}
-                  className="rounded p-2 text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                  className="rounded p-2 text-white/70 hover:bg-white/10 focus-visible:bg-transparent hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
                   onClick={onToggleFullscreen}
                 >
                   {fullscreen ? (
