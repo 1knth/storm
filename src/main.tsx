@@ -143,6 +143,19 @@ function App() {
     setQuizOpen((open) => !open);
   };
   useEffect(() => window.stormMenu.onToggleQuiz(toggleQuiz), []);
+  // Opens the quiz when needed, so the shortcut works from the editor too.
+  const quizLayout = useRef({ open: quizOpen, expanded: quizExpanded });
+  quizLayout.current = { open: quizOpen, expanded: quizExpanded };
+  const toggleQuizFullscreen = () => {
+    const { open, expanded } = quizLayout.current;
+    setQuizMounted(true);
+    setQuizOpen(true);
+    setQuizExpanded(!open || !expanded);
+  };
+  useEffect(
+    () => window.stormMenu.onToggleQuizFullscreen(toggleQuizFullscreen),
+    [],
+  );
   const [renameInProgress, setRenameInProgress] = useState(false);
   const renameInProgressRef = useRef(false);
   const [activePath, setActivePath] = useState<string | null>(null);

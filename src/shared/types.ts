@@ -137,6 +137,7 @@ declare global {
   interface Window {
     stormMenu: {
       onToggleQuiz: (callback: () => void) => () => void;
+      onToggleQuizFullscreen: (callback: () => void) => () => void;
     };
     vault: {
       cliAvailable: () => Promise<boolean>;

@@ -1278,6 +1278,16 @@ app.whenReady().then(async () => {
           },
         },
         {
+          label: 'Toggle Quiz Full Screen',
+          accelerator: 'Control+Shift+Q',
+          click: () => {
+            const window =
+              BrowserWindow.getFocusedWindow() ??
+              BrowserWindow.getAllWindows()[0];
+            window?.webContents.send('quiz:toggle-fullscreen');
+          },
+        },
+        {
           label: 'Quit',
           click: () => app.quit(),
         },

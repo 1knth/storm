@@ -93,6 +93,11 @@ contextBridge.exposeInMainWorld('stormMenu', {
     ipcRenderer.on('quiz:toggle', listener);
     return () => ipcRenderer.removeListener('quiz:toggle', listener);
   },
+  onToggleQuizFullscreen(callback: () => void) {
+    const listener = () => callback();
+    ipcRenderer.on('quiz:toggle-fullscreen', listener);
+    return () => ipcRenderer.removeListener('quiz:toggle-fullscreen', listener);
+  },
 });
 
 contextBridge.exposeInMainWorld('stormQuiz', {
