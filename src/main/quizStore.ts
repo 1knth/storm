@@ -26,8 +26,14 @@ function preserveSessionMetadata(
   incoming: QuizSession,
 ): QuizSession {
   const { activity: _activity, ...next } = incoming;
+  // A posted agent response ends the phase it reported. Without this, a
+  // missed idle report leaves "Drafting" up while the learner has the turn.
+  const agentResponded =
+    incoming.eventCursor > current.eventCursor && !incoming.awaitingAgent;
   const activity =
-    incoming.status === 'connected' ? current.activity : undefined;
+    incoming.status === 'connected' && !agentResponded
+      ? current.activity
+      : undefined;
   return {
     ...next,
     ...(activity ? { activity } : {}),

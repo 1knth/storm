@@ -12,6 +12,7 @@ import {
   getMatchingItemLabel,
   mergeQuizSessionDrafts,
   getQuizActivityIndicator,
+  getQuizTurnHint,
   getQuizComposerActions,
   updateQuizRevealHistory,
   QuizMarkdown,
@@ -170,7 +171,7 @@ describe('quiz word reveal', () => {
     );
     assert.match(
       html,
-      /class="quiz-reveal-unit" style="--quiz-word-index:3[^"]*"><span class="katex-display"/,
+      /class="quiz-reveal-unit quiz-reveal-unit-block" style="--quiz-word-index:3[^"]*"><span class="katex-display"/,
     );
   });
 
@@ -377,6 +378,51 @@ describe('quiz composer feedback layout', () => {
       showContinue: false,
       showDisconnectedStatus: true,
     });
+  });
+});
+
+describe('quiz turn hint', () => {
+  const base = {
+    status: 'connected',
+    awaitingAgent: false,
+    transcript: [{ id: 'a', role: 'agent', text: 'Yes, exactly.' }],
+    currentQuestion: null,
+    currentPrompt: null,
+  } as any;
+
+  it('tells the learner it is their turn once the agent has replied', () => {
+    assert.equal(getQuizTurnHint(base), 'reply');
+    assert.equal(
+      getQuizTurnHint({ ...base, currentQuestion: { status: 'open' } }),
+      'answer',
+    );
+  });
+
+  it('stays hidden while the agent works or another control owns the turn', () => {
+    assert.equal(getQuizTurnHint({ ...base, awaitingAgent: true }), undefined);
+    assert.equal(
+      getQuizTurnHint({
+        ...base,
+        activity: { state: 'drafting', updatedAt: 'now' },
+      }),
+      undefined,
+    );
+    assert.equal(
+      getQuizTurnHint({ ...base, currentQuestion: { status: 'feedback' } }),
+      undefined,
+    );
+    assert.equal(getQuizTurnHint({ ...base, currentPrompt: {} }), undefined);
+    assert.equal(
+      getQuizTurnHint({
+        ...base,
+        transcript: [{ id: 'l', role: 'learner', text: 'hi' }],
+      }),
+      undefined,
+    );
+    assert.equal(
+      getQuizTurnHint({ ...base, status: 'disconnected' }),
+      undefined,
+    );
   });
 });
 
@@ -723,7 +769,7 @@ describe('quiz Markdown renderer', () => {
     assert.doesNotMatch(revealed, /quiz-reveal-word/);
     assert.match(
       revealed,
-      /class="quiz-reveal-unit" style="--quiz-word-index:0[^"]*"/,
+      /class="quiz-reveal-unit quiz-reveal-unit-block" style="--quiz-word-index:0[^"]*"/,
     );
     assert.doesNotMatch(revealed, /language-mermaid/);
   });

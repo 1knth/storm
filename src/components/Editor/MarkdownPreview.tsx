@@ -86,6 +86,36 @@ export function rehypeRevealUnits({
     for (let index = 0; index < markdown.length; index++)
       if (markdown[index] === '\\n') lineOffsets.push(index + 1);
     let fallbackOffset = 0;
+    const isKatexNode = (node: any) =>
+      (node.properties?.className ?? []).some((name: string) =>
+        ['katex', 'katex-display'].includes(name),
+      );
+    const wrapMathUnit = (
+      node: any,
+      offset: number,
+      path: number[],
+      paragraphKey?: string,
+    ) => {
+      const end = node.position?.end?.offset ?? offset;
+      const key = `math:${offset}:${path.join('.')}`;
+      const eligible =
+        registry.words.has(key) ||
+        (revealRanges
+          ? revealRanges.some(({ from, to }) => offset < to && end > from)
+          : offset >= startOffset);
+      if (!eligible) return node;
+      units.push({ key, sourceOffset: offset, kind: 'word', paragraphKey });
+      return {
+        type: 'element',
+        tagName: 'span',
+        properties: {
+          className: ['markdown-word-reveal'],
+          'data-preview-reveal-word': '',
+          'data-reveal-key': key,
+        },
+        children: [node],
+      };
+    };
     const visit = (node: any, path: number[], ineligible = false) => {
       const excluded =
         ineligible ||
@@ -158,6 +188,14 @@ export function rehypeRevealUnits({
               'table',
               'input',
             ].includes(child.tagName);
+          // Math renders as an opaque KaTeX tree. Reveal it as a single unit
+          // in source order so it does not appear ahead of surrounding prose.
+          if (!blocked && isKatexNode(child)) {
+            const offset =
+              child.position?.start?.offset ??
+              paragraphStart + paragraphTextOffset;
+            return [wrapMathUnit(child, offset, childPath, paragraphKey)];
+          }
           if (child.type === 'text' && !childBlocked) {
             const position = child.position?.start?.offset;
             const base = position ?? paragraphStart + paragraphTextOffset;
@@ -221,6 +259,18 @@ export function rehypeRevealUnits({
         (node.children ?? []).forEach((child: any, index: number) =>
           visit(child, [...path, index], excluded),
         );
+        if (!ineligible && node.children)
+          node.children = node.children.map((child: any, index: number) =>
+            isKatexNode(child)
+              ? wrapMathUnit(
+                  child,
+                  child.position?.start?.offset ??
+                    lineOffsets[(child.position?.start?.line ?? 1) - 1] ??
+                    fallbackOffset,
+                  [...path, index],
+                )
+              : child,
+          );
       }
     };
     visit(tree, []);

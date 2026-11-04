@@ -656,6 +656,11 @@
   max-width: 100%;
 }
 
+/* Display math and code blocks keep their full-width, scrollable line. */
+.quiz-reveal-unit-block {
+  display: block;
+}
+
 .quiz-reveal-list-item {
   list-style: none;
 }

@@ -4,6 +4,8 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkRehype from 'remark-rehype';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { rehypeRevealUnits } from './MarkdownPreview';
 import { createRevealScheduleRegistry } from './managedPreviewBatch';
 
@@ -36,6 +38,27 @@ function find(node: any, tagName: string): any[] {
 }
 
 describe('Markdown preview styled reveal units', () => {
+  it('schedules inline math as a reveal unit so it cannot appear before prose', () => {
+    const markdown = 'In base $b$, position $i$ contributes $d_ib^i$.';
+    const processor = unified()
+      .use(remarkParse)
+      .use(remarkMath)
+      .use(remarkRehype)
+      .use(rehypeKatex);
+    const tree = processor.runSync(processor.parse(markdown)) as any;
+    rehypeRevealUnits({
+      registry: createRevealScheduleRegistry(),
+      startOffset: 0,
+      markdown,
+    })(tree);
+    const mathUnits = find(tree, 'span').filter(
+      (span: any) =>
+        String(span.properties?.['data-reveal-key'] ?? '').startsWith('math:') &&
+        span.properties['data-reveal-at'] !== undefined,
+    );
+    assert.equal(mathUnits.length, 3);
+  });
+
   it('reveals heading and mixed inline styles in source order without flattening structure', () => {
     const markdown = '# Title\n\nplain **bold** *italic* `code`';
     const tree = revealTree(markdown);

@@ -190,7 +190,12 @@ function rehypeQuizWordReveal() {
           type: 'element',
           tagName: 'span',
           properties: {
-            className: ['quiz-reveal-unit'],
+            className: [
+              'quiz-reveal-unit',
+              ...(node.tagName === 'pre' || classes.includes('katex-display')
+                ? ['quiz-reveal-unit-block']
+                : []),
+            ],
             style: paced({ '--quiz-word-index': index++ }),
           },
           children: [node],
@@ -456,6 +461,68 @@ export function getQuizActivityIndicator(
   )
     return session.activity.state;
   return session.awaitingAgent ? 'waiting' : undefined;
+}
+
+/** Tells the learner the agent is done and what it expects next, so an idle
+ *  connected session never looks stuck. Questions awaiting Continue and open
+ *  prompts already show their own call to action. */
+export function getQuizTurnHint(
+  session:
+    | Pick<
+        QuizSession,
+        | 'status'
+        | 'awaitingAgent'
+        | 'activity'
+        | 'transcript'
+        | 'currentQuestion'
+        | 'currentPrompt'
+      >
+    | null
+    | undefined,
+): 'answer' | 'reply' | undefined {
+  if (!session || session.status !== 'connected') return undefined;
+  if (session.awaitingAgent || getQuizActivityIndicator(session))
+    return undefined;
+  if (session.currentPrompt) return undefined;
+  if (session.transcript.at(-1)?.role !== 'agent') return undefined;
+  const questionStatus = session.currentQuestion?.status;
+  if (questionStatus === 'open') return 'answer';
+  return questionStatus ? undefined : 'reply';
+}
+
+export function QuizTurnHint({
+  hint,
+  disabled,
+  onContinue,
+}: {
+  hint: 'answer' | 'reply';
+  disabled: boolean;
+  onContinue: () => void;
+}) {
+  return (
+    <div
+      className="mb-4 flex items-center gap-3 text-left text-xs text-white/65"
+      role="status"
+      aria-live="polite"
+    >
+      <span>
+        {hint === 'answer'
+          ? 'Your turn: answer the question above, or ask a follow-up.'
+          : 'Your turn: reply below, or continue to the next step.'}
+      </span>
+      {hint === 'reply' && (
+        <button
+          type="button"
+          disabled={disabled}
+          className="quiz-action-button inline-flex cursor-pointer items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed"
+          onClick={onContinue}
+        >
+          Continue
+          <IoArrowForward aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
 }
 
 export function scrollQuizTranscriptToBottom(
@@ -847,18 +914,19 @@ export default function QuizPane({
   );
   useLayoutEffect(() => {
     if (!session) return;
+    const switchedSession = revealHistory.current.sessionId !== session.id;
     const freshIds = updateQuizRevealHistory(
       revealHistory.current,
       session.id,
       session.transcript,
     );
-    if (
-      revealHistory.current.sessionId !== session.id ||
-      freshIds.length === 0
-    ) {
+    if (switchedSession) {
       setRevealingMessageIds(new Set());
       return;
     }
+    // Activity and draft updates arrive mid-reveal without new messages. Keep
+    // in-flight reveals running instead of snapping their remaining words in.
+    if (freshIds.length === 0) return;
     const reducedMotion = window.matchMedia(
       '(prefers-reduced-motion: reduce)',
     ).matches;
@@ -927,6 +995,7 @@ export default function QuizPane({
   const latestMessageId = session?.transcript.at(-1)?.id;
   const activityState = session?.activity?.state;
   const visibleActivity = getQuizActivityIndicator(session);
+  const turnHint = getQuizTurnHint(session);
   useEffect(() => {
     const pane = transcriptRef.current;
     if (!pane || showSessionList || !visible) return;
@@ -1421,6 +1490,20 @@ export default function QuizPane({
       });
     }
   };
+  // Free-chat Continue: a plain learner message, since the structured
+  // continue action only advances a question that has feedback.
+  const sendText = (text: string) => {
+    if (!session || !bridge || !connected || busy) return;
+    void update(() =>
+      bridge.request({
+        sessionId: session.id,
+        expectedRevision: session.revision,
+        idempotencyKey: crypto.randomUUID(),
+        type: 'message',
+        text,
+      }),
+    );
+  };
   return (
     <QuizMarkdownAppearanceContext.Provider value={appearance}>
       <section
@@ -1810,6 +1893,13 @@ export default function QuizPane({
                     })}
                     {session.status === 'connected' && visibleActivity && (
                       <QuizThinkingIndicator activity={visibleActivity} />
+                    )}
+                    {turnHint && (
+                      <QuizTurnHint
+                        hint={turnHint}
+                        disabled={!connected || busy}
+                        onContinue={() => sendText('Continue.')}
+                      />
                     )}
                     <div
                       aria-hidden="true"

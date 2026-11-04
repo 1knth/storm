@@ -87,6 +87,44 @@ describe('QuizService', () => {
     }
   });
 
+  test('a posted agent response clears a stale drafting phase', async () => {
+    const f = await fixture();
+    try {
+      const attached = await f.service.attachSession(f.session.id);
+      assert.equal(attached.ok, true);
+      if (!attached.ok) return;
+      const message = await f.service.learnerRequest({
+        type: 'message',
+        sessionId: f.session.id,
+        expectedRevision: attached.value.snapshot.session.revision,
+        idempotencyKey: 'learner-question',
+        text: 'Why OR?',
+      });
+      assert.equal(message.ok, true);
+      if (!message.ok) return;
+      await f.service.setAgentActivity(
+        f.session.id,
+        attached.value.agentToken,
+        'drafting',
+      );
+      const response = await f.service.request({
+        type: 'agent-message',
+        sessionId: f.session.id,
+        agentToken: attached.value.agentToken,
+        expectedRevision: message.value.revision,
+        idempotencyKey: 'agent-answer',
+        text: 'Not both true means at least one is false.',
+      });
+      assert.equal(response.ok, true);
+      assert.equal(
+        (await f.service.getSnapshot(f.session.id))?.session.activity,
+        undefined,
+      );
+    } finally {
+      await rm(f.dir, { recursive: true, force: true });
+    }
+  });
+
   test('accepted learner messages wait for committed agent output, not activity idle', async () => {
     const f = await fixture();
     try {
