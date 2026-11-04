@@ -2085,6 +2085,64 @@ test('quiz learner authenticates with a flag or environment and rejects invalid 
   }
 });
 
+test('quiz request forwards lesson-map updates to the broker', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'storm-cli-map-'));
+  const requests: any[] = [];
+  const endpoint = await startAgentEndpoint({
+    userDataPath: directory,
+    broker: {
+      async handle(request: any) {
+        requests.push(request);
+        return {
+          protocol: 1,
+          requestId: request.requestId,
+          ok: true,
+          type: 'quiz',
+          operation: 'request',
+          result: { ok: true, value: {} },
+        };
+      },
+    },
+  });
+  const map = {
+    nodes: [{ id: 'constant-laws', label: 'Constant laws' }],
+    edges: [],
+    focus: ['constant-laws'],
+  };
+  try {
+    let error = '';
+    const code = await runCli(
+      [
+        '--endpoint',
+        endpoint.metadataPath,
+        'quiz',
+        'request',
+        'quiz-1',
+        '--token',
+        'synthetic',
+      ],
+      {
+        stdin: Readable.from([
+          JSON.stringify({
+            type: 'lesson-map',
+            expectedRevision: 1,
+            idempotencyKey: 'map-1',
+            map,
+          }),
+        ]),
+        stdout: () => {},
+        stderr: (text) => (error += text),
+      },
+    );
+    assert.equal(code, 0, error);
+    assert.equal(requests.at(-1).request.type, 'lesson-map');
+    assert.deepEqual(requests.at(-1).request.map, map);
+  } finally {
+    await endpoint.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('quiz request validates learning tags before sending pose-question', async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), 'storm-cli-learning-'),

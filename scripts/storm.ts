@@ -570,10 +570,11 @@ export async function runCli(
             'agent-message',
             'skip-question',
             'support-update',
+            'lesson-map',
           ].includes(quizPayload.type)
         )
           throw new CliUsageError(
-            'quiz request type must be pose-question, pose-prompt, feedback, agent-message, skip-question, or support-update',
+            'quiz request type must be pose-question, pose-prompt, feedback, agent-message, skip-question, support-update, or lesson-map',
           );
         if (
           !Number.isSafeInteger(quizPayload.expectedRevision) ||
