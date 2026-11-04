@@ -103,11 +103,12 @@ describe('resolveAgentNoteTarget', () => {
     assert.equal(result.vaultRoot, await realpath(school));
   });
 
-  test('resolves platform temp-directory aliases and duplicate canonical roots', async () => {
+  test('resolves directory aliases and duplicate canonical roots', async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), 'storm-agent-alias-'));
     temporaryDirectories.push(base);
     const canonicalBase = await realpath(base);
-    const aliasedBase = path.join(path.dirname(base), path.basename(base));
+    const aliasedBase = path.join(base, 'alias');
+    await symlink(canonicalBase, aliasedBase);
     const canonicalVault = path.join(canonicalBase, 'vault');
     await mkdir(canonicalVault);
     const aliasVault = path.join(aliasedBase, 'vault');

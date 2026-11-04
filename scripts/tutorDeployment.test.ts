@@ -12,7 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { installTutor } from './installTutor';
@@ -437,10 +437,7 @@ test('shell launcher starts only fake Pi with maintained extension/prompt, overr
 
 const piLoader = path.join(
   process.env.PI_PACKAGE_ROOT ||
-    path.join(
-      homedir(),
-      '.bun/install/global/node_modules/@earendil-works/pi-coding-agent',
-    ),
+    path.join(tutorRepo, 'node_modules/@earendil-works/pi-coding-agent'),
   'dist/core/extensions/loader.js',
 );
 test(
