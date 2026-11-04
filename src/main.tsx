@@ -135,6 +135,9 @@ function App() {
   const [tabs, setTabs] = useState<TabSnapshot[]>([]);
   const [quizOpen, setQuizOpen] = useState(false);
   const [quizMounted, setQuizMounted] = useState(false);
+  // Full screen hides the other panes without unmounting their state.
+  const [quizExpanded, setQuizExpanded] = useState(false);
+  const quizFullscreen = quizOpen && quizExpanded;
   const toggleQuiz = () => {
     setQuizMounted(true);
     setQuizOpen((open) => !open);
@@ -2535,11 +2538,13 @@ function App() {
     <main
       className="app-shell relative flex h-screen min-h-0 w-full min-w-0 flex-col"
       data-window-controls-host={
-        !vaultSidebarCollapsed
-          ? 'vaults'
-          : !explorerCollapsed
-            ? 'explorer'
-            : 'editor'
+        quizFullscreen
+          ? 'quiz'
+          : !vaultSidebarCollapsed
+            ? 'vaults'
+            : !explorerCollapsed
+              ? 'explorer'
+              : 'editor'
       }
     >
       <div className="window-pane-controls flex items-center gap-1 pl-20">
@@ -2698,7 +2703,10 @@ function App() {
         </div>
       )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-row">
-        <div className="contents">
+        <div
+          className="contents"
+          style={quizFullscreen ? { display: 'none' } : undefined}
+        >
           {!vaultSidebarCollapsed && (
             <VaultSidebar
               vaults={vaults}
@@ -2769,7 +2777,10 @@ function App() {
           />
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-row">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            className="flex min-h-0 min-w-0 flex-1 flex-col"
+            style={quizFullscreen ? { display: 'none' } : undefined}
+          >
             <Editor
               ref={editorRef}
               pdfAsset={(() => {
@@ -2905,7 +2916,12 @@ function App() {
                 notePath={activePath}
                 appearance={appearance}
                 visible={quizOpen}
-                onClose={() => setQuizOpen(false)}
+                fullscreen={quizFullscreen}
+                onToggleFullscreen={() => setQuizExpanded((value) => !value)}
+                onClose={() => {
+                  setQuizOpen(false);
+                  setQuizExpanded(false);
+                }}
               />
             </div>
           )}

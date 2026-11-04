@@ -625,6 +625,15 @@
   padding-top: calc(var(--window-controls-space) + 0.75rem);
 }
 
+.app-shell[data-window-controls-host='quiz'] [data-pane='quiz'] {
+  padding-top: var(--window-controls-space);
+}
+
+/* Full-screen quiz: keep the drag region but drop pane toggles it would hide. */
+.app-shell[data-window-controls-host='quiz'] .window-pane-controls > * {
+  visibility: hidden;
+}
+
 .app-shell[data-window-controls-host='editor'] [data-pane='editor'] {
   min-width: var(--window-controls-min-width);
   padding-top: var(--window-controls-space);
@@ -839,7 +848,7 @@
   font-size: 0.95rem;
   line-height: 1.35;
   border: 1px solid rgb(255 255 255 / 12%);
-  background-color: rgb(15 17 20 / 78%);
+  background-color: rgb(15 17 20 / 94%);
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
 }
@@ -1550,4 +1559,29 @@ body,
 ) {
   -webkit-app-region: no-drag;
   app-region: no-drag;
+}
+
+.quiz-session-name-input {
+  field-sizing: content;
+  background-color: rgb(255 255 255 / 8%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%);
+  font: inherit;
+}
+
+.quiz-session-name-input:focus-visible {
+  background-color: rgb(255 255 255 / 8%);
+  box-shadow: inset 0 0 0 1px #0a84ff;
+}
+
+.quiz-attach-chip {
+  border-radius: 5px;
+  background-color: rgb(255 255 255 / 8%);
+  padding: 1px 6px;
+  color: rgb(255 255 255 / 60%);
+  cursor: pointer;
+}
+
+.quiz-attach-chip:hover {
+  background-color: rgb(255 255 255 / 14%);
+  color: white;
 }

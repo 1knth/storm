@@ -43,6 +43,8 @@ import {
 import { FaListUl, FaPencil, FaTelegram, FaTrash } from 'react-icons/fa6';
 import { FaPlus } from 'react-icons/fa';
 import { FiStopCircle } from 'react-icons/fi';
+import { MdCloseFullscreen, MdOpenInFull } from 'react-icons/md';
+import QuizSessionName from './QuizSessionName';
 import {
   IoArrowForward,
   IoChevronDown,
@@ -835,6 +837,8 @@ export default function QuizPane({
   vaultId,
   notePath,
   visible,
+  fullscreen = false,
+  onToggleFullscreen,
   onClose,
   appearance,
 }: {
@@ -843,6 +847,8 @@ export default function QuizPane({
   notePath: string | null;
   appearance: Appearance;
   visible: boolean;
+  fullscreen?: boolean;
+  onToggleFullscreen?: () => void;
   onClose: () => void;
 }) {
   const bridge = window.stormQuiz;
@@ -870,9 +876,7 @@ export default function QuizPane({
   const [stopping, setStopping] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [sessionName, setSessionName] = useState('');
   const [qaExpanded, setQaExpanded] = useState(true);
   const [revealingContentId, setRevealingContentId] = useState<string | null>(
     null,
@@ -1533,6 +1537,24 @@ export default function QuizPane({
       });
     }
   };
+  const renameSessionById = async (id: string, name: string) => {
+    if (!bridge) return false;
+    try {
+      const result = await bridge.renameSession(id, name);
+      if (!result.ok) {
+        notifyError(`Could not rename session: ${result.error}`);
+        return false;
+      }
+      setSessions((items) =>
+        items.map((item) => (item.id === id ? result.value : item)),
+      );
+      if (sessionRef.current?.id === id) setSession(result.value);
+      return true;
+    } catch {
+      notifyError('Could not rename session.');
+      return false;
+    }
+  };
   // Free-chat Continue: a plain learner message, since the structured
   // continue action only advances a question that has feedback.
   const sendText = (text: string) => {
@@ -1553,168 +1575,40 @@ export default function QuizPane({
         className="quiz-pane-surface flex min-h-0 min-w-0 flex-1 flex-col border-l border-white/10 text-white"
         aria-label="Quiz"
       >
-        <header className="flex flex-col border-b border-white/10 px-4 py-2">
-          <div className="flex items-center justify-between">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+        <header
+          className="quiz-pane-header flex flex-col gap-1.5 border-b border-white/10 px-4 py-2"
+          data-pane="quiz"
+        >
+          <div className="flex min-h-9 items-center justify-between">
+            <div className="flex min-w-0 flex-1 items-center text-[15px] font-semibold">
               {session && !showSessionList ? (
-                renaming ? (
-                  <input
-                    autoFocus
-                    aria-label="Session name"
-                    className="min-w-0 border-b border-white/30 bg-transparent text-sm text-white outline-none"
-                    value={sessionName}
-                    onChange={(event) => setSessionName(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Escape') setRenaming(false);
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        const name = sessionName.trim();
-                        if (!name || !bridge) return;
-                        void bridge
-                          .renameSession(session.id, name)
-                          .then((result) => {
-                            if (result.ok) {
-                              setSession(result.value);
-                              setSessions((items) =>
-                                items.map((item) =>
-                                  item.id === session.id ? result.value : item,
-                                ),
-                              );
-                              setRenaming(false);
-                            } else
-                              setError(
-                                `Could not rename session: ${result.error}`,
-                              );
-                          })
-                          .catch(() => setError('Could not rename session.'));
-                      }
-                    }}
-                    onBlur={() => {
-                      if (renaming) setRenaming(false);
-                    }}
-                  />
-                ) : (
-                  <>
-                    <strong className="truncate">
-                      {session.name || 'New session'}
-                    </strong>
-                    <button
-                      type="button"
-                      aria-label="Rename session"
-                      title="Rename session"
-                      className="rounded p-1 text-white/40 hover:text-white/80"
-                      onClick={() => {
-                        setSessionName(session.name || '');
-                        setRenaming(true);
-                      }}
-                    >
-                      <FaPencil aria-hidden="true" size={12} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Copy Pi attach command"
-                      title="Copy Pi attach command"
-                      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
-                      onClick={() =>
-                        copyQuizInstructions(
-                          quizPiAttachCommand(session.id),
-                          'Copied attach command',
-                        )
-                      }
-                    >
-                      <span className="quiz-instructions-label">Pi</span>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Copy CLI agent instructions"
-                      title="Copy CLI agent instructions"
-                      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
-                      onClick={() =>
-                        copyQuizInstructions(
-                          quizCliInstructions(session.id, !!session.scope),
-                          'Copied instructions',
-                        )
-                      }
-                    >
-                      <span className="quiz-instructions-label">CLI</span>
-                    </button>
-                    <QuizScopePicker
-                      scope={session.scope}
-                      vaultId={vaultId}
-                      notePath={notePath}
-                      onChange={async (scope) => {
-                        if (!bridge) return;
-                        try {
-                          const result = await bridge.setSessionScope(
-                            session.id,
-                            scope,
-                          );
-                          if (!result.ok) {
-                            notifyError(
-                              `Could not change study context: ${result.error}`,
-                            );
-                            return;
-                          }
-                          setSession(result.value);
-                          setSessions((items) =>
-                            items.map((item) =>
-                              item.id === session.id ? result.value : item,
-                            ),
-                          );
-                          notifySuccess(
-                            scope
-                              ? 'Study context attached'
-                              : 'Study context removed',
-                          );
-                        } catch {
-                          notifyError('Could not change study context.');
-                        }
-                      }}
-                    />
-                    <div className="ml-auto flex shrink-0 items-center gap-2">
-                      <span
-                        role="img"
-                        aria-label={`Agent ${session.status === 'connected' ? 'Connected' : 'Disconnected'}`}
-                        title={`Agent ${session.status === 'connected' ? 'Connected' : 'Disconnected'}`}
-                        className={`h-2 w-2 shrink-0 rounded-full ${
-                          session.status === 'connected'
-                            ? 'bg-emerald-400'
-                            : 'bg-white/30'
-                        }`}
-                      />
-                      <span
-                        className={`shrink-0 text-xs ${
-                          session.status === 'connected'
-                            ? 'text-emerald-400'
-                            : 'text-white/50'
-                        }`}
-                      >
-                        {session.status === 'connected'
-                          ? 'Connected'
-                          : 'Disconnected'}
-                      </span>
-                      {session.status === 'connected' && (
-                        <button
-                          type="button"
-                          disabled={stopping}
-                          aria-label="Stop quiz agent"
-                          title="Stop quiz agent"
-                          aria-busy={stopping}
-                          className="ml-2 inline-flex items-center gap-1 text-xs text-red-400 transition-colors hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
-                          onClick={() => void stopAgent(session.id)}
-                        >
-                          <FiStopCircle size={12} aria-hidden="true" />
-                          {stopping ? 'Stopping…' : 'Stop'}
-                        </button>
-                      )}
-                    </div>
-                  </>
-                )
+                <QuizSessionName
+                  key={session.id}
+                  name={session.name}
+                  onRename={(name) => renameSessionById(session.id, name)}
+                  className="-ml-1.5"
+                />
               ) : (
-                <strong>{showSessionList ? 'Sessions' : 'Quiz'}</strong>
+                <span>{showSessionList ? 'Sessions' : 'Quiz'}</span>
               )}
             </div>
-            <div className="ml-2 flex shrink-0 items-center gap-1">
+            <div className="ml-2 flex shrink-0 items-center gap-0.5">
+              {!showSessionList && (
+                <button
+                  type="button"
+                  aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+                  title={fullscreen ? 'Exit full screen' : 'Full screen'}
+                  aria-pressed={fullscreen}
+                  className="rounded p-2 text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                  onClick={onToggleFullscreen}
+                >
+                  {fullscreen ? (
+                    <MdCloseFullscreen aria-hidden="true" size={16} />
+                  ) : (
+                    <MdOpenInFull aria-hidden="true" size={15} />
+                  )}
+                </button>
+              )}
               {showSessionList && (
                 <button
                   type="button"
@@ -1779,6 +1673,101 @@ export default function QuizPane({
               </button>
             </div>
           </div>
+          {session && !showSessionList && (
+            <div className="flex min-w-0 items-center gap-2 text-xs">
+              <QuizScopePicker
+                scope={session.scope}
+                vaultId={vaultId}
+                notePath={notePath}
+                onChange={async (scope) => {
+                  if (!bridge) return;
+                  try {
+                    const result = await bridge.setSessionScope(
+                      session.id,
+                      scope,
+                    );
+                    if (!result.ok) {
+                      notifyError(
+                        `Could not change study context: ${result.error}`,
+                      );
+                      return;
+                    }
+                    setSession(result.value);
+                    setSessions((items) =>
+                      items.map((item) =>
+                        item.id === session.id ? result.value : item,
+                      ),
+                    );
+                    notifySuccess(
+                      scope
+                        ? 'Study context attached'
+                        : 'Study context removed',
+                    );
+                  } catch {
+                    notifyError('Could not change study context.');
+                  }
+                }}
+              />
+              <span
+                className={`inline-flex shrink-0 items-center gap-1.5 ${connected ? 'text-emerald-400' : 'text-white/50'}`}
+                title={`Agent ${connected ? 'connected' : 'not connected'}`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-emerald-400' : 'bg-white/30'}`}
+                />
+                {connected ? 'Connected' : 'Not connected'}
+              </span>
+              <div className="ml-auto flex shrink-0 items-center gap-1">
+                {connected ? (
+                  <button
+                    type="button"
+                    disabled={stopping}
+                    aria-label="Stop quiz agent"
+                    title="Stop quiz agent"
+                    aria-busy={stopping}
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-red-400 transition-colors hover:bg-red-400/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => void stopAgent(session.id)}
+                  >
+                    <FiStopCircle size={12} aria-hidden="true" />
+                    {stopping ? 'Stopping…' : 'Stop'}
+                  </button>
+                ) : (
+                  <>
+                    <span className="text-white/40">Attach</span>
+                    <button
+                      type="button"
+                      aria-label="Copy Pi attach command"
+                      title="Copy Pi attach command"
+                      className="quiz-attach-chip"
+                      onClick={() =>
+                        copyQuizInstructions(
+                          quizPiAttachCommand(session.id),
+                          'Copied attach command',
+                        )
+                      }
+                    >
+                      Pi
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Copy CLI agent instructions"
+                      title="Copy CLI agent instructions"
+                      className="quiz-attach-chip"
+                      onClick={() =>
+                        copyQuizInstructions(
+                          quizCliInstructions(session.id, !!session.scope),
+                          'Copied instructions',
+                        )
+                      }
+                    >
+                      CLI
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </header>
         {session?.lessonMap && !showSessionList && (
           <QuizLessonMap map={session.lessonMap} appearance={appearance} />
@@ -2564,51 +2553,17 @@ export default function QuizPane({
                               ) : (
                                 <>
                                   {editingSessionId === item.id ? (
-                                    <input
-                                      autoFocus
-                                      aria-label="Session name"
-                                      className="w-36 rounded border border-white/20 bg-black/20 px-2 py-2 text-sm text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
-                                      value={sessionName}
-                                      onChange={(event) =>
-                                        setSessionName(event.target.value)
-                                      }
-                                      onKeyDown={(event) => {
-                                        if (event.key === 'Escape')
-                                          setEditingSessionId(null);
-                                        if (event.key === 'Enter') {
-                                          event.preventDefault();
-                                          const name = sessionName.trim();
-                                          if (!name || !bridge) return;
-                                          void bridge
-                                            .renameSession(item.id, name)
-                                            .then((result) => {
-                                              if (result.ok) {
-                                                setSessions((items) =>
-                                                  items.map((value) =>
-                                                    value.id === item.id
-                                                      ? result.value
-                                                      : value,
-                                                  ),
-                                                );
-                                                if (
-                                                  sessionRef.current?.id ===
-                                                  item.id
-                                                )
-                                                  setSession(result.value);
-                                                setEditingSessionId(null);
-                                              } else
-                                                setError(
-                                                  `Could not rename session: ${result.error}`,
-                                                );
-                                            })
-                                            .catch(() =>
-                                              setError(
-                                                'Could not rename session.',
-                                              ),
-                                            );
-                                        }
+                                    <QuizSessionName
+                                      name={item.name}
+                                      editing
+                                      showTrigger={false}
+                                      onEditingChange={(value) => {
+                                        if (!value) setEditingSessionId(null);
                                       }}
-                                      onBlur={() => setEditingSessionId(null)}
+                                      onRename={(name) =>
+                                        renameSessionById(item.id, name)
+                                      }
+                                      className="w-40 text-sm"
                                     />
                                   ) : (
                                     <button
@@ -2617,7 +2572,6 @@ export default function QuizPane({
                                       title="Rename session"
                                       className="cursor-pointer rounded-md p-1.5 text-white/50 opacity-0 hover:bg-white/10 hover:text-white focus-visible:opacity-100 group-hover/session:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
                                       onClick={() => {
-                                        setSessionName(item.name || '');
                                         setEditingSessionId(item.id);
                                       }}
                                     >
