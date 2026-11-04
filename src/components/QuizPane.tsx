@@ -46,6 +46,7 @@ import { FiStopCircle } from 'react-icons/fi';
 import {
   IoArrowForward,
   IoChevronDown,
+  IoSearch,
   IoChevronUp,
   IoClose,
   IoImageOutline,
@@ -2442,7 +2443,12 @@ export default function QuizPane({
                 className="quiz-session-picker min-h-0 flex-1 overflow-y-auto p-3"
                 aria-label="Quiz sessions"
               >
-                <div className="mb-3">
+                <div className="quiz-session-search mb-3 flex items-center gap-2 rounded-lg border px-2.5">
+                  <IoSearch
+                    aria-hidden="true"
+                    className="shrink-0 text-white/40"
+                    size={14}
+                  />
                   <input
                     type="text"
                     aria-label="Search sessions"
@@ -2455,7 +2461,7 @@ export default function QuizPane({
                       }
                     }}
                     placeholder="Search sessions"
-                    className="w-full border-0 bg-transparent p-1 text-sm text-white placeholder:text-white/40 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/50"
+                    className="h-8 w-full border-0 bg-transparent text-[13px] text-white placeholder:text-white/40 focus:outline-none"
                   />
                 </div>
                 {(() => {
@@ -2463,7 +2469,8 @@ export default function QuizPane({
                   const visibleSessions = sessions.filter((item) => {
                     const source = item.scope
                       ? item.scope.notePath ||
-                        item.scope.folderPath ||
+                        (item.scope.folderPath !== '.' &&
+                          item.scope.folderPath) ||
                         item.scope.selectedNotePaths.join(', ') ||
                         'Entire vault'
                       : 'Sources not selected';
@@ -2485,11 +2492,12 @@ export default function QuizPane({
                   });
                   return (
                     <>
-                      <ul className="m-0 list-none space-y-1 p-0">
+                      <ul className="m-0 list-none space-y-0.5 p-0">
                         {visibleSessions.map((item) => {
                           const source = item.scope
                             ? item.scope.notePath ||
-                              item.scope.folderPath ||
+                              (item.scope.folderPath !== '.' &&
+                                item.scope.folderPath) ||
                               item.scope.selectedNotePaths.join(', ') ||
                               'Entire vault'
                             : 'Sources not selected';
@@ -2503,11 +2511,11 @@ export default function QuizPane({
                           return (
                             <li
                               key={item.id}
-                              className={`quiz-session-row flex items-center gap-2 rounded-lg border px-1.5 py-1 ${session?.id === item.id ? 'bg-white/[0.035]' : ''}`}
+                              className={`quiz-session-row group/session flex items-center gap-1 rounded-lg border py-0.5 pl-1 pr-1.5 ${session?.id === item.id ? 'quiz-session-row--current' : ''}`}
                             >
                               <button
                                 type="button"
-                                className="min-w-0 flex-1 cursor-pointer rounded px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 text-left focus-visible:outline-none"
                                 aria-current={
                                   session?.id === item.id ? 'true' : undefined
                                 }
@@ -2516,12 +2524,19 @@ export default function QuizPane({
                                   setShowSessionList(false);
                                 }}
                               >
-                                <span className="block truncate text-sm text-white/90">
-                                  {label}
-                                </span>
-                                <span className="mt-0.5 block truncate text-xs text-white/45">
-                                  {source} <span aria-hidden="true">·</span>{' '}
-                                  {status}
+                                <span
+                                  aria-hidden="true"
+                                  title={status}
+                                  className={`size-1.5 shrink-0 rounded-full ${item.status === 'connected' ? 'bg-emerald-300' : item.status === 'waiting-agent' ? 'bg-amber-300' : 'bg-white/25'}`}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[13px] leading-5 text-white/90">
+                                    {label}
+                                  </span>
+                                  <span className="block truncate text-[11px] leading-4 text-white/45">
+                                    {source}
+                                    <span className="sr-only">, {status}</span>
+                                  </span>
                                 </span>
                               </button>
                               {confirmDelete === item.id ? (
@@ -2529,7 +2544,7 @@ export default function QuizPane({
                                   className="flex shrink-0 items-center gap-1 text-xs"
                                   aria-live="polite"
                                 >
-                                  <span>Delete session data only?</span>
+                                  <span className="text-white/65">Delete?</span>
                                   <button
                                     type="button"
                                     disabled={deleting !== null}
@@ -2600,7 +2615,7 @@ export default function QuizPane({
                                       type="button"
                                       aria-label={`Rename session ${label}`}
                                       title="Rename session"
-                                      className="cursor-pointer rounded p-2 text-white/50 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                                      className="cursor-pointer rounded-md p-1.5 text-white/50 opacity-0 hover:bg-white/10 hover:text-white focus-visible:opacity-100 group-hover/session:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
                                       onClick={() => {
                                         setSessionName(item.name || '');
                                         setEditingSessionId(item.id);
@@ -2614,7 +2629,7 @@ export default function QuizPane({
                                     aria-label={`Delete session ${label}`}
                                     title="Delete session and its data only"
                                     disabled={deleting !== null}
-                                    className="cursor-pointer rounded p-2 text-white/50 hover:bg-red-400/10 hover:text-red-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:opacity-40"
+                                    className="cursor-pointer rounded-md p-1.5 text-white/50 opacity-0 hover:bg-red-400/10 hover:text-red-300 focus-visible:opacity-100 group-hover/session:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:opacity-40"
                                     onClick={() => setConfirmDelete(item.id)}
                                   >
                                     <FaTrash aria-hidden="true" size={12} />

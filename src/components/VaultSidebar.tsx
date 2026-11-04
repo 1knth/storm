@@ -1,3 +1,4 @@
+import { setDragPreview } from '../shared/dragPreview';
 import { useRef, useState } from 'react';
 import { useToast } from './Toast';
 import ContextMenu from './ContextMenu';
@@ -258,7 +259,16 @@ export default function VaultSidebar({
   const beginDrag = (
     event: DragEvent,
     payload: { kind: 'vault'; id: string } | { kind: 'group'; id: string },
-  ) => beginVaultSidebarDrag(event, payload);
+  ) => {
+    beginVaultSidebarDrag(event, payload);
+    const target = event.currentTarget as HTMLElement;
+    setDragPreview(
+      event,
+      payload.kind === 'vault'
+        ? target
+        : (target.querySelector<HTMLElement>('[data-group-header]') ?? target),
+    );
+  };
   const dropVault = (
     event: DragEvent,
     target: {
@@ -448,7 +458,10 @@ export default function VaultSidebar({
         dropRoot(event, anchor);
       }}
     >
-      <div className="group/header flex min-w-0 items-center rounded-md">
+      <div
+        data-group-header
+        className="group/header flex min-w-0 items-center rounded-md"
+      >
         <button
           type="button"
           onDragOver={(event) => {

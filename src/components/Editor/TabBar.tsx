@@ -1,3 +1,4 @@
+import { setDragPreview } from '../../shared/dragPreview';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FaPlus } from 'react-icons/fa';
@@ -99,6 +100,25 @@ export default function TabBar({
   const previousIds = useRef(new Set(tabs.map(getTabId)));
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const currentIds = new Set(tabs.map(getTabId));
+  useEffect(() => {
+    // Map vertical wheel movement to horizontal scrolling so a plain mouse
+    // wheel moves through overflowing tabs without holding Shift. Trackpad
+    // horizontal swipes keep their native behavior.
+    const list = tabListRef.current;
+    if (!list) return;
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || list.scrollWidth <= list.clientWidth) return;
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      const delta =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? event.deltaY * 16
+          : event.deltaY;
+      event.preventDefault();
+      list.scrollLeft += delta;
+    };
+    list.addEventListener('wheel', onWheel, { passive: false });
+    return () => list.removeEventListener('wheel', onWheel);
+  }, []);
   const enteringIds = new Set(
     tabs.filter((tab) => !previousIds.current.has(getTabId(tab))).map(getTabId),
   );
@@ -209,6 +229,12 @@ export default function TabBar({
     draggingRef.current = payload;
     setDragging(payload);
     dragMoved.current = true;
+    setDragPreview(
+      event,
+      type === 'tab'
+        ? event.currentTarget.closest<HTMLElement>('.tab-surface')
+        : (event.currentTarget as HTMLElement),
+    );
   };
   const validDrag = (event: React.DragEvent) => {
     const payload = draggingRef.current;

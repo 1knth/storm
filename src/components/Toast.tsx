@@ -15,7 +15,10 @@ type Toast = {
   variant: 'error' | 'success';
   actionLabel?: string;
   onAction?: () => void;
+  leaving?: boolean;
 };
+const TOAST_DURATION_MS = 7000;
+const TOAST_EXIT_MS = 200;
 type ToastContextValue = {
   notifyError: (message: string, persistent?: boolean) => void;
   notifySuccess: (
@@ -39,8 +42,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const dismiss = useCallback((id: number) => {
     const timer = timers.current.get(id);
     if (timer) clearTimeout(timer);
-    timers.current.delete(id);
-    setToasts((current) => current.filter((toast) => toast.id !== id));
+    // Mark as leaving so the exit animation plays, then unmount.
+    setToasts((current) =>
+      current.map((toast) =>
+        toast.id === id ? { ...toast, leaving: true } : toast,
+      ),
+    );
+    timers.current.set(
+      id,
+      setTimeout(() => {
+        timers.current.delete(id);
+        setToasts((current) => current.filter((toast) => toast.id !== id));
+      }, TOAST_EXIT_MS),
+    );
   }, []);
   const notify = useCallback(
     (
@@ -76,14 +90,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         return next;
       });
       if (!persistent) {
-        const timer = setTimeout(() => {
-          timers.current.delete(id);
-          setToasts((current) => current.filter((toast) => toast.id !== id));
-        }, 7000);
-        timers.current.set(id, timer);
+        timers.current.set(
+          id,
+          setTimeout(() => dismiss(id), TOAST_DURATION_MS),
+        );
       }
     },
-    [],
+    [dismiss],
   );
   const notifyError = useCallback(
     (message: string, persistent = false) =>
@@ -115,14 +128,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={toast.id}
             role={toast.variant === 'error' ? 'alert' : 'status'}
-            className={`app-popup-surface pointer-events-auto flex min-w-0 items-start gap-3 border-l-2 ${toast.variant === 'error' ? 'border-l-red-300/70' : 'border-l-emerald-300/70'} px-3 py-2.5 text-[13px] leading-5 text-white/90`}
+            className={`app-popup-surface app-toast pointer-events-auto relative flex min-w-0 items-center gap-2.5 overflow-hidden py-2.5 pl-3 pr-2 text-[13px] leading-5 text-white/90 ${toast.leaving ? 'app-toast-leaving' : ''}`}
           >
+            <span
+              aria-hidden="true"
+              className={`size-1.5 shrink-0 rounded-full ${toast.variant === 'error' ? 'bg-red-300' : 'bg-emerald-300'}`}
+            />
             <span className="min-w-0 flex-1 break-words">{toast.message}</span>
             {toast.actionLabel && toast.onAction && (
               <button
                 type="button"
                 onClick={toast.onAction}
-                className="app-button shrink-0 px-1 text-white/80"
+                className="app-button shrink-0 rounded px-1.5 text-white/85"
               >
                 {toast.actionLabel}
               </button>
@@ -131,10 +148,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               type="button"
               aria-label="Dismiss notification"
               onClick={() => dismiss(toast.id)}
-              className="app-button shrink-0 px-1 text-white/55"
+              className="app-button flex size-5 shrink-0 items-center justify-center rounded text-[15px] leading-none text-white/50 hover:text-white/85"
             >
               ×
             </button>
+            {!toast.persistent && (
+              <span
+                aria-hidden="true"
+                className="app-toast-progress"
+                style={{ animationDuration: `${TOAST_DURATION_MS}ms` }}
+              />
+            )}
           </div>
         ))}
       </div>
