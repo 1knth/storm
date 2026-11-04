@@ -150,6 +150,7 @@ const quizService = new QuizService(
       revision,
     ),
   (session, question) => learnerStore.recordQuestion(session, question),
+  (entries) => learnerStore.recordGrades(entries),
 );
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;

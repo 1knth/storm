@@ -456,7 +456,7 @@ test('intervening questions allow a confident recheck without waiting a full day
   assert.equal(value.next[0]!.support, concept.recommended.support);
 });
 
-test('assisted remediation preserves diagnosis and restarts spacing before an independent probe', () => {
+test('assisted remediation preserves diagnosis without restarting the recheck gap', () => {
   const error = attempt({
     support: 'worked',
     verdict: 'incorrect',
@@ -478,10 +478,10 @@ test('assisted remediation preserves diagnosis and restarts spacing before an in
   assert.equal(concept.assistedConfidentError, true);
   assert.equal(concept.confidentError, false);
   assert.equal(concept.stabilityDays, null);
-  assert.equal(concept.confidentReview!.recheckEligible, false);
-  assert.equal(concept.confidentReview!.interveningAttempts, 0);
+  assert.equal(concept.confidentReview!.recheckEligible, true);
+  assert.equal(concept.confidentReview!.interveningAttempts, 3);
   assert.equal(concept.recommended.support, 'worked');
-  assert.ok(!value.next.some((item) => item.conceptId === 'loops'));
+  assert.ok(value.next.some((item) => item.conceptId === 'loops'));
   const verified = state([...remediation, attempt()]).concepts.find(
     (item) => item.id === 'loops',
   )!;
@@ -512,4 +512,23 @@ test('a confident recheck becomes eligible exactly at its delay boundary', () =>
     true,
   );
   assert.equal(check(eligibleAt).next[0]!.reason, 'confident-error');
+});
+
+test('same-concept helped practice counts toward spacing and stays in recommendations', () => {
+  const error = attempt({ verdict: 'incorrect', confidence: 90 });
+  const first = state([error, attempt({ support: 'worked' })]);
+  const c = first.concepts.find((c) => c.id === 'loops')!;
+  assert.equal(c.confidentReview!.recheckEligible, false);
+  assert.equal(c.confidentReview!.interveningAttempts, 1);
+  assert.equal(c.confidentReview!.remediationAvailable, true);
+  assert.ok(
+    first.next.some((n) => n.conceptId === 'loops' && n.support === 'worked'),
+  );
+  const second = state([
+    error,
+    attempt({ support: 'worked' }),
+    attempt({ support: 'worked' }),
+  ]);
+  assert.equal(second.concepts[0].confidentReview!.recheckEligible, true);
+  assert.equal(second.next[0].support, 'hinted');
 });

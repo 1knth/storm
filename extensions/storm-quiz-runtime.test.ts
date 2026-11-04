@@ -171,7 +171,7 @@ describe('model-safe quiz context', () => {
       'calibration.guidanceEligible is true',
       'at least 20 ratings',
       'at most one brief, supportive comment per session',
-      'fresh independent item',
+      'fresh item at the recommended level and support',
       'Recommendations are advisory; explicit learner requests win',
       'Never present model numbers as grades or mastery',
       'Rated graded answers inform confidence calibration even when untagged',

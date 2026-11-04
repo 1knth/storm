@@ -53,6 +53,7 @@ export class QuizService {
   private readonly startupRecovery: Promise<void>;
   private reconciliationQueue: Promise<unknown> = Promise.resolve();
   private readonly recordingFailures = new Map<string, string>();
+  private readonly recordedGrades = new Map<string, string>();
   private readonly recordingFailureCounts = new Map<string, number>();
   private readonly unmodelledQuestions = new Map<string, string>();
 
@@ -78,6 +79,9 @@ export class QuizService {
       session: QuizSession,
       question: QuizQuestion,
     ) => Promise<void>,
+    private readonly recordAttempts?: (
+      entries: Array<{ session: QuizSession; question: QuizQuestion }>,
+    ) => Promise<void>,
   ) {
     // A persisted connected state belongs to a prior process. Recover it once,
     // before any new operation can attach or observe a session.
@@ -92,56 +96,104 @@ export class QuizService {
     }
     // Transcripts are durable and unbounded. Replay repairs crashes between the
     // feedback commit and derived-model recording, including legacy questions.
-    for (const session of sessions) await this.reconcileSession(session);
+    await this.reconcileSessions(sessions);
+  }
+
+  private gradeFingerprint(
+    session: QuizSession,
+    question: QuizQuestion,
+  ): string {
+    return JSON.stringify([
+      session.scope,
+      question.id,
+      question.gradedAt ?? session.updatedAt,
+      question.learning,
+      question.suppliedSupport,
+      question.verdict,
+      question.confidence,
+    ]);
+  }
+
+  private async recordGradedQuestions(
+    entries: Array<{ session: QuizSession; question: QuizQuestion }>,
+  ): Promise<void> {
+    const pending = entries.filter(({ session, question }) => {
+      if (!question.verdict) return false;
+      if (!question.learning)
+        this.unmodelledQuestions.set(question.id, session.id);
+      return (
+        (this.recordAttempt || this.recordAttempts) &&
+        (question.learning || question.confidence !== undefined) &&
+        this.recordedGrades.get(`${session.id}:${question.id}`) !==
+          this.gradeFingerprint(session, question)
+      );
+    });
+    const save = async (batch: typeof pending) => {
+      try {
+        if (this.recordAttempts) await this.recordAttempts(batch);
+        else
+          for (const { session, question } of batch)
+            await this.recordAttempt!(session, question);
+        for (const { session, question } of batch) {
+          this.recordedGrades.set(
+            `${session.id}:${question.id}`,
+            this.gradeFingerprint(session, question),
+          );
+          this.recordingFailures.delete(question.id);
+        }
+        const failedSessions = new Set(this.recordingFailures.values());
+        for (const { session } of batch) {
+          if (!failedSessions.has(session.id))
+            this.recordingFailureCounts.delete(session.id);
+        }
+      } catch {
+        for (const { session, question } of batch) {
+          this.recordingFailures.set(question.id, session.id);
+          this.recordingFailureCounts.set(
+            session.id,
+            (this.recordingFailureCounts.get(session.id) ?? 0) + 1,
+          );
+        }
+      }
+    };
+    if (!pending.length) return;
+    if (this.recordAttempts) await save(pending);
+    else for (const entry of pending) await save([entry]);
   }
 
   private async recordGradedQuestion(
     session: QuizSession,
     question: QuizQuestion,
   ): Promise<void> {
-    if (!question.verdict) return;
-    if (!question.learning)
-      this.unmodelledQuestions.set(question.id, session.id);
-    if (
-      !this.recordAttempt ||
-      (!question.learning && question.confidence === undefined)
-    )
-      return;
-    try {
-      await this.recordAttempt(session, question);
-      this.recordingFailures.delete(question.id);
-    } catch {
-      // Keep accepted feedback successful and expose a safe, actionable signal.
-      this.recordingFailures.set(question.id, session.id);
-      this.recordingFailureCounts.set(
-        session.id,
-        (this.recordingFailureCounts.get(session.id) ?? 0) + 1,
-      );
-    }
+    await this.recordGradedQuestions([{ session, question }]);
   }
 
-  private async reconcileSession(session: QuizSession): Promise<void> {
-    const questions = new Map<string, QuizQuestion>();
-    for (const message of session.transcript) {
-      const question = message.question;
-      if (!question?.verdict) continue;
-      questions.set(question.id, {
-        ...question,
-        gradedAt: question.gradedAt ?? message.createdAt,
-        status: 'feedback',
-        selectedChoiceId: null,
-        reasoningDraft: '',
-        feedback: message.text,
-      });
+  private async reconcileSessions(sessions: QuizSession[]): Promise<void> {
+    const entries: Array<{ session: QuizSession; question: QuizQuestion }> = [];
+    for (const session of sessions) {
+      const questions = new Map<string, QuizQuestion>();
+      for (const message of session.transcript) {
+        const question = message.question;
+        if (!question?.verdict) continue;
+        questions.set(question.id, {
+          ...question,
+          gradedAt: question.gradedAt ?? message.createdAt,
+          status: 'feedback',
+          selectedChoiceId: null,
+          reasoningDraft: '',
+          feedback: message.text,
+        });
+      }
+      const current = session.currentQuestion;
+      if (current?.verdict && !questions.has(current.id))
+        questions.set(current.id, {
+          ...current,
+          gradedAt: current.gradedAt ?? session.updatedAt,
+        });
+      for (const question of questions.values())
+        entries.push({ session, question });
     }
-    const current = session.currentQuestion;
-    if (current?.verdict && !questions.has(current.id))
-      questions.set(current.id, {
-        ...current,
-        gradedAt: current.gradedAt ?? session.updatedAt,
-      });
-    for (const question of questions.values())
-      await this.recordGradedQuestion(session, question);
+    await this.recordGradedQuestions(entries);
   }
 
   /** Retry durable grades before serving model state, serializing concurrent reads. */
@@ -152,16 +204,13 @@ export class QuizService {
       const scopeSessions = new Set<string>([sessionId]);
       if (current) {
         const sessions = await this.store.list({ includeDrafts: true });
-        for (const session of sessions) {
-          if (
-            current.scope
-              ? session.scope?.vaultId === current.scope.vaultId
-              : session.id === sessionId
-          ) {
-            scopeSessions.add(session.id);
-            await this.reconcileSession(session);
-          }
-        }
+        const relevant = sessions.filter((session) =>
+          current.scope
+            ? session.scope?.vaultId === current.scope.vaultId
+            : session.id === sessionId,
+        );
+        for (const session of relevant) scopeSessions.add(session.id);
+        await this.reconcileSessions(relevant);
       }
       return this.learnerRecordingDiagnostics(scopeSessions);
     });
@@ -500,7 +549,7 @@ export class QuizService {
         fingerprint,
       );
       if (prior) {
-        if (request.type === 'feedback') await this.reconcileSession(prior);
+        if (request.type === 'feedback') await this.reconcileSessions([prior]);
         return { ok: true, value: prior };
       }
     } catch {

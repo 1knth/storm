@@ -32,7 +32,9 @@ Questions retain the strongest assistance supplied before submission, including
 help given after posing. Failed assisted attempts do not justify removing help.
 Confident partial answers are diagnosis candidates rather than automatic full
 misconceptions. Assisted misconceptions stay visible without changing independent
-memory evidence. Confidence rechecks allow intervening practice or a review gap.
+memory evidence. Confidence rechecks count practice since the original error, including assisted
+remediation, or a review gap. Assisted remediation does not restart the wait;
+practice recommendations retain the support the learner still needs.
 
 Calibration exposes absolute confidence error as well as signed bias, and counts
 independent, assisted, and unknown support. Pattern commentary requires at least
@@ -251,3 +253,11 @@ is not proof of abandonment caused by the slider. Counters contain no answer tex
 confidence values, session IDs, or network telemetry; clearing local storage
 resets them. Compare these observations with usability feedback before changing
 the required-rating interaction or adopting a smaller set of confidence options.
+
+Grade replay merges all missing/changed grades by learning pool in a single
+load/compare/write per pool. Successful grade fingerprints are remembered for
+the process lifetime, while failures remain retryable; unchanged learner reads
+avoid re-recording the full history. The durable transcript remains the source
+for recovery after a restart. `recording.failures` counts failures still associated
+with unresolved work and clears after successful recovery; `pending` determines
+whether evidence is incomplete.

@@ -63,7 +63,7 @@ export type LearnerConceptState = {
   assistedConfidentError: boolean;
   assistedConfidentPartial: boolean;
   /**
-   * Explain an incorrect answer now; schedule practice only once eligible.
+   * Explain an incorrect answer now; assisted remediation can precede the recheck.
    * This is advice, not a record that a correction was actually delivered.
    */
   confidentReview: {
@@ -72,6 +72,7 @@ export type LearnerConceptState = {
     recheckEligible: boolean;
     recheckAt: string;
     interveningAttempts: number;
+    remediationAvailable: boolean;
   } | null;
   /** Attempted in a session with the same scope as the requesting session. */
   inScope: boolean;
@@ -193,6 +194,7 @@ export function nextStability(
 }
 
 type ConfidenceDiagnosis = {
+  at: string;
   kind: 'error' | 'partial';
   support: QuizSupport;
   level: QuizCognitiveLevel;
@@ -249,6 +251,7 @@ function accumulate(
       attempt.confidence !== undefined &&
       attempt.confidence >= CONFIDENT_ERROR_THRESHOLD
         ? {
+            at: attempt.at,
             kind: attempt.verdict === 'incorrect' ? 'error' : 'partial',
             support: attempt.support,
             level: attempt.level,
@@ -452,8 +455,12 @@ function conceptState(
     recommended = { level: error.level, support: 'worked' };
   }
   const recheckAt =
-    Date.parse(concept.lastAt!) + CONFIDENT_RECHECK.delayDays * DAY_MS;
-  const interveningAttempts = Math.max(0, totalAttempts - practice.index - 1);
+    Date.parse(error?.at ?? concept.lastAt!) +
+    CONFIDENT_RECHECK.delayDays * DAY_MS;
+  const interveningAttempts = Math.max(
+    0,
+    totalAttempts - (error?.index ?? practice.index) - 1,
+  );
   const confidentReview: LearnerConceptState['confidentReview'] = error
     ? {
         sourceSupport: error.support,
@@ -463,6 +470,8 @@ function conceptState(
           interveningAttempts >= CONFIDENT_RECHECK.interveningAttempts,
         recheckAt: new Date(recheckAt).toISOString(),
         interveningAttempts,
+        remediationAvailable:
+          practice.index > error.index && recommended.support !== 'independent',
       }
     : null;
   return {
@@ -517,11 +526,16 @@ export function recommend(
   const byScope = (a: LearnerConceptState, b: LearnerConceptState) =>
     Number(b.inScope) - Number(a.inScope);
   // Pending correction is surfaced in concept state immediately. Do not turn
-  // it into another practice question until delay/interleaving makes it useful.
+  // it into an immediate independent retest. Assisted remediation remains available.
   const practice = concepts.filter(
-    (c) => !c.confidentReview || c.confidentReview.recheckEligible,
+    (c) =>
+      !c.confidentReview ||
+      c.confidentReview.recheckEligible ||
+      c.confidentReview.remediationAvailable,
   );
-  for (const concept of practice.filter((c) => c.confidentReview).sort(byScope))
+  for (const concept of practice
+    .filter((c) => c.confidentReview?.recheckEligible)
+    .sort(byScope))
     push(
       concept,
       'confident-error',

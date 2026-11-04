@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QuizService } from './quizService';
@@ -632,5 +632,113 @@ test('unscoped learner pools stay isolated and ignore the legacy global unscoped
     }
   } finally {
     await f.cleanup();
+  }
+});
+
+test('large startup replay is batched, retried on failure, then skipped on repeated learner reads', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'storm-batch-replay-'));
+  try {
+    const at = '2026-11-01T09:00:00.000Z';
+    const history = Array.from({ length: 2000 }, (_, i) => ({
+      id: `m${i}`,
+      role: 'agent',
+      text: 'Feedback',
+      createdAt: at,
+      question: {
+        id: `q${i}`,
+        prompt: 'Practice',
+        choices: [],
+        verdict: 'correct',
+        confidence: 80,
+        learning: {
+          concepts: ['loops'],
+          level: 'recall',
+          support: 'independent',
+        },
+        gradedAt: at,
+      },
+    }));
+    const session = {
+      id: 'history',
+      agentToken: 'synthetic',
+      scope,
+      revision: 0,
+      eventCursor: 0,
+      status: 'waiting-agent',
+      transcript: history,
+      currentQuestion: null,
+      freeChatDraft: '',
+      createdAt: at,
+      updatedAt: at,
+    };
+    await writeFile(
+      join(dir, 'sessions.json'),
+      JSON.stringify({
+        version: 1,
+        sessions: [session],
+        events: { history: [] },
+        idempotency: {},
+      }),
+    );
+    const learner = new LearnerStore(join(dir, 'learner.json'));
+    let batches = 0;
+    let merges = 0;
+    const merge = learner.recordMany.bind(learner);
+    learner.recordMany = async (key, attempts) => {
+      merges++;
+      await merge(key, attempts);
+    };
+    const service = new QuizService(
+      new QuizStore(join(dir, 'sessions.json')),
+      () => true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async (entries) => {
+        batches++;
+        assert.equal(entries.length, 2000);
+        if (batches === 1) throw new Error('temporary failure');
+        await learner.recordGrades(entries);
+      },
+    );
+    await service.listSessions();
+    assert.equal(service.learnerRecordingDiagnostics().pending, 2000);
+    const repaired = await service.reconcileLearner('history');
+    assert.equal(repaired.pending, 0);
+    assert.equal(repaired.failures, 0);
+    assert.equal(batches, 2);
+    assert.equal(merges, 1);
+    const before = await stat(join(dir, 'learner.json'));
+    await service.reconcileLearner('history');
+    await service.reconcileLearner('history');
+    assert.equal(batches, 2);
+    assert.equal(merges, 1);
+    const attempts = await learner.attempts(learnerScopeKey(scope));
+    assert.equal(attempts.length, 2000);
+    assert.ok(attempts.every((a) => a.at === at));
+    // Even a fresh process replay should leave an identical derived file untouched.
+    const fresh = new LearnerStore(join(dir, 'learner.json'));
+    await fresh.recordMany(learnerScopeKey(scope), attempts);
+    const after = await stat(join(dir, 'learner.json'));
+    assert.equal(after.ino, before.ino);
+    assert.equal(after.mtimeMs, before.mtimeMs);
+    await fresh.recordMany(learnerScopeKey(scope), [
+      { ...attempts[0], verdict: 'partial' },
+    ]);
+    assert.equal(
+      (await fresh.attempts(learnerScopeKey(scope))).filter(
+        (a) => a.id === attempts[0].id,
+      ).length,
+      1,
+    );
+    assert.equal(
+      (await fresh.attempts(learnerScopeKey(scope))).find(
+        (a) => a.id === attempts[0].id,
+      )?.verdict,
+      'partial',
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
