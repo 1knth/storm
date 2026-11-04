@@ -1360,10 +1360,45 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  /** The last attached quiz, so resume works after Storm or Pi restarts. */
+  const LAST_SESSION_ENTRY = 'storm-last-session';
+  let lastSession: { id: string; name?: string } | undefined;
+  const sessionName = (session: unknown) => {
+    const name = (session as { name?: unknown } | undefined)?.name;
+    return typeof name === 'string' && name.trim() ? name.trim() : undefined;
+  };
+  const describe = (session: { id: string; name?: string }) =>
+    session.name ? `"${session.name}" (${session.id})` : session.id;
+  const rememberedSession = (
+    ctx: Parameters<Parameters<typeof pi.registerCommand>[1]['handler']>[1],
+  ) => {
+    if (lastSession) return lastSession;
+    const entries = ctx.sessionManager.getBranch();
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i] as {
+        type: string;
+        customType?: string;
+        data?: { id?: unknown; name?: unknown };
+      };
+      if (
+        entry.type === 'custom' &&
+        entry.customType === LAST_SESSION_ENTRY &&
+        typeof entry.data?.id === 'string'
+      )
+        return {
+          id: entry.data.id,
+          name:
+            typeof entry.data.name === 'string' ? entry.data.name : undefined,
+        };
+    }
+    return undefined;
+  };
+
   pi.registerCommand('storm', {
-    description: 'Attach/status/disconnect an existing Storm quiz session',
+    description:
+      'Attach/resume/status/disconnect an existing Storm quiz session',
     handler: async (args, ctx) => {
-      const [action, id] = args.trim().split(/\s+/, 2);
+      let [action, id] = args.trim().split(/\s+/, 2);
       const initialState = state;
       try {
         if (action === 'disconnect') {
@@ -1373,20 +1408,70 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         if (action === 'status') {
-          if (!state) throw new Error('No Storm quiz attached.');
+          // Ask Storm itself; a stale listener can look healthy after Storm quits.
+          let listing: unknown;
+          let reachable = true;
+          try {
+            listing = responseValue(await runCli(['quiz', 'list']));
+          } catch {
+            reachable = false;
+          }
+          const target = state
+            ? {
+                id: state.sessionId,
+                name: sessionName(state.snapshot) ?? lastSession?.name,
+              }
+            : rememberedSession(ctx);
+          const row = Array.isArray(listing)
+            ? listing.find((session) => session?.id === target?.id)
+            : undefined;
+          const name = sessionName(row) ?? target?.name;
+          if (!state) {
+            ctx.ui.notify(
+              target
+                ? `Storm: not connected. Last session ${describe({ id: target.id, name })}${reachable ? (row ? ` is ${row.status}` : ' is no longer in Storm') : '; Storm app is not running'}. Run /storm resume to reconnect.`
+                : `Storm: not connected${reachable ? '' : '; Storm app is not running'}. Run /storm attach SESSION_ID.`,
+              'warning',
+            );
+            return;
+          }
           waitOwner = state;
           waitRuntime.start(state.cursor, state.token);
+          const connected =
+            reachable && row?.status === 'connected' && !lastWaitError;
+          const toolActive = pi.getActiveTools().includes('storm');
           ctx.ui.notify(
-            `Quiz ${state.sessionId}: revision ${state.revision}, cursor ${state.cursor}; listener ${lastWaitError ?? waitRuntime.health}; storm ${pi.getActiveTools().includes('storm') ? 'active' : 'inactive'}.`,
-            lastWaitError || !pi.getActiveTools().includes('storm')
-              ? 'warning'
-              : 'info',
+            [
+              `Storm: ${connected ? 'connected' : 'not connected'} to ${describe({ id: state.sessionId, name })}.`,
+              reachable
+                ? `Storm reports ${row ? row.status : 'no such session'}.`
+                : 'Storm app is not running.',
+              `Revision ${state.revision}, cursor ${state.cursor}; listener ${lastWaitError ?? waitRuntime.health}; tool ${toolActive ? 'active' : 'inactive'}.`,
+              ...(connected ? [] : ['Run /storm resume to reconnect.']),
+            ].join(' '),
+            connected && toolActive ? 'info' : 'warning',
           );
           return;
         }
+        if (action === 'resume') {
+          const target = state
+            ? { id: state.sessionId }
+            : id
+              ? { id }
+              : rememberedSession(ctx);
+          if (!target)
+            throw new Error(
+              'No previous Storm quiz to resume. Use /storm attach SESSION_ID.',
+            );
+          id = target.id;
+          action = 'attach';
+          // A reopened Storm has revoked the old token, so a clean detach
+          // usually fails; drop the stale connection locally instead.
+          if (state) await detach(stop()).catch(() => undefined);
+        }
         if (action !== 'attach' || !id)
           throw new Error(
-            'Usage: /storm attach SESSION_ID | status | disconnect',
+            'Usage: /storm attach SESSION_ID | resume [SESSION_ID] | status | disconnect',
           );
         assertQuizCapabilities(
           responseValue(await runCli(['quiz', 'capabilities'])),
@@ -1448,7 +1533,12 @@ export default function (pi: ExtensionAPI) {
             .filter((name) => !active.maskedTools!.includes(name)),
         );
         notifyUi = (message, level) => ctx.ui.notify(message, level);
-        ctx.ui.notify(`Attached to Storm quiz ${id}.`, 'info');
+        lastSession = { id, name: sessionName(snapshot.session) };
+        pi.appendEntry(LAST_SESSION_ENTRY, lastSession);
+        ctx.ui.notify(
+          `Attached to Storm quiz ${describe(lastSession)}.`,
+          'info',
+        );
         const context = responseContext(
           active,
           snapshot.session.revision,

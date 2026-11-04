@@ -94,6 +94,7 @@ else if(op==='request') {
     },
     sendUserMessage: (text: string, options?: unknown) =>
       calls.push({ text, options }),
+    appendEntry: () => {},
   } as never);
   const ctx = {
     isIdle: () => idle,

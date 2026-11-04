@@ -39,6 +39,7 @@ function makePi() {
   let activeTools = ['read', 'custom'];
   let idle = true;
   let latestContextId = '';
+  const entries: unknown[] = [];
   const observe = (text: string) => {
     latestContextId =
       text.match(/"contextId":"([^"]+)"/)?.[1] ?? latestContextId;
@@ -68,10 +69,13 @@ function makePi() {
       observe(message);
       calls.push({ command: message, options });
     },
+    appendEntry: (customType: string, data?: unknown) =>
+      entries.push({ type: 'custom', customType, data }),
   };
   extension(pi);
   const ctx = {
     isIdle: () => idle,
+    sessionManager: { getBranch: () => entries },
     ui: {
       notify: (message: string, level: string) =>
         notices.push({ message, level }),
@@ -535,6 +539,49 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await pi.shutdown();
     await flush();
     expect((await state(stateFile)).activity).toContain('idle');
+  });
+
+  test('/storm status reports the connection, session ID and name', async () => {
+    await fixture({
+      list: [{ id: 'quiz-test', status: 'connected', name: 'Logic drills' }],
+    });
+    const pi = makePi();
+    await attach(pi);
+    await pi.command('status');
+    const notice = pi.notices.at(-1);
+    expect(notice.message).toContain(
+      'Storm: connected to "Logic drills" (quiz-test).',
+    );
+    expect(notice.level).toBe('info');
+    await pi.shutdown();
+  });
+
+  test('/storm resume reattaches the last session after Storm drops it', async () => {
+    const { stateFile } = await fixture({
+      waitError: 'INVALID_REQUEST',
+      listStatus: 'disconnected',
+    });
+    const pi = makePi();
+    await attach(pi);
+    await flush();
+    await flush();
+    expect(pi.getActiveTools()).not.toContain('storm');
+    await pi.command('status');
+    expect(pi.notices.at(-1).message).toContain(
+      'Storm: not connected. Last session quiz-test is disconnected. Run /storm resume',
+    );
+    // Storm reopens and the session waits for an agent again.
+    const saved = await state(stateFile);
+    saved.waitError = undefined;
+    saved.status = 'waiting';
+    saved.listStatus = 'waiting';
+    await writeState(stateFile, saved);
+    await pi.command('resume');
+    expect(pi.getActiveTools()).toContain('storm');
+    expect(pi.notices.at(-1).message).toContain(
+      'Attached to Storm quiz quiz-test.',
+    );
+    await pi.shutdown();
   });
 
   test('GUI stop reconciliation removes tool once, reports once, and permits fresh attachment', async () => {
