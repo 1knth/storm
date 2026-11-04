@@ -124,6 +124,16 @@ export function diagramColorGroups(): AppearanceColorGroup[] {
         { label: 'Sequence arrows and lines', key: 'mermaidSignalColor' },
       ],
     },
+    {
+      title: 'Quiz lesson map',
+      rows: [
+        { label: 'Topic being taught', key: 'lessonMapFocus' },
+        { label: 'Mastered', key: 'lessonMapMastered' },
+        { label: 'Independent', key: 'lessonMapIndependent' },
+        { label: 'Guided', key: 'lessonMapGuided' },
+        { label: 'Needs review', key: 'lessonMapNeedsReview' },
+      ],
+    },
   ];
 }
 

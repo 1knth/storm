@@ -171,6 +171,21 @@ export function quizAgentSession(
       'respondedThroughCursor',
     ]),
     ...(scope !== undefined ? { scope: limited(scope, 'scope', 4000) } : {}),
+    ...(session.lessonMap
+      ? {
+          lessonMap: limited(
+            pick(session.lessonMap, [
+              'nodes',
+              'edges',
+              'goal',
+              'statuses',
+              'focus',
+            ]),
+            'lessonMap',
+            8000,
+          ),
+        }
+      : {}),
     currentQuestion: limited(
       quizAgentQuestion(session.currentQuestion),
       'question',

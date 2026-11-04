@@ -6,6 +6,7 @@ import {
 } from '../shared/studyContext';
 import { isAgentEditPlan } from '../shared/agentEditValidation';
 import { quizLearningFromRequest } from '../shared/quizProtocol';
+import { isLessonMapUpdate } from '../shared/lessonMap';
 import type {
   AgentBridgeRequest,
   AgentBridgeResult,
@@ -1066,6 +1067,7 @@ function isQuizAgentRequest(value: unknown): boolean {
       !!r.text.trim() &&
       r.text.length <= 10000
     );
+  if (r.type === 'lesson-map') return isLessonMapUpdate(r.map);
   if (r.type === 'feedback' || r.type === 'agent-message')
     return (
       typeof r.text === 'string' &&

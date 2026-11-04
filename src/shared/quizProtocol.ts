@@ -1,4 +1,5 @@
 /** Stable shared contract for persistent quiz sessions and external quiz agents. */
+import type { LessonMapUpdate, QuizLessonMap } from './lessonMap';
 export type QuizScope = {
   vaultId: string;
   notePath: string | null;
@@ -117,6 +118,8 @@ export type QuizSession = {
   eventCursor: number;
   /** Missing when a session was created without a note/folder scope. */
   scope?: QuizScope;
+  /** Live lesson dependency map maintained by the agent; absent until posted. */
+  lessonMap?: QuizLessonMap;
   status: 'waiting-agent' | 'connected' | 'disconnected' | 'complete';
   transcript: QuizMessage[];
   currentQuestion: QuizQuestion | null;
@@ -196,6 +199,15 @@ export type QuizAgentRequest = (
       prompt: string;
       choices: QuizPromptChoice[];
       promptId?: string;
+    }
+  | {
+      /** Metadata-only: updates the live lesson map without advancing revision. */
+      type: 'lesson-map';
+      sessionId: string;
+      agentToken: string;
+      expectedRevision: number;
+      idempotencyKey: string;
+      map: LessonMapUpdate;
     }
   | {
       type: 'agent-message';

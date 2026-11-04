@@ -18,6 +18,11 @@ import {
   orderQuizChoices,
   orderQuizMatchOptions,
 } from '../shared/quizChoiceOrder';
+import {
+  applyLessonMapUpdate,
+  focusLessonMap,
+  isLessonMapUpdate,
+} from '../shared/lessonMap';
 import { QuizStore } from './quizStore';
 import {
   MAX_QUIZ_MESSAGE_IMAGES,
@@ -287,6 +292,29 @@ export class QuizService {
     }
   }
 
+  /** Attach, replace, or clear (undefined) the study scope of an existing session. */
+  async setScope(
+    sessionId: string,
+    scope: QuizScope | undefined,
+  ): Promise<QuizResult<QuizSession>> {
+    await this.startupRecovery;
+    if (
+      scope &&
+      (!scope.vaultId ||
+        !isValidScope(scope) ||
+        !(await this.authorizeScope(scope)))
+    )
+      return { ok: false, error: 'unauthorized' };
+    try {
+      const updated = await this.store.setScope(sessionId, scope);
+      if (!updated) return { ok: false, error: 'not-found' };
+      await this.store.promote(sessionId);
+      return { ok: true, value: updated };
+    } catch {
+      return { ok: false, error: 'stale-revision' };
+    }
+  }
+
   async deleteSession(
     sessionId: string,
   ): Promise<{ id: string; deleted: true }> {
@@ -436,6 +464,35 @@ export class QuizService {
     }
   }
 
+  /** Lesson maps are display metadata: no revision, event, or Continue gate. */
+  private async setLessonMap(
+    request: Extract<QuizAgentRequest, { type: 'lesson-map' }>,
+  ): Promise<QuizResult<QuizSession>> {
+    if (!isLessonMapUpdate(request.map))
+      return { ok: false, error: 'invalid-input' };
+    const result = await this.store.setLessonMap(
+      request.sessionId,
+      request.agentToken,
+      (session) => {
+        if (session.status !== 'connected') return 'invalid-state';
+        const map = applyLessonMapUpdate(
+          session.lessonMap,
+          request.map,
+          this.now(),
+        );
+        return typeof map === 'string'
+          ? 'invalid-input'
+          : { ...session, lessonMap: map };
+      },
+    );
+    if (result === undefined) return { ok: false, error: 'unauthorized' };
+    if (result === 'invalid-state' || result === 'invalid-input')
+      return { ok: false, error: result };
+    if (typeof result === 'string')
+      return { ok: false, error: 'invalid-input' };
+    return { ok: true, value: result };
+  }
+
   async setAgentActivity(
     sessionId: string,
     agentToken: string,
@@ -469,6 +526,7 @@ export class QuizService {
     if (!current) return { ok: false, error: 'not-found' };
     if (request.agentToken !== current.agentToken)
       return { ok: false, error: 'unauthorized' };
+    if (request.type === 'lesson-map') return this.setLessonMap(request);
     const result = await this.applyRequest(current, request);
     if (
       request.type === 'pose-question' &&
@@ -694,6 +752,12 @@ export class QuizService {
           reasoningDraft: '',
           feedback: null,
         };
+        const focused = focusLessonMap(
+          next.lessonMap,
+          learning?.concepts,
+          timestamp,
+        );
+        if (focused) next.lessonMap = focused;
         break;
       }
       case 'answer': {

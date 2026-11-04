@@ -8,6 +8,8 @@ Build with `pnpm package`, launch that app, then run `pnpm tutor:doctor` and `pn
 
 Create/select a scoped quiz in Storm and use `/storm-quiz attach SESSION_ID` once. Attach supplies a bounded file tree and activates `storm_study`. While attached, Pi's `quiz` and `ask_user_question` tools are masked; detach restores them. Missing study capability produces a warning without losing conversation recovery.
 
+The learner can attach, replace, or remove scope on an existing session with the quiz header's folder button (current note's folder, current note, entire vault as `folderPath:"."`, or any folder). The change is metadata-only: it does not bump the session revision, and concurrent agent writes preserve it. The Pi extension re-opens study context on the next delivered learner update or `status`, toggles `storm_study`, and reports `studyContextChanged` to the agent. A scope change alone does not wake the agent.
+
 `storm_study` actions:
 
 - `tree`: page files with `offset`; echo `indexRevision` to detect changed metadata between pages.

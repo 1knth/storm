@@ -12,6 +12,8 @@ import {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import QuizAnswerEditor from './QuizAnswerEditor';
+import QuizScopePicker from './QuizScopePicker';
+import QuizLessonMap from './QuizLessonMap';
 import { recordConfidenceObservation } from './quizConfidenceMetrics';
 import remarkGfm from 'remark-gfm';
 import 'katex/dist/katex.min.css';
@@ -79,6 +81,12 @@ type QuizBridge = {
   renameSession(
     id: string,
     name: string,
+  ): Promise<
+    { ok: true; value: PublicQuizSession } | { ok: false; error: string }
+  >;
+  setSessionScope(
+    id: string,
+    scope: QuizScope | null,
   ): Promise<
     { ok: true; value: PublicQuizSession } | { ok: false; error: string }
   >;
@@ -823,6 +831,8 @@ export const QuizMarkdown = memo(function QuizMarkdown({
 });
 
 export default function QuizPane({
+  vaultId,
+  notePath,
   visible,
   onClose,
   appearance,
@@ -1627,6 +1637,39 @@ export default function QuizPane({
                     >
                       <span className="quiz-instructions-label">CLI</span>
                     </button>
+                    <QuizScopePicker
+                      scope={session.scope}
+                      vaultId={vaultId}
+                      notePath={notePath}
+                      onChange={async (scope) => {
+                        if (!bridge) return;
+                        try {
+                          const result = await bridge.setSessionScope(
+                            session.id,
+                            scope,
+                          );
+                          if (!result.ok) {
+                            notifyError(
+                              `Could not change study context: ${result.error}`,
+                            );
+                            return;
+                          }
+                          setSession(result.value);
+                          setSessions((items) =>
+                            items.map((item) =>
+                              item.id === session.id ? result.value : item,
+                            ),
+                          );
+                          notifySuccess(
+                            scope
+                              ? 'Study context attached'
+                              : 'Study context removed',
+                          );
+                        } catch {
+                          notifyError('Could not change study context.');
+                        }
+                      }}
+                    />
                     <div className="ml-auto flex shrink-0 items-center gap-2">
                       <span
                         role="img"
@@ -1736,6 +1779,9 @@ export default function QuizPane({
             </div>
           </div>
         </header>
+        {session?.lessonMap && !showSessionList && (
+          <QuizLessonMap map={session.lessonMap} appearance={appearance} />
+        )}
         {!bridge ? (
           <div className="m-auto max-w-md p-6 text-center text-sm text-white/70">
             Quiz sessions are waiting for the quiz bridge to be connected. No AI

@@ -76,8 +76,8 @@ test('color groups cover every appearance color the panes offer', () => {
     ...chartColorGroups(DEFAULT_APPEARANCE),
   ].flatMap((group) => group.rows.map((row) => row.key));
 
-  const mermaidKeys = Object.keys(DEFAULT_APPEARANCE).filter((key) =>
-    key.startsWith('mermaid'),
+  const mermaidKeys = Object.keys(DEFAULT_APPEARANCE).filter(
+    (key) => key.startsWith('mermaid') || key.startsWith('lessonMap'),
   );
   const expected = [
     'selection',

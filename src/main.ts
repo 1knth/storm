@@ -101,6 +101,8 @@ const quizService = new QuizService(
       kind: 'file' | 'directory',
     ) => {
       if (relative === null) return true;
+      // "." is the explicit vault-root folder scope used by shared study context.
+      if (relative === '.' && kind === 'directory') return true;
       if (
         !relative ||
         path.isAbsolute(relative) ||
@@ -311,25 +313,40 @@ const quizPublicSession = (
   const { agentToken: _agentToken, ...publicSession } = session;
   return publicSession;
 };
+const isQuizScopeInput = (scope: unknown) => {
+  if (scope === undefined) return true;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return false;
+  const value = scope as Record<string, unknown>;
+  return (
+    typeof value.vaultId === 'string' &&
+    (value.notePath === null || typeof value.notePath === 'string') &&
+    (value.folderPath === null || typeof value.folderPath === 'string') &&
+    Array.isArray(value.selectedNotePaths) &&
+    value.selectedNotePaths.every((item) => typeof item === 'string')
+  );
+};
 ipcMain.handle('quiz:create', async (event, scope?: unknown) => {
-  if (
-    scope !== undefined &&
-    (!scope || typeof scope !== 'object' || Array.isArray(scope))
-  )
-    return { ok: false, error: 'invalid-input' };
-  if (scope !== undefined) {
-    const value = scope as Record<string, unknown>;
-    if (
-      typeof value.vaultId !== 'string' ||
-      !(value.notePath === null || typeof value.notePath === 'string') ||
-      !(value.folderPath === null || typeof value.folderPath === 'string') ||
-      !Array.isArray(value.selectedNotePaths) ||
-      !value.selectedNotePaths.every((item) => typeof item === 'string')
-    )
-      return { ok: false, error: 'invalid-input' };
-  }
+  if (!isQuizScopeInput(scope)) return { ok: false, error: 'invalid-input' };
   const result = await quizService.createSession(
     scope as import('./shared/quizProtocol').QuizScope | undefined,
+  );
+  return result.ok
+    ? { ...result, value: quizPublicSession(result.value) }
+    : result;
+});
+ipcMain.handle('quiz:set-scope', async (event, id: unknown, scope: unknown) => {
+  if (
+    typeof id !== 'string' ||
+    id.length === 0 ||
+    id.length > 128 ||
+    !isQuizScopeInput(scope ?? undefined)
+  )
+    return { ok: false, error: 'invalid-input' };
+  const result = await quizService.setScope(
+    id,
+    (scope ?? undefined) as
+      | import('./shared/quizProtocol').QuizScope
+      | undefined,
   );
   return result.ok
     ? { ...result, value: quizPublicSession(result.value) }

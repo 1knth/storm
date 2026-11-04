@@ -8,6 +8,13 @@ import {
   QUIZ_SUPPORTS,
 } from '../src/shared/quizProtocol';
 import {
+  applyLessonMapUpdate,
+  LESSON_MAP_LIMITS,
+  LESSON_NODE_STATUSES,
+  type LessonMapUpdate,
+  type QuizLessonMap,
+} from '../src/shared/lessonMap';
+import {
   validateStudyEvidence,
   type StudyPacket,
 } from '../src/shared/studyContext';
@@ -52,6 +59,8 @@ type QuizSnapshot = {
 type QuizEvent = { cursor: number; type: string; [key: string]: unknown };
 type QuizState = {
   studyId?: string;
+  /** Serialized scope the current studyId was opened for. */
+  studyScopeKey?: string;
   studyPackets?: Map<string, StudyPacket>;
   maskedTools?: string[];
   sessionId: string;
@@ -320,11 +329,25 @@ export default function (pi: ExtensionAPI) {
       const events = snapshot.events.filter(
         (event) => event.cursor > active.cursor && isLearnerActivity(event),
       );
+      let studyChange: Record<string, unknown> | undefined;
+      if (
+        active.studyScopeKey !== undefined &&
+        scopeKey(snapshot.session.scope) !== active.studyScopeKey
+      ) {
+        const study = await bindStudy(active, snapshot.session.scope);
+        if (state !== active || active.stopped) return;
+        studyChange = { scope: snapshot.session.scope ?? null, study };
+      }
       if (events.length) {
         pendingQuizTurn = active;
         ignoreNextAgentEnd = !active.isIdle();
         publishActivity(active, 'thinking');
-        await deliverLearnerEvents(active, events, snapshot.session);
+        await deliverLearnerEvents(
+          active,
+          events,
+          snapshot.session,
+          studyChange,
+        );
       }
       if (state !== active || active.stopped) return;
       active.cursor = Math.max(
@@ -363,6 +386,7 @@ export default function (pi: ExtensionAPI) {
     owner: QuizState,
     events: QuizEvent[],
     session: QuizSnapshot['session'],
+    studyChange?: Record<string, unknown>,
   ) => {
     const images: Array<{ path: string; mimeType: string }> = [];
     const imageIds: string[] = [];
@@ -421,6 +445,8 @@ export default function (pi: ExtensionAPI) {
     const text = learnerNotification(events, session.currentQuestion, images, {
       ...context,
       ...(missingImageIds.length ? { missingImageIds } : {}),
+      // The learner changed the quiz's study context since your last update.
+      ...(studyChange ? { studyContextChanged: studyChange } : {}),
     });
     pi.sendUserMessage(
       text,
@@ -434,6 +460,59 @@ export default function (pi: ExtensionAPI) {
         'Image path attached; enable an image-reading tool to inspect it. Terminal-only agents may not be able to read images.',
         'warning',
       );
+  };
+
+  const scopeKey = (scope: unknown) =>
+    scope && typeof scope === 'object' ? JSON.stringify(scope) : '';
+
+  /**
+   * Open (or re-open) study context for the session's current scope. Learners
+   * can attach or change a folder mid-quiz, so this runs on attach and whenever
+   * a delivered snapshot shows a different scope.
+   */
+  const bindStudy = async (
+    owner: QuizState,
+    scope: unknown,
+  ): Promise<Record<string, unknown>> => {
+    const key = scopeKey(scope);
+    if (!key) {
+      owner.studyId = undefined;
+      owner.studyScopeKey = '';
+      owner.studyPackets = undefined;
+      pi.setActiveTools(
+        pi.getActiveTools().filter((name) => name !== 'storm_study'),
+      );
+      return { available: false, reason: 'unscoped-or-unsupported' };
+    }
+    try {
+      const capabilities = responseValue(
+        await runCli(['study', 'capabilities']),
+      );
+      if (capabilities.schemaVersion !== 1)
+        throw new Error('Unsupported study context version');
+      const bootstrap = responseValue(
+        await runCli(['study', '--stdin'], { action: 'open', scope }),
+      );
+      if (typeof bootstrap.studyId !== 'string')
+        throw new Error('Missing study context');
+      if (state !== owner) throw new Error('Attachment changed');
+      if (owner.studyId !== bootstrap.studyId) owner.studyPackets = undefined;
+      owner.studyId = bootstrap.studyId;
+      owner.studyScopeKey = key;
+      pi.setActiveTools([...new Set([...pi.getActiveTools(), 'storm_study'])]);
+      return { available: true, ...bootstrap };
+    } catch {
+      owner.studyScopeKey = key;
+      notifyUi?.(
+        'Shared study context is unavailable in the configured app/CLI. Conversation recovery remains available.',
+        'warning',
+      );
+      return {
+        available: false,
+        reason:
+          'Shared study context unavailable; check installed app/CLI compatibility and scope. Conversation recovery remains available.',
+      };
+    }
   };
 
   const removeQuizTool = () => {
@@ -581,6 +660,39 @@ export default function (pi: ExtensionAPI) {
     Type.Object({ action: Type.Literal('status') }),
     Type.Object({ action: Type.Literal('learner') }),
     Type.Object({
+      action: Type.Literal('map'),
+      nodes: Type.Optional(
+        Type.Array(
+          Type.Object({
+            id: Type.String({ pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }),
+            label: text(LESSON_MAP_LIMITS.label),
+          }),
+          { minItems: 1, maxItems: LESSON_MAP_LIMITS.nodes },
+        ),
+      ),
+      edges: Type.Optional(
+        Type.Array(Type.Array(Type.String(), { minItems: 2, maxItems: 2 }), {
+          maxItems: LESSON_MAP_LIMITS.edges,
+        }),
+      ),
+      goal: Type.Optional(Type.String()),
+      statuses: Type.Optional(
+        Type.Array(
+          Type.Object({
+            id: Type.String(),
+            status: stringEnum(LESSON_NODE_STATUSES),
+          }),
+          {
+            maxItems: LESSON_MAP_LIMITS.nodes,
+            description: 'map: [{id, status}] changes for mapped nodes.',
+          },
+        ),
+      ),
+      focus: Type.Optional(
+        Type.Array(Type.String(), { maxItems: LESSON_MAP_LIMITS.focus }),
+      ),
+    }),
+    Type.Object({
       action: Type.Literal('image'),
       imageId: id(),
       contextId: id(),
@@ -655,6 +767,7 @@ export default function (pi: ExtensionAPI) {
         'support-update',
         'message',
         'prompt',
+        'map',
       ]),
       contextId: Type.Optional(
         Type.String({
@@ -707,6 +820,41 @@ export default function (pi: ExtensionAPI) {
       ),
       before: Type.Optional(Type.Number({ minimum: 0, multipleOf: 1 })),
       offset: Type.Optional(Type.Number({ minimum: 0, multipleOf: 1 })),
+      nodes: Type.Optional(
+        Type.Array(
+          Type.Object({
+            id: Type.String({ pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }),
+            label: text(LESSON_MAP_LIMITS.label),
+          }),
+          {
+            minItems: 1,
+            maxItems: LESSON_MAP_LIMITS.nodes,
+            description: 'map: graph nodes; id is the concept slug.',
+          },
+        ),
+      ),
+      edges: Type.Optional(
+        Type.Array(Type.Array(Type.String(), { minItems: 2, maxItems: 2 }), {
+          maxItems: LESSON_MAP_LIMITS.edges,
+          description: 'map: [prerequisite, dependent] slug pairs.',
+        }),
+      ),
+      goal: Type.Optional(Type.String()),
+      statuses: Type.Optional(
+        Type.Array(
+          Type.Object({
+            id: Type.String(),
+            status: stringEnum(LESSON_NODE_STATUSES),
+          }),
+          {
+            maxItems: LESSON_MAP_LIMITS.nodes,
+            description: 'map: [{id, status}] changes for mapped nodes.',
+          },
+        ),
+      ),
+      focus: Type.Optional(
+        Type.Array(Type.String(), { maxItems: LESSON_MAP_LIMITS.focus }),
+      ),
     },
     { anyOf: actionSchemas },
   );
@@ -742,9 +890,15 @@ export default function (pi: ExtensionAPI) {
       params,
     ): Promise<AgentToolResult<Record<string, unknown> | undefined>> {
       const active = state;
+      if (
+        active &&
+        !active.stopped &&
+        scopeKey(active.snapshot.scope) !== active.studyScopeKey
+      )
+        await bindStudy(active, active.snapshot.scope);
       if (!active?.studyId || active.stopped)
         throw new Error(
-          'No shared study scope is available; attach a scoped quiz with a compatible Storm build.',
+          'No shared study scope is available; ask the learner to attach a folder with the quiz context button, or check app/CLI compatibility.',
         );
       if (params.action === 'retrieve' && !params.query?.trim())
         throw new Error(
@@ -814,7 +968,7 @@ export default function (pi: ExtensionAPI) {
     name: 'storm_quiz',
     label: 'Storm Quiz',
     description:
-      'Every write requires contextId from the update it answers. Read status to reconcile stale contexts; context reads earlier or omitted source sections; image retrieves a historical attachment by ID when still available. Reuse operationId for an identical uncertain retry. Operate the explicitly attached Storm quiz. After Continue and before posing a question, read learner (read-only; no contextId). Every new substantive question requires complete concepts/level/support tags or an explicit unmodelledReason without tags. Reuse concept IDs from learner state; propose a new slug only for a genuinely new concept. Record help actually supplied, including relevant help supplied before posing. For help supplied after posing and before the answer, use support-update with questionId, support, contextId, and the actual help in text; it displays the help and preserves the strongest supplied support. A worked example or supplied solution means worked, a supplied hint means hinted, otherwise independent. Never report planned help as supplied. High-confidence incorrect or partial answers are correction candidates; address the actual misconception or missing part. Discuss calibration only when calibration.guidanceEligible is true; this requires at least 20 ratings and an absolute bias of at least 15 points (tunable). Make at most one brief, supportive comment per session and tie it to useful practice. Recheck diagnosed misconceptions later with a fresh independent item. Read learner recording diagnostics before relying on complete evidence. Answer events include learner confidence (data.confidence, 0–100). After /storm-quiz attach, use question after Continue, feedback for an answer, message for tutoring chat, prompt with kind next-steps or clarification and 1–6 choices for genuine learner choices, and status to inspect state. Feedback must set its explicit verdict field (correct, partial, or incorrect); Storm displays the verdict and selected option, so do not repeat a verdict heading or selected option in feedback text. Explain why and address supplied reasoning without duplicating Continue instructions. Continue only through explicit Continue or learner Skip. When a response leaves the learner without an open question or prompt, end it with a short line on what was just covered and what you expect next (for example, try a similar problem, ask about anything unclear, or Continue to the next question); offer a next-steps prompt when there are genuine choices. A learner chat message of just "Continue." means proceed with your planned next step, usually the next question. When the learner explicitly asks to skip, clear, or replace an ungraded question, use skip-question with its questionId and explanation text, then honor their requested next step. Never fabricate a verdict for a chat command submitted as an answer. Do not use em dashes in original learner-facing prose; preserve exact source quotations. Write answer choices, matching items, and next-step labels as ordinary text with inline Markdown only (emphasis, code, or math when useful). Never use Markdown headings (# through ###### or setext underlines) or wrap an entire option in bold. For example, send "Check each employee’s hours to identify overtime payments.", not "### Check each employee’s hours to identify overtime payments." Reserve headings for sections in substantial explanations; short questions and feedback usually need paragraphs only. Format question stems with readable Markdown paragraphs and real newlines, and use structured choices instead of duplicating options in the stem. Storm fixes the learner-facing display order when a question is posed: multiple-choice options are reordered (pure quantities ascending, summary options such as “all of the above” last) and the matching option column is reordered away from the authored pair order. Track the correct answer by choice ID, never by position, letter or authored index, and do not refer to “the first option” in a stem or in feedback; read the stored order from status, history or the question action response when you need it. Question quality matters more than quantity. Ask for reasoning, application or discrimination, not for a label the stem already supplies or an answer available without the material. Keep one clear question per stem, state the setup before the question, and avoid double negatives and except/not stacking. Pitch difficulty through the recommended level and support rather than trick wording. Every multiple-choice distractor must be a mistake a learner plausibly makes: a common misconception, a neighbouring concept, or a predictable procedural slip. Three obviously wrong options waste the item. Keep options parallel in grammatical form, length and specificity; do not let the correct option be the longest, the most hedged or the only one echoing a stem keyword, and do not reserve absolutes such as always or never for distractors. Use all/none of the above only when the content genuinely calls for it. For matching, give each left item exactly one defensible partner and make each option plausible for more than one item. Richer learner-facing formatting is available in question stems, feedback and chat: callout blockquotes with the first line “> [!NOTE] optional title”, and the labels note, info, tip, hint, example, important, warning and caution. Hints render as a collapsed disclosure the learner opens on purpose; append - to collapse any callout or + to open it. A hint shipped with a question is help offered, so tag that question support hinted. GFM tables, task lists, footnotes, fenced code with a language, inline and display math, and mermaid fences also render. Raw HTML does not render. Keep answer choices, matching items and next-step labels free of callouts, which stay plain text there. This tool is available only in the Pi session where the Storm quiz extension is loaded; attaching activates it in that session without changing other active tools.',
+      'Every write requires contextId from the update it answers. Read status to reconcile stale contexts; context reads earlier or omitted source sections; image retrieves a historical attachment by ID when still available. Reuse operationId for an identical uncertain retry. Operate the explicitly attached Storm quiz. After Continue and before posing a question, read learner (read-only; no contextId). Every new substantive question requires complete concepts/level/support tags or an explicit unmodelledReason without tags. Reuse concept IDs from learner state; propose a new slug only for a genuinely new concept. Record help actually supplied, including relevant help supplied before posing. For help supplied after posing and before the answer, use support-update with questionId, support, contextId, and the actual help in text; it displays the help and preserves the strongest supplied support. A worked example or supplied solution means worked, a supplied hint means hinted, otherwise independent. Never report planned help as supplied. High-confidence incorrect or partial answers are correction candidates; address the actual misconception or missing part. Discuss calibration only when calibration.guidanceEligible is true; this requires at least 20 ratings and an absolute bias of at least 15 points (tunable). Make at most one brief, supportive comment per session and tie it to useful practice. Recheck diagnosed misconceptions later with a fresh independent item. Read learner recording diagnostics before relying on complete evidence. Answer events include learner confidence (data.confidence, 0–100). After /storm-quiz attach, use question after Continue, feedback for an answer, message for tutoring chat, prompt with kind next-steps or clarification and 1–6 choices for genuine learner choices, and status to inspect state. Feedback must set its explicit verdict field (correct, partial, or incorrect); Storm displays the verdict and selected option, so do not repeat a verdict heading or selected option in feedback text. Explain why and address supplied reasoning without duplicating Continue instructions. Continue only through explicit Continue or learner Skip. When a response leaves the learner without an open question or prompt, end it with a short line on what was just covered and what you expect next (for example, try a similar problem, ask about anything unclear, or Continue to the next question); offer a next-steps prompt when there are genuine choices. A learner chat message of just "Continue." means proceed with your planned next step, usually the next question. When the learner explicitly asks to skip, clear, or replace an ungraded question, use skip-question with its questionId and explanation text, then honor their requested next step. Never fabricate a verdict for a chat command submitted as an answer. Do not use em dashes in original learner-facing prose; preserve exact source quotations. Write answer choices, matching items, and next-step labels as ordinary text with inline Markdown only (emphasis, code, or math when useful). Never use Markdown headings (# through ###### or setext underlines) or wrap an entire option in bold. For example, send "Check each employee’s hours to identify overtime payments.", not "### Check each employee’s hours to identify overtime payments." Reserve headings for sections in substantial explanations; short questions and feedback usually need paragraphs only. Format question stems with readable Markdown paragraphs and real newlines, and use structured choices instead of duplicating options in the stem. Storm fixes the learner-facing display order when a question is posed: multiple-choice options are reordered (pure quantities ascending, summary options such as “all of the above” last) and the matching option column is reordered away from the authored pair order. Track the correct answer by choice ID, never by position, letter or authored index, and do not refer to “the first option” in a stem or in feedback; read the stored order from status, history or the question action response when you need it. Question quality matters more than quantity. Ask for reasoning, application or discrimination, not for a label the stem already supplies or an answer available without the material. Keep one clear question per stem, state the setup before the question, and avoid double negatives and except/not stacking. Pitch difficulty through the recommended level and support rather than trick wording. Every multiple-choice distractor must be a mistake a learner plausibly makes: a common misconception, a neighbouring concept, or a predictable procedural slip. Three obviously wrong options waste the item. Keep options parallel in grammatical form, length and specificity; do not let the correct option be the longest, the most hedged or the only one echoing a stem keyword, and do not reserve absolutes such as always or never for distractors. Use all/none of the above only when the content genuinely calls for it. For matching, give each left item exactly one defensible partner and make each option plausible for more than one item. Richer learner-facing formatting is available in question stems, feedback and chat: callout blockquotes with the first line “> [!NOTE] optional title”, and the labels note, info, tip, hint, example, important, warning and caution. Hints render as a collapsed disclosure the learner opens on purpose; append - to collapse any callout or + to open it. A hint shipped with a question is help offered, so tag that question support hinted. GFM tables, task lists, footnotes, fenced code with a language, inline and display math, and mermaid fences also render. Raw HTML does not render. Keep answer choices, matching items and next-step labels free of callouts, which stay plain text there. Use map (no contextId) to maintain the live lesson map pinned above the quiz: send nodes (id = concept slug, short label) and edges ([prerequisite, dependent]) once after the plan is approved, plus optional goal. Later send only statuses as [{id, status}] (not-started, introduced, guided, independent, mastered, needs-review) or focus (slugs being taught now). Posing a question tagged with mapped concepts moves focus automatically; set focus yourself when teaching a node before questioning it. Map updates never advance the quiz. This tool is available only in the Pi session where the Storm quiz extension is loaded; attaching activates it in that session without changing other active tools.',
     parameters: toolSchema,
     executionMode: 'sequential',
     async execute(
@@ -838,6 +992,54 @@ export default function (pi: ExtensionAPI) {
           throw new Error('Quiz detached during learner retrieval.');
         return {
           content: [{ type: 'text', text: JSON.stringify(content) }],
+          details: undefined,
+        };
+      }
+      if (params.action === 'map') {
+        const update: LessonMapUpdate = {
+          ...(params.nodes ? { nodes: params.nodes } : {}),
+          ...(params.edges
+            ? { edges: params.edges as Array<[string, string]> }
+            : {}),
+          ...(params.goal !== undefined ? { goal: params.goal } : {}),
+          ...(params.statuses
+            ? {
+                statuses: Object.fromEntries(
+                  params.statuses.map((entry) => [entry.id, entry.status]),
+                ),
+              }
+            : {}),
+          ...(params.focus ? { focus: params.focus } : {}),
+        };
+        // Validate locally first so the model gets a specific reason.
+        const preview = applyLessonMapUpdate(
+          active.snapshot.lessonMap as QuizLessonMap | undefined,
+          update,
+          new Date().toISOString(),
+        );
+        if (typeof preview === 'string') throw new Error(preview);
+        const result = responseValue(
+          await runCli(
+            cliArgs('request', active.sessionId),
+            {
+              type: 'lesson-map',
+              expectedRevision: active.snapshot.revision,
+              idempotencyKey: randomUUID(),
+              map: update,
+            },
+            active.token,
+          ),
+        );
+        if (state !== active)
+          throw new Error('Storm quiz was detached during the map update.');
+        active.snapshot = { ...active.snapshot, lessonMap: result.lessonMap };
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ lessonMap: result.lessonMap }),
+            },
+          ],
           details: undefined,
         };
       }
@@ -928,6 +1130,12 @@ export default function (pi: ExtensionAPI) {
           active.snapshot = snapshot.session;
         active.revision = active.snapshot.revision;
         active.recovery = snapshot.recovery;
+        const study =
+          scopeKey(active.snapshot.scope) !== active.studyScopeKey
+            ? await bindStudy(active, active.snapshot.scope)
+            : undefined;
+        if (state !== active)
+          throw new Error('Storm quiz was detached during the request.');
         waitOwner = active;
         waitRuntime.start(active.cursor, active.token);
         const refreshed = snapshot.session;
@@ -951,6 +1159,8 @@ export default function (pi: ExtensionAPI) {
                   path: active.deliveredImages.get(id),
                 })),
                 listener: waitRuntime.health,
+                ...(study ? { studyContextChanged: study } : {}),
+                studyAvailable: !!active.studyId,
               }),
             },
           ],
@@ -1197,46 +1407,7 @@ export default function (pi: ExtensionAPI) {
           snapshot.session.revision,
           snapshot.session.eventCursor,
         );
-        let study: unknown = {
-          available: false,
-          reason: 'unscoped-or-unsupported',
-        };
-        if (
-          snapshot.session.scope &&
-          typeof snapshot.session.scope === 'object'
-        ) {
-          try {
-            const capabilities = responseValue(
-              await runCli(['study', 'capabilities']),
-            );
-            if (capabilities.schemaVersion !== 1)
-              throw new Error('Unsupported study context version');
-            const bootstrap = responseValue(
-              await runCli(['study', '--stdin'], {
-                action: 'open',
-                scope: snapshot.session.scope,
-              }),
-            );
-            if (typeof bootstrap.studyId !== 'string')
-              throw new Error('Missing study context');
-            active.studyId = bootstrap.studyId;
-            if (state !== active) throw new Error('Attachment changed');
-            pi.setActiveTools([
-              ...new Set([...pi.getActiveTools(), 'storm_study']),
-            ]);
-            study = { available: true, ...bootstrap };
-          } catch {
-            study = {
-              available: false,
-              reason:
-                'Shared study context unavailable; check installed app/CLI compatibility and scope. Conversation recovery remains available.',
-            };
-            ctx.ui.notify(
-              'Shared study context is unavailable in the configured app/CLI. Conversation recovery remains available.',
-              'warning',
-            );
-          }
-        }
+        const study: unknown = await bindStudy(active, snapshot.session.scope);
         if (state !== active || active.stopped) return;
         const prompt = attachPrompt(snapshot.session, {
           ...context,

@@ -1348,3 +1348,81 @@ body,
 .quiz-learner-message .quiz-agent-markdown > :last-child {
   margin-bottom: 0;
 }
+
+/* Live lesson map: dim inactive topics, highlight the one being taught.
+   Colours come from appearance settings via --lm-* variables on the strip. */
+.lesson-map-content > div {
+  margin: 0;
+  overflow: visible;
+}
+.lesson-map-content svg {
+  display: block;
+  margin: 0 !important;
+}
+.lesson-map-content--animated {
+  transition: transform 250ms ease;
+}
+.lesson-map g.node,
+.lesson-map .flowchart-link,
+.lesson-map path[data-id] {
+  transition:
+    opacity 300ms ease,
+    filter 300ms ease;
+}
+.lesson-map--focused g.node:not(.lm-active) {
+  opacity: 0.45;
+  filter: brightness(0.7);
+}
+.lesson-map--focused path[data-id]:not(.lm-edge-active) {
+  opacity: 0.2;
+}
+.lesson-map g.node.lm-active :is(rect, polygon, circle, path) {
+  stroke: var(--lm-focus) !important;
+  stroke-width: 3px !important;
+}
+.lesson-map g.node.lm-active {
+  filter: drop-shadow(0 0 6px var(--lm-focus));
+}
+.lesson-map path.lm-edge-active {
+  stroke: var(--lm-focus) !important;
+  stroke-width: 2px !important;
+}
+.lesson-map g.node.lm-goal :is(rect, polygon, circle, path) {
+  stroke-dasharray: 5 3;
+}
+.lesson-map
+  g.node.lm-status-mastered:not(.lm-active)
+  :is(rect, polygon, circle, path) {
+  stroke: var(--lm-mastered) !important;
+  stroke-width: 2px !important;
+}
+.lesson-map
+  g.node.lm-status-independent:not(.lm-active)
+  :is(rect, polygon, circle, path) {
+  stroke: var(--lm-independent) !important;
+  stroke-width: 2px !important;
+}
+.lesson-map
+  g.node.lm-status-guided:not(.lm-active)
+  :is(rect, polygon, circle, path) {
+  stroke: var(--lm-guided) !important;
+  stroke-width: 2px !important;
+}
+.lesson-map
+  g.node.lm-status-needs-review:not(.lm-active)
+  :is(rect, polygon, circle, path) {
+  stroke: var(--lm-needs-review) !important;
+  stroke-width: 2px !important;
+}
+.lm-swatch-mastered {
+  background: var(--lm-mastered);
+}
+.lm-swatch-independent {
+  background: var(--lm-independent);
+}
+.lm-swatch-guided {
+  background: var(--lm-guided);
+}
+.lm-swatch-needs-review {
+  background: var(--lm-needs-review);
+}

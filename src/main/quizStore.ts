@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import type {
   QuizEvent,
+  QuizScope,
   QuizSession,
   QuizSessionSummary,
 } from '../shared/quizProtocol';
@@ -25,7 +26,7 @@ function preserveSessionMetadata(
   current: QuizSession,
   incoming: QuizSession,
 ): QuizSession {
-  const { activity: _activity, ...next } = incoming;
+  const { activity: _activity, scope: _scope, ...next } = incoming;
   // A posted agent response ends the phase it reported. Without this, a
   // missed idle report leaves "Drafting" up while the learner has the turn.
   const agentResponded =
@@ -38,6 +39,12 @@ function preserveSessionMetadata(
     ...next,
     ...(activity ? { activity } : {}),
     ...(current.name !== undefined ? { name: current.name } : {}),
+    // Scope is learner-owned metadata; an in-flight agent write must not revert it.
+    ...(current.scope ? { scope: current.scope } : {}),
+    // Keep whichever lesson map is newer (map updates commit outside revisions).
+    ...((current.lessonMap?.version ?? 0) > (incoming.lessonMap?.version ?? 0)
+      ? { lessonMap: current.lessonMap }
+      : {}),
   };
 }
 
@@ -336,6 +343,57 @@ export class QuizStore {
       session.name = name;
       await this.write(db);
       return session;
+    });
+  }
+
+  /** Metadata-only scope change; leaves revisions and events untouched like rename. */
+  async setScope(
+    id: string,
+    scope: QuizScope | undefined,
+  ): Promise<QuizSession | undefined> {
+    return this.serialize(async () => {
+      const apply = (session: QuizSession): QuizSession => {
+        const { scope: _previous, ...rest } = session;
+        return scope ? { ...rest, scope: structuredClone(scope) } : rest;
+      };
+      const draft = this.drafts.get(id);
+      if (draft) {
+        draft.session = apply(draft.session);
+        return draft.session;
+      }
+      const db = structuredClone(await this.read());
+      const index = db.sessions.findIndex((item) => item.id === id);
+      if (index < 0) return undefined;
+      db.sessions[index] = apply(db.sessions[index]!);
+      await this.write(db);
+      return db.sessions[index];
+    });
+  }
+
+  /** Metadata-only lesson map write by the attached agent. */
+  async setLessonMap(
+    id: string,
+    agentToken: string,
+    update: (current: QuizSession) => QuizSession | string,
+  ): Promise<QuizSession | string | undefined> {
+    return this.serialize(async () => {
+      const draft = this.drafts.get(id);
+      if (draft) {
+        if (draft.session.agentToken !== agentToken) return undefined;
+        const next = update(draft.session);
+        if (typeof next === 'string') return next;
+        draft.session = next;
+        return next;
+      }
+      const db = structuredClone(await this.read());
+      const index = db.sessions.findIndex((item) => item.id === id);
+      if (index < 0 || db.sessions[index]!.agentToken !== agentToken)
+        return undefined;
+      const next = update(db.sessions[index]!);
+      if (typeof next === 'string') return next;
+      db.sessions[index] = next;
+      await this.write(db);
+      return next;
     });
   }
 

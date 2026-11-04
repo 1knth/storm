@@ -20,6 +20,11 @@ export const DEFAULT_APPEARANCE = {
   mermaidText: '#333333',
   mermaidConnectors: '#333333',
   mermaidSignalColor: '#333333',
+  lessonMapFocus: '#7dd3fc',
+  lessonMapMastered: '#34d399',
+  lessonMapIndependent: '#60a5fa',
+  lessonMapGuided: '#fbbf24',
+  lessonMapNeedsReview: '#fb7185',
   chartText: '#d1d5db',
   chartGrid: '#4b5563',
   chartSeries: [
@@ -48,6 +53,11 @@ export const DEFAULT_APPEARANCE = {
     mermaidText: 100,
     mermaidConnectors: 100,
     mermaidSignalColor: 100,
+    lessonMapFocus: 100,
+    lessonMapMastered: 100,
+    lessonMapIndependent: 100,
+    lessonMapGuided: 100,
+    lessonMapNeedsReview: 100,
     chartText: 100,
     chartGrid: 100,
     ...Object.fromEntries(
@@ -128,6 +138,26 @@ export function validateAppearance(value: unknown): Appearance {
     mermaidSignalColor: color(
       input.mermaidSignalColor,
       color(input.mermaidConnectors, DEFAULT_APPEARANCE.mermaidSignalColor),
+    ),
+    lessonMapFocus: color(
+      input.lessonMapFocus,
+      DEFAULT_APPEARANCE.lessonMapFocus,
+    ),
+    lessonMapMastered: color(
+      input.lessonMapMastered,
+      DEFAULT_APPEARANCE.lessonMapMastered,
+    ),
+    lessonMapIndependent: color(
+      input.lessonMapIndependent,
+      DEFAULT_APPEARANCE.lessonMapIndependent,
+    ),
+    lessonMapGuided: color(
+      input.lessonMapGuided,
+      DEFAULT_APPEARANCE.lessonMapGuided,
+    ),
+    lessonMapNeedsReview: color(
+      input.lessonMapNeedsReview,
+      DEFAULT_APPEARANCE.lessonMapNeedsReview,
     ),
     chartText: color(input.chartText, DEFAULT_APPEARANCE.chartText),
     chartGrid: color(input.chartGrid, DEFAULT_APPEARANCE.chartGrid),

@@ -103,6 +103,10 @@ contextBridge.exposeInMainWorld('stormQuiz', {
     ipcRenderer.invoke('quiz:delete', sessionId),
   stopAgent: (sessionId: string) =>
     ipcRenderer.invoke('quiz:stop-agent', sessionId),
+  setSessionScope: (
+    sessionId: string,
+    scope: import('./shared/quizProtocol').QuizScope | null,
+  ) => ipcRenderer.invoke('quiz:set-scope', sessionId, scope),
   renameSession: (sessionId: string, name: string) =>
     ipcRenderer.invoke('quiz:rename', sessionId, name),
   getSnapshot: (sessionId: string, after = Number.MAX_SAFE_INTEGER) =>

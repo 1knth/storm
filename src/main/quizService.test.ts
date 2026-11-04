@@ -426,6 +426,121 @@ describe('QuizService', () => {
       await rm(f.dir, { recursive: true, force: true });
     }
   });
+  test('setScope attaches, replaces, and clears scope without changing session state', async () => {
+    const f = await fixture();
+    try {
+      const attached = await f.service.attachSession(f.session.id);
+      assert.equal(attached.ok, true);
+      if (!attached.ok) return;
+      const revision = attached.value.snapshot.session.revision;
+      const folder = {
+        vaultId: 'vault',
+        notePath: null,
+        folderPath: 'course/logic',
+        selectedNotePaths: [],
+      };
+      const changed = await f.service.setScope(f.session.id, folder);
+      assert.equal(changed.ok, true);
+      if (!changed.ok) return;
+      assert.deepEqual(changed.value.scope, folder);
+      assert.equal(changed.value.revision, revision);
+      assert.equal(changed.value.status, 'connected');
+
+      // An in-flight agent write must not revert the learner's new scope.
+      const message = await f.service.request({
+        type: 'agent-message',
+        sessionId: f.session.id,
+        agentToken: attached.value.agentToken,
+        expectedRevision: revision,
+        idempotencyKey: 'after-scope',
+        text: 'Hello.',
+      } as never);
+      assert.equal(message.ok, true);
+      assert.deepEqual(
+        (await f.service.getSnapshot(f.session.id))?.session.scope,
+        folder,
+      );
+
+      assert.deepEqual(
+        await f.service.setScope(f.session.id, { ...folder, vaultId: 'other' }),
+        { ok: false, error: 'unauthorized' },
+      );
+      assert.deepEqual(
+        await f.service.setScope(f.session.id, {
+          ...folder,
+          notePath: 'a.md',
+        }),
+        { ok: false, error: 'unauthorized' },
+      );
+      const cleared = await f.service.setScope(f.session.id, undefined);
+      assert.equal(cleared.ok, true);
+      assert.equal(
+        (await f.service.getSnapshot(f.session.id))?.session.scope,
+        undefined,
+      );
+      assert.deepEqual(await f.service.setScope('missing', undefined), {
+        ok: false,
+        error: 'not-found',
+      });
+    } finally {
+      await rm(f.dir, { recursive: true, force: true });
+    }
+  });
+  test('lesson-map updates are metadata-only and question focus follows concepts', async () => {
+    const f = await fixture();
+    try {
+      const attached = await f.service.attachSession(f.session.id);
+      assert.equal(attached.ok, true);
+      if (!attached.ok) return;
+      const token = attached.value.agentToken;
+      const revision = attached.value.snapshot.session.revision;
+      const mapRequest = (map: unknown, key: string) =>
+        f.service.request({
+          type: 'lesson-map',
+          sessionId: f.session.id,
+          agentToken: token,
+          expectedRevision: revision,
+          idempotencyKey: key,
+          map,
+        } as never);
+      const created = await mapRequest(
+        {
+          nodes: [
+            { id: 'identity-laws', label: 'Identity laws' },
+            { id: 'constant-laws', label: 'Constant laws' },
+          ],
+          edges: [['identity-laws', 'constant-laws']],
+        },
+        'map-1',
+      );
+      assert.equal(created.ok, true);
+      if (!created.ok) return;
+      assert.equal(created.value.revision, revision);
+      assert.equal(created.value.lessonMap?.nodes.length, 2);
+      assert.deepEqual(await mapRequest({ focus: ['missing'] }, 'map-2'), {
+        ok: false,
+        error: 'invalid-input',
+      });
+
+      const posed = await f.service.request({
+        type: 'pose-question',
+        sessionId: f.session.id,
+        agentToken: token,
+        expectedRevision: revision,
+        idempotencyKey: 'q-1',
+        question: 'Which law applies?',
+        kind: 'short-answer',
+        concepts: ['constant-laws'],
+        level: 'apply',
+      } as never);
+      assert.equal(posed.ok, true);
+      const snapshot = await f.service.getSnapshot(f.session.id);
+      assert.deepEqual(snapshot?.session.lessonMap?.focus, ['constant-laws']);
+      assert.equal(snapshot?.session.lessonMap?.nodes.length, 2);
+    } finally {
+      await rm(f.dir, { recursive: true, force: true });
+    }
+  });
   test('renaming alongside Stop preserves revocation for draft and saved sessions', async () => {
     for (const persisted of [false, true]) {
       for (const renameFirst of [false, true]) {

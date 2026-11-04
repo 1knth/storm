@@ -291,6 +291,41 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await pi.shutdown();
   });
 
+  test('map sends a validated lesson-map request without a context ID', async () => {
+    const { stateFile } = await fixture();
+    const pi = makePi();
+    try {
+      await attach(pi);
+      const tool = pi.tools.get('storm_quiz');
+      await expect(
+        tool.execute('map-bad', { action: 'map', focus: ['loops'] }),
+      ).rejects.toThrow('first map update');
+      await tool.execute('map-1', {
+        action: 'map',
+        nodes: [
+          { id: 'loop-condition', label: 'Loop condition' },
+          { id: 'loop-body', label: 'Loop body' },
+        ],
+        edges: [['loop-condition', 'loop-body']],
+        statuses: [{ id: 'loop-condition', status: 'guided' }],
+        focus: ['loop-body'],
+      });
+      const [request] = (await state(stateFile)).requests;
+      expect(request).toMatchObject({
+        type: 'lesson-map',
+        expectedRevision: 8,
+        map: {
+          edges: [['loop-condition', 'loop-body']],
+          statuses: { 'loop-condition': 'guided' },
+          focus: ['loop-body'],
+        },
+      });
+      expect(request.contextId).toBeUndefined();
+    } finally {
+      await pi.shutdown();
+    }
+  });
+
   test('learner reads use the held token without context or write bookkeeping', async () => {
     const learner = {
       concepts: [{ id: 'loop-condition', zone: 'zpd' }],
