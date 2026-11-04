@@ -1579,7 +1579,7 @@ export default function QuizPane({
           className="quiz-pane-header @container flex flex-col gap-0 border-b border-white/10 px-4 py-2"
           data-pane="quiz"
         >
-          <div className="flex min-h-8 items-center justify-between">
+          <div className="quiz-pane-title-row flex min-h-8 items-center justify-between">
             <div className="flex min-w-0 flex-1 items-center text-[15px] font-semibold">
               {session && !showSessionList ? (
                 <>
