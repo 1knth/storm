@@ -936,13 +936,15 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       } else {
         const target = event.target.closest('.cm-editor, [data-preview-focus]');
         if (target instanceof HTMLElement) findReturnFocus.current = target;
-        setPreviewVisible(true);
+        // Reading mode already shows the preview that Find searches, so only
+        // the source editor needs split view turned on.
+        if (!readingMode) setPreviewVisible(true);
         setFindOpen(true);
       }
     };
     document.addEventListener('keydown', onKeyDown, true);
     return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [findOpen, hasActiveNote]);
+  }, [findOpen, hasActiveNote, readingMode]);
 
   useLayoutEffect(() => {
     const wasOpen = previousFindOpen.current;

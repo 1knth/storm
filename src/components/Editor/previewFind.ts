@@ -1,9 +1,14 @@
 export type PreviewTextMatch = { start: number; end: number };
 
 export function isPreviewFindShortcut(
-  event: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'key'>,
+  event: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'shiftKey' | 'key'>,
 ): boolean {
-  return (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f';
+  // Mod+Shift+F belongs to quiz full screen.
+  return (
+    (event.metaKey || event.ctrlKey) &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === 'f'
+  );
 }
 
 export function findPreviewTextMatches(

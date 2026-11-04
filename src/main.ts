@@ -1279,7 +1279,7 @@ app.whenReady().then(async () => {
         },
         {
           label: 'Toggle Quiz Full Screen',
-          accelerator: 'Control+Shift+Q',
+          accelerator: 'CommandOrControl+Shift+F',
           click: () => {
             const window =
               BrowserWindow.getFocusedWindow() ??

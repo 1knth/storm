@@ -10,19 +10,49 @@ import {
 describe('rendered preview find', () => {
   it('recognizes Command/Control+F with either key casing only', () => {
     assert.equal(
-      isPreviewFindShortcut({ metaKey: true, ctrlKey: false, key: 'f' }),
+      isPreviewFindShortcut({
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        key: 'f',
+      }),
       true,
     );
     assert.equal(
-      isPreviewFindShortcut({ metaKey: false, ctrlKey: true, key: 'F' }),
+      isPreviewFindShortcut({
+        metaKey: false,
+        ctrlKey: true,
+        shiftKey: false,
+        key: 'F',
+      }),
       true,
     );
     assert.equal(
-      isPreviewFindShortcut({ metaKey: false, ctrlKey: false, key: 'f' }),
+      isPreviewFindShortcut({
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        key: 'f',
+      }),
       false,
     );
     assert.equal(
-      isPreviewFindShortcut({ metaKey: true, ctrlKey: false, key: 'p' }),
+      isPreviewFindShortcut({
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        key: 'p',
+      }),
+      false,
+    );
+    // Mod+Shift+F toggles quiz full screen instead.
+    assert.equal(
+      isPreviewFindShortcut({
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: true,
+        key: 'F',
+      }),
       false,
     );
   });
