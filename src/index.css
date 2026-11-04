@@ -882,18 +882,74 @@
   backdrop-filter: blur(16px);
 }
 
-.quiz-choice-card:hover:not(.quiz-choice-card--selected) {
-  background-color: rgb(255 255 255 / 20%);
+.quiz-choice-card {
+  --quiz-choice-accent: 10 132 255;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  margin-bottom: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid rgb(var(--ui-border) / 10%);
+  border-radius: 0.5rem;
+  background-color: rgb(var(--ui-fg) / 5%);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
 }
 
-.quiz-choice-card--selected {
-  border-color: #0a84ff;
-  background-color: rgb(10 132 255 / 14%);
+.quiz-choice-card:hover:not(:has(:disabled)):not(:has(:checked)) {
+  border-color: rgb(var(--ui-border) / 22%);
+  background-color: rgb(var(--ui-fg) / 9%);
+}
+
+/* The radio owns selection; the card and indicator cannot drift apart. */
+.quiz-choice-card:has(:checked) {
+  border-color: rgb(var(--quiz-choice-accent) / 80%);
+  background-color: rgb(var(--quiz-choice-accent) / 12%);
+}
+
+/* Pointer selection stays quiet; keyboard focus remains clearly visible. */
+.quiz-choice-card:has(:focus-visible) {
+  outline: 2px solid rgb(var(--quiz-choice-accent) / 65%);
+  outline-offset: 2px;
+}
+
+.quiz-choice-card:has(:disabled) {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .quiz-choice-radio {
-  accent-color: #0a84ff;
-  color-scheme: dark;
+  appearance: none;
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  margin: 0.2rem 0 0;
+  border: 1.5px solid rgb(var(--ui-fg) / 40%);
+  border-radius: 50%;
+  background-color: transparent;
+  cursor: inherit;
+}
+
+.quiz-choice-radio:checked {
+  border-color: rgb(var(--quiz-choice-accent));
+  background-image: radial-gradient(
+    circle,
+    rgb(var(--quiz-choice-accent)) 0 3px,
+    transparent 3.5px
+  );
+}
+
+.quiz-choice-radio:focus-visible {
+  background-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-choice-card {
+    transition: none;
+  }
 }
 
 .quiz-confidence-slider {
