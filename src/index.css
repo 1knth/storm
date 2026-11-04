@@ -1336,3 +1336,15 @@ body,
     transition: none;
   }
 }
+
+.quiz-learner-message .quiz-agent-markdown {
+  white-space: normal;
+}
+
+.quiz-learner-message .quiz-agent-markdown > :first-child {
+  margin-top: 0;
+}
+
+.quiz-learner-message .quiz-agent-markdown > :last-child {
+  margin-bottom: 0;
+}

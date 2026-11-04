@@ -880,7 +880,7 @@ export class QuizService {
             prompt: question.prompt,
             choices: question.choices,
             verdict: request.verdict,
-            answerLabel: selectedChoice?.text ?? 'Your answer',
+            ...(selectedChoice ? { answerLabel: selectedChoice.text } : {}),
             ...(selectedChoice
               ? {
                   chosenChoiceId: selectedChoice.id,

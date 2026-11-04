@@ -563,26 +563,40 @@ export function QuizVerdict({
         : verdict === 'partial'
           ? 'Partially correct'
           : undefined;
+  const selectedAnswer =
+    answerLabel === 'Your answer' ? undefined : answerLabel;
   return (
     <div
-      className={`quiz-verdict ${verdict ? `quiz-verdict--${verdict}` : ''} ${compact ? '' : 'mb-2'} flex flex-wrap items-center gap-2`}
+      className={`quiz-verdict ${compact ? '' : 'mb-2'} min-w-0`}
       aria-label={label}
     >
-      {verdict === 'incorrect' ? (
-        <TbXboxXFilled aria-hidden="true" />
-      ) : verdict ? (
-        <IoIosCheckmarkCircle aria-hidden="true" />
-      ) : null}
-      {label && (
-        <span>
-          {label}
-          {answerLabel ? ` · Selected: ${answerLabel}` : ''}
-        </span>
-      )}
-      {confidence !== undefined && (
-        <span className="text-xs font-normal text-white/50">
-          Confidence {confidence}%
-        </span>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        {label && (
+          <span className="inline-flex items-baseline gap-2">
+            {verdict === 'incorrect' ? (
+              <TbXboxXFilled
+                className="shrink-0 self-center"
+                aria-hidden="true"
+              />
+            ) : (
+              <IoIosCheckmarkCircle
+                className="shrink-0 self-center"
+                aria-hidden="true"
+              />
+            )}
+            <span>{label}</span>
+          </span>
+        )}
+        {confidence !== undefined && (
+          <span className="text-xs font-normal text-white/50">
+            Confidence {confidence}%
+          </span>
+        )}
+      </div>
+      {selectedAnswer && (
+        <div className="mt-1 text-sm font-normal text-white/70">
+          Selected: <QuizMarkdown inline>{selectedAnswer}</QuizMarkdown>
+        </div>
       )}
     </div>
   );
@@ -1876,7 +1890,7 @@ export default function QuizPane({
                             </div>
                           ) : m.role === 'learner' ? (
                             <div className="quiz-learner-message w-fit max-w-[85%] text-left text-[0.95rem]">
-                              {displayedText}
+                              <QuizMarkdown>{displayedText}</QuizMarkdown>
                               {m.attachments?.map((attachment) => {
                                 // The transcript can update before the sent
                                 // images move out of the pending tray.

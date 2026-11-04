@@ -438,7 +438,8 @@ describe('quiz verdict renderer', () => {
       }),
     );
     assert.match(html, /Incorrect/);
-    assert.match(html, /Selected: Option B/);
+    assert.match(html, /Selected: /);
+    assert.match(html, /Option B/);
     assert.match(html, /aria-label="Incorrect"/);
   });
 
@@ -1016,4 +1017,28 @@ it('renders composer inline previews without block wrappers', () => {
   assert.match(html, /<strong/);
   assert.match(html, /katex/);
   assert.doesNotMatch(html, /<(?:div|p)[ >]/);
+});
+
+it('keeps written-answer feedback free of placeholder selections and aligns confidence by baseline', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(QuizVerdict, {
+      verdict: 'correct',
+      answerLabel: 'Your answer',
+      confidence: 100,
+    }),
+  );
+  assert.doesNotMatch(html, /Selected:|Your answer/);
+  assert.match(html, /items-baseline/);
+  assert.match(html, /Confidence 100%/);
+});
+it('renders selected-answer math and formatting through Markdown', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(QuizVerdict, {
+      verdict: 'correct',
+      answerLabel: '**Factored:** $y(x+z)$',
+      confidence: 80,
+    }),
+  );
+  assert.match(html, /<strong/);
+  assert.match(html, /katex/);
 });
