@@ -48,7 +48,7 @@ import {
   IoClose,
   IoImageOutline,
 } from 'react-icons/io5';
-import { IoIosCheckmarkCircle, IoIosInformationCircle } from 'react-icons/io';
+import { IoIosCheckmarkCircle } from 'react-icons/io';
 import { TbXboxXFilled } from 'react-icons/tb';
 import { useToast } from './Toast';
 import type {
@@ -1544,7 +1544,7 @@ export default function QuizPane({
       >
         <header className="flex flex-col border-b border-white/10 px-4 py-2">
           <div className="flex items-center justify-between">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
               {session && !showSessionList ? (
                 renaming ? (
                   <input
@@ -1603,7 +1603,7 @@ export default function QuizPane({
                       type="button"
                       aria-label="Copy Pi attach command"
                       title="Copy Pi attach command"
-                      className="inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
+                      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
                       onClick={() =>
                         copyQuizInstructions(
                           quizPiAttachCommand(session.id),
@@ -1611,29 +1611,13 @@ export default function QuizPane({
                         )
                       }
                     >
-                      <span className="group relative inline-flex h-5 w-5 shrink-0 items-center justify-center text-white/45 hover:text-white/80">
-                        <IoIosInformationCircle aria-hidden="true" size={17} />
-                        <span
-                          id="quiz-instructions-help"
-                          role="tooltip"
-                          className="pointer-events-none absolute left-0 top-full z-50 mt-2 hidden w-max max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal rounded-xl border border-white/15 bg-[#22252a]/95 p-3 text-xs font-normal leading-relaxed text-white/90 shadow-xl backdrop-blur-md group-hover:block"
-                        >
-                          The session and transcript are preserved. In Pi with
-                          the Storm quiz extension loaded, paste this command to
-                          start or resume the quiz; the extension then sends the
-                          snapshot and full instructions. Agents without the
-                          extension need the CLI instructions instead.
-                        </span>
-                      </span>
-                      <span className="quiz-instructions-label truncate">
-                        Pi command
-                      </span>
+                      <span className="quiz-instructions-label">Pi</span>
                     </button>
                     <button
                       type="button"
                       aria-label="Copy CLI agent instructions"
                       title="Copy CLI agent instructions"
-                      className="inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
+                      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-left text-sm text-white/50 hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70"
                       onClick={() =>
                         copyQuizInstructions(
                           quizCliInstructions(session.id, !!session.scope),
@@ -1641,17 +1625,52 @@ export default function QuizPane({
                         )
                       }
                     >
-                      <span className="quiz-instructions-label truncate">
-                        CLI
-                      </span>
+                      <span className="quiz-instructions-label">CLI</span>
                     </button>
+                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                      <span
+                        role="img"
+                        aria-label={`Agent ${session.status === 'connected' ? 'Connected' : 'Disconnected'}`}
+                        title={`Agent ${session.status === 'connected' ? 'Connected' : 'Disconnected'}`}
+                        className={`h-2 w-2 shrink-0 rounded-full ${
+                          session.status === 'connected'
+                            ? 'bg-emerald-400'
+                            : 'bg-white/30'
+                        }`}
+                      />
+                      <span
+                        className={`shrink-0 text-xs ${
+                          session.status === 'connected'
+                            ? 'text-emerald-400'
+                            : 'text-white/50'
+                        }`}
+                      >
+                        {session.status === 'connected'
+                          ? 'Connected'
+                          : 'Disconnected'}
+                      </span>
+                      {session.status === 'connected' && (
+                        <button
+                          type="button"
+                          disabled={stopping}
+                          aria-label="Stop quiz agent"
+                          title="Stop quiz agent"
+                          aria-busy={stopping}
+                          className="ml-2 inline-flex items-center gap-1 text-xs text-red-400 transition-colors hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => void stopAgent(session.id)}
+                        >
+                          <FiStopCircle size={12} aria-hidden="true" />
+                          {stopping ? 'Stopping…' : 'Stop'}
+                        </button>
+                      )}
+                    </div>
                   </>
                 )
               ) : (
                 <strong>{showSessionList ? 'Sessions' : 'Quiz'}</strong>
               )}
             </div>
-            <div className="flex items-center gap-1">
+            <div className="ml-2 flex shrink-0 items-center gap-1">
               {showSessionList && (
                 <button
                   type="button"
@@ -1716,43 +1735,6 @@ export default function QuizPane({
               </button>
             </div>
           </div>
-          {session && !showSessionList && (
-            <div className="flex items-center gap-2 pt-1 pl-1">
-              <span
-                role="img"
-                aria-label={`Agent ${session.status === 'connected' ? 'Connected' : 'Disconnected'}`}
-                title={`Agent ${session.status === 'connected' ? 'Connected' : 'Disconnected'}`}
-                className={`h-2 w-2 shrink-0 rounded-full ${
-                  session.status === 'connected'
-                    ? 'bg-emerald-400'
-                    : 'bg-white/30'
-                }`}
-              />
-              <span
-                className={`shrink-0 text-xs ${
-                  session.status === 'connected'
-                    ? 'text-emerald-400'
-                    : 'text-white/50'
-                }`}
-              >
-                {session.status === 'connected' ? 'Connected' : 'Disconnected'}
-              </span>
-              {session.status === 'connected' && (
-                <button
-                  type="button"
-                  disabled={stopping}
-                  aria-label="Stop quiz agent"
-                  title="Stop quiz agent"
-                  aria-busy={stopping}
-                  className="ml-2 inline-flex items-center gap-1 text-xs text-red-400 transition-colors hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={() => void stopAgent(session.id)}
-                >
-                  <FiStopCircle size={12} aria-hidden="true" />
-                  {stopping ? 'Stopping…' : 'Stop'}
-                </button>
-              )}
-            </div>
-          )}
         </header>
         {!bridge ? (
           <div className="m-auto max-w-md p-6 text-center text-sm text-white/70">
