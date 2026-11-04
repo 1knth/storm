@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { SessionManager } from '../node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js';
 import {
   createWaitRuntime,
   parseWaitResponse,
@@ -12,6 +13,8 @@ import {
   compactLearnerState,
   modelSession,
   pruneStormContext,
+  reattachPrompt,
+  compactAttachPrompts,
   STORM_PRUNE_STEP,
   externalSourceAllowed,
   withReaderFallback,
@@ -611,7 +614,7 @@ describe('context savings', () => {
     const messages = [...conversation(), ...filler(STORM_PRUNE_STEP * 2)];
     const pruned = pruneStormContext(messages) as any[];
     expect(text(pruned[0])).toBe(
-      'Earlier Storm attach. Its instructions are repeated in a later attach below; its quiz state then was: {"id":"quiz-a","note":"first {state}"}',
+      'Earlier Storm attach. Follow the full instructions retained in this conversation; its quiz state then was: {"id":"quiz-a","note":"first {state}"}',
     );
     expect(text(pruned[9])).toContain('second');
     expect(text(pruned[2])).toContain('superseded by a later learner read');
@@ -829,4 +832,134 @@ test('externalSource must be a non-Markdown file inside the vault', () => {
   expect(externalSourceAllowed('/vault', '/vault')).toBe(false);
   expect(externalSourceAllowed('Slides/W1.pdf', '/vault')).toBe(false);
   expect(externalSourceAllowed('/vault/Slides/W1.pdf', undefined)).toBe(false);
+});
+
+describe('reattach', () => {
+  const session = { id: 'quiz-a', revision: 3, status: 'connected' };
+  test('effective SDK context restores full attaches after compaction or omission', () => {
+    const full = attachPrompt(
+      { ...session, tutorNotes: { text: 'Retained plan', version: 2 } },
+      { study: { indexRevision: 'r1', entries: [{ path: 'retained.pdf' }] } },
+    );
+    for (const operation of ['compact', 'omit'] as const) {
+      const manager = SessionManager.inMemory();
+      const first = manager.appendMessage({
+        role: 'user',
+        content: full,
+        timestamp: 1,
+      });
+      const second = manager.appendMessage({
+        role: 'user',
+        content: full,
+        timestamp: 2,
+      });
+      const before = compactAttachPrompts(
+        manager.buildSessionContext().messages,
+      );
+      expect(before[1].content).not.toContain('Retained plan');
+      expect(before[1].content).toContain('Reattached in this conversation');
+      // Shortening is transient: the saved second attach remains complete.
+      expect(manager.buildSessionContext().messages[1].content).toBe(full);
+      if (operation === 'compact')
+        manager.appendCompaction('Summary', second, 1000);
+      else manager.appendContextEdit(first, null);
+      const after = pruneStormContext(
+        compactAttachPrompts(manager.buildSessionContext().messages),
+      );
+      expect(after.at(-1)?.content).toBe(full);
+    }
+  });
+
+  test('references survive earlier attach pruning across multiple boundaries', () => {
+    const study = { indexRevision: 'r1', entries: [{ path: 'retained.pdf' }] };
+    const full = attachPrompt(
+      { ...session, tutorNotes: { text: 'Retained plan', version: 2 } },
+      { study },
+    );
+    const filler = Array.from({ length: STORM_PRUNE_STEP }, () => ({
+      role: 'user',
+      content: 'filler',
+    }));
+    const prior = [
+      { role: 'user', content: full },
+      { role: 'user', content: full },
+      ...filler,
+    ];
+    expect(pruneStormContext(prior)[0].content).toContain(
+      'Earlier Storm attach.',
+    );
+    const short = reattachPrompt(full, [full, full]);
+    const pruned = pruneStormContext([
+      ...prior,
+      { role: 'user', content: short },
+      ...filler,
+    ]);
+    // Even a shortened earlier attach retains its complete state. The latest
+    // short attach also prevents pruning the full instructions it references.
+    expect(JSON.stringify(pruned)).toContain('retained.pdf');
+    expect(JSON.stringify(pruned)).toContain('Retained plan');
+    expect(pruned[1].content).toBe(full);
+  });
+
+  test('a re-attach with instructions already held sends only the state', () => {
+    const first = attachPrompt(session, { contextId: 'one' });
+    const again = attachPrompt(
+      { ...session, revision: 4 },
+      { contextId: 'two' },
+    );
+    const short = reattachPrompt(again, ['other message', first]);
+    expect(short.length).toBeLessThan(again.length / 3);
+    expect(short).toContain('"revision":4');
+    expect(short).toContain('"contextId":"two"');
+    expect(short).toContain('instructions given in the earlier attach above');
+    // The pruner keeps the earlier full attach, whose instructions differ.
+    const messages = [
+      { role: 'user', content: first },
+      { role: 'user', content: short },
+      ...Array.from({ length: STORM_PRUNE_STEP }, (_, i) => ({
+        role: 'user',
+        content: `filler ${i}`,
+      })),
+    ];
+    expect(pruneStormContext(messages)).toBe(messages);
+  });
+
+  test('an unchanged study listing and notes text are referenced, changed ones sent', () => {
+    const study = {
+      available: true,
+      indexRevision: 'r1',
+      entries: [{ path: 'a.pdf' }],
+    };
+    const notes = { text: 'Plan: logic laws', version: 2 };
+    const first = attachPrompt({ ...session, tutorNotes: notes }, { study });
+    const same = reattachPrompt(
+      attachPrompt({ ...session, tutorNotes: notes }, { study }),
+      [first],
+    );
+    expect(same).not.toContain('a.pdf');
+    expect(same).not.toContain('Plan: logic laws');
+    expect(same).toContain('indexRevision r1) is in the earlier attach');
+    const changed = reattachPrompt(
+      attachPrompt(
+        { ...session, tutorNotes: { text: 'Plan v3', version: 3 } },
+        {
+          study: {
+            ...study,
+            indexRevision: 'r2',
+            entries: [{ path: 'b.pdf' }],
+          },
+        },
+      ),
+      [first],
+    );
+    expect(changed).toContain('b.pdf');
+    expect(changed).toContain('Plan v3');
+  });
+
+  test('instructions not already held are sent in full', () => {
+    const scoped = attachPrompt({ ...session, scope: { folderPath: '.' } });
+    const unscoped = attachPrompt(session);
+    expect(reattachPrompt(unscoped, [scoped])).toBe(unscoped);
+    expect(reattachPrompt(unscoped, [])).toBe(unscoped);
+  });
 });

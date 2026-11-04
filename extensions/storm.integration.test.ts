@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mock } from 'bun:test';
+import { attachPrompt, STORM_PRUNE_STEP } from './storm-runtime';
 
 // The production extension is imported below with only its Typebox schema
 // builder replaced. Extension registration, command/tool handlers, wait loop,
@@ -96,7 +97,9 @@ function makePi() {
       await commands.get('storm').handler(input, ctx);
     },
     async emit(event: string, value?: any) {
-      for (const fn of listeners.get(event) ?? []) await fn(value);
+      let result;
+      for (const fn of listeners.get(event) ?? []) result = await fn(value);
+      return result;
     },
     async shutdown() {
       for (const fn of listeners.get('session_shutdown') ?? []) await fn();
@@ -275,6 +278,35 @@ test('shared study context bootstraps the attached scope, guards question basis,
 });
 
 describe('registered Storm quiz extension integration (synthetic CLI only)', () => {
+  test('context hook shortens repeats and restores full state when the source disappears', async () => {
+    const pi = makePi();
+    const full = attachPrompt(
+      { id: 'quiz-a', revision: 1 },
+      {
+        tutorNotes: { text: 'The durable plan', version: 1 },
+        study: { indexRevision: 'r1', entries: [{ path: 'source.pdf' }] },
+      },
+    );
+    const first = { role: 'user', content: [{ type: 'text', text: full }] };
+    const second = { role: 'user', content: full };
+    const filler = Array.from({ length: STORM_PRUNE_STEP * 2 }, () => ({
+      role: 'user',
+      content: 'filler',
+    }));
+    const messages = [first, second, ...filler];
+    const projected = await pi.emit('context', { messages });
+    expect(projected.messages[0]).toBe(first);
+    expect(projected.messages[1].content).toContain(
+      'Reattached in this conversation',
+    );
+    expect(projected.messages[1].content).not.toContain('The durable plan');
+    expect(second.content).toBe(full);
+    // Pi supplies only surviving effective messages after compaction or edits.
+    expect(
+      await pi.emit('context', { messages: [second, ...filler] }),
+    ).toBeUndefined();
+  });
+
   test('registers the production command and private capability tool; attach preserves tools and never exposes capability', async () => {
     await fixture();
     const pi = makePi();

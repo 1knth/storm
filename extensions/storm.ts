@@ -36,6 +36,7 @@ import {
   modelSession,
   compactLearnerState,
   pruneStormContext,
+  compactAttachPrompts,
   externalSourceAllowed,
   withReaderFallback,
   writeAck,
@@ -1617,7 +1618,9 @@ export default function (pi: ExtensionAPI) {
 
   // Keep superseded Storm material out of later model calls (see pruneStormContext).
   pi.on('context', (event) => {
-    const messages = pruneStormContext(event.messages as any[]);
+    const messages = pruneStormContext(
+      compactAttachPrompts(event.messages as any[]),
+    );
     return messages === event.messages ? undefined : { messages };
   });
   pi.on('agent_start', () => {
