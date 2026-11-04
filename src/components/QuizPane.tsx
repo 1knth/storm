@@ -7,8 +7,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  lazy,
-  Suspense,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
 } from 'react';
@@ -49,8 +47,6 @@ import { MdCloseFullscreen, MdOpenInFull } from 'react-icons/md';
 import QuizSessionName from './QuizSessionName';
 import { LuPencilLine, LuTable } from 'react-icons/lu';
 
-// Excalidraw is large; load it only when a sketch is opened.
-const QuizSketch = lazy(() => import('./QuizSketch'));
 import {
   IoArrowForward,
   IoChevronDown,
@@ -722,17 +718,8 @@ export function QuizAnswerAssist({
   onPickImages: (files: File[]) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [sketching, setSketching] = useState(false);
   return (
     <div className="quiz-answer-assist mt-1">
-      {sketching && (
-        <Suspense fallback={null}>
-          <QuizSketch
-            onAttach={(file) => onPickImages([file])}
-            onClose={() => setSketching(false)}
-          />
-        </Suspense>
-      )}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-white/45">
         <span>
           Markdown and LaTeX supported
@@ -745,7 +732,6 @@ export function QuizAnswerAssist({
             type="button"
             title="Draw your work, such as a truth table"
             className="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 hover:bg-white/10 hover:text-white/80"
-            onClick={() => setSketching(true)}
           >
             <LuPencilLine aria-hidden="true" />
             Sketch

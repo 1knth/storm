@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { SessionManager } from '../node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js';
 import {
   createWaitRuntime,
   parseWaitResponse,
@@ -9,7 +10,15 @@ import {
   snapshotValue,
   learnerNotification,
   attachPrompt,
+  compactLearnerState,
   modelSession,
+  pruneStormContext,
+  reattachPrompt,
+  compactAttachPrompts,
+  STORM_PRUNE_STEP,
+  externalSourceAllowed,
+  withReaderFallback,
+  writeAck,
 } from './storm-runtime';
 
 function deferred<T>() {
@@ -504,4 +513,453 @@ test('extension handshake rejects old or incomplete app capabilities before atta
       ],
     }),
   ).not.toThrow();
+});
+
+describe('context savings', () => {
+  test('write acks drop the lesson map, notes and scope but keep the question', () => {
+    const ack = writeAck({
+      id: 's',
+      revision: 3,
+      scope: { folderPath: '.' },
+      lessonMap: { nodes: [{ id: 'a', label: 'A' }], edges: [] },
+      tutorNotes: { text: 'plan', version: 1 },
+      currentQuestion: {
+        id: 'q',
+        kind: 'multiple-choice',
+        choices: [{ id: 'c', text: 'C' }],
+      },
+    });
+    expect(ack).not.toHaveProperty('lessonMap');
+    expect(ack).not.toHaveProperty('tutorNotes');
+    expect(ack).not.toHaveProperty('scope');
+    expect(ack.revision).toBe(3);
+    expect(ack.currentQuestion.choices).toEqual([{ id: 'c', text: 'C' }]);
+  });
+
+  test('learner reads omit only false and null concept fields', () => {
+    const compact = compactLearnerState({
+      band: [0.7, 0.85],
+      concepts: [
+        {
+          id: 'a',
+          zone: 'zpd',
+          retrievability: 0,
+          dueForReview: true,
+          confidentError: false,
+          confidentReview: null,
+        },
+      ],
+    }) as any;
+    expect(compact.band).toEqual([0.7, 0.85]);
+    expect(compact.concepts).toEqual([
+      { id: 'a', zone: 'zpd', retrievability: 0, dueForReview: true },
+    ]);
+    expect(compact.conceptDefaults).toContain('false');
+  });
+
+  const call = (id: string, name: string, args: Record<string, unknown>) => ({
+    role: 'assistant',
+    content: [{ type: 'toolCall', id, name, arguments: args }],
+  });
+  const result = (id: string, name: string, text: string) => ({
+    role: 'toolResult',
+    toolCallId: id,
+    toolName: name,
+    content: [{ type: 'text', text }],
+  });
+  const filler = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      role: 'user',
+      content: `filler ${i}`,
+    }));
+  const conversation = () => [
+    {
+      role: 'user',
+      content:
+        'You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"quiz-a","note":"first {state}"}. Long instructions.',
+    },
+    call('l1', 'storm', { action: 'learner' }),
+    result('l1', 'storm', '{"learner":"one","omittedConcepts":0}'),
+    call('n1', 'storm', { action: 'notes', text: 'full notes v1' }),
+    result('n1', 'storm', '{"tutorNotes":{"version":1}}'),
+    call('st1', 'storm', { action: 'status' }),
+    result('st1', 'storm', '{"studyContextChanged":{"available":true}}'),
+    call('s1', 'storm_study', { action: 'retrieve', query: 'a' }),
+    result(
+      's1',
+      'storm_study',
+      '{"snapshotId":"snap","chunks":[{"text":"source"}]}',
+    ),
+    {
+      role: 'user',
+      content:
+        'You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"quiz-a","note":"second"}. Long instructions.',
+    },
+    call('l2', 'storm', { action: 'learner' }),
+    result('l2', 'storm', '{"learner":"two","omittedConcepts":0}'),
+    call('n2', 'storm', { action: 'notes', text: 'full notes v2' }),
+    result('n2', 'storm', '{"tutorNotes":{"version":2}}'),
+    call('st2', 'storm', { action: 'status' }),
+    result('st2', 'storm', '{"revision":9}'),
+  ];
+  const text = (m: any) =>
+    typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+
+  test('nothing changes before the first boundary', () => {
+    const messages = conversation();
+    expect(pruneStormContext(messages)).toBe(messages);
+  });
+
+  test('superseded Storm material becomes stubs and the latest stays verbatim', () => {
+    const messages = [...conversation(), ...filler(STORM_PRUNE_STEP * 2)];
+    const pruned = pruneStormContext(messages) as any[];
+    expect(text(pruned[0])).toBe(
+      'Earlier Storm attach. Follow the full instructions retained in this conversation; its quiz state then was: {"id":"quiz-a","note":"first {state}"}',
+    );
+    expect(text(pruned[9])).toContain('second');
+    expect(text(pruned[2])).toContain('superseded by a later learner read');
+    expect(text(pruned[11])).toBe(text(messages[11]));
+    expect(pruned[3].content[0].arguments.text).toContain('Superseded');
+    expect(pruned[12].content[0].arguments.text).toBe('full notes v2');
+    // A status that reported a scope change keeps its bootstrap.
+    expect(text(pruned[6])).toContain('studyContextChanged');
+    // Study packets are never stubbed.
+    expect(text(pruned[8])).toContain('source');
+    expect(messages[0].content).toContain('Long instructions');
+  });
+
+  test('failed reads and notes writes do not supersede earlier ones', () => {
+    const messages = [
+      call('l1', 'storm', { action: 'learner' }),
+      result('l1', 'storm', '{"learner":"one","omittedConcepts":0}'),
+      call('n1', 'storm', { action: 'notes', text: 'saved notes' }),
+      result('n1', 'storm', '{"tutorNotes":{"version":1}}'),
+      call('l2', 'storm', { action: 'learner' }),
+      { ...result('l2', 'storm', 'CLI failed'), isError: true },
+      call('st1', 'storm', { action: 'status' }),
+      result('st1', 'storm', '{"revision":1}'),
+      call('st2', 'storm', { action: 'status' }),
+      result(
+        'st2',
+        'storm',
+        'No Storm quiz attached; use /storm attach SESSION_ID.',
+      ),
+      call('n2', 'storm', { action: 'notes', text: 'x'.repeat(7000) }),
+      { ...result('n2', 'storm', 'too long'), isError: true },
+      ...filler(STORM_PRUNE_STEP),
+    ];
+    expect(pruneStormContext(messages)).toBe(messages);
+  });
+
+  test('a learner read that omitted concepts does not replace earlier ones', () => {
+    const messages = [
+      call('l1', 'storm', { action: 'learner' }),
+      result('l1', 'storm', '{"concepts":[{"id":"old"}],"omittedConcepts":0}'),
+      call('l2', 'storm', { action: 'learner' }),
+      result('l2', 'storm', '{"concepts":[{"id":"new"}],"omittedConcepts":1}'),
+      ...filler(STORM_PRUNE_STEP),
+    ];
+    expect(pruneStormContext(messages)).toBe(messages);
+  });
+
+  test('reads and notes about another quiz or learner scope are kept', () => {
+    const attach = (id: string) => ({
+      role: 'user',
+      content: `You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"${id}"}. Instructions.`,
+    });
+    const messages = [
+      attach('quiz-a'),
+      call('l1', 'storm', { action: 'learner' }),
+      result('l1', 'storm', '{"scopeKey":"vault-a","omittedConcepts":0}'),
+      call('n1', 'storm', { action: 'notes', text: 'quiz A notes' }),
+      result('n1', 'storm', '{"tutorNotes":{"version":1}}'),
+      attach('quiz-b'),
+      call('l2', 'storm', { action: 'learner' }),
+      // Same vault learner scope, different quiz.
+      result('l2', 'storm', '{"scopeKey":"vault-a","omittedConcepts":0}'),
+      call('n2', 'storm', { action: 'notes', text: 'quiz B notes' }),
+      result('n2', 'storm', '{"tutorNotes":{"version":1}}'),
+      ...filler(STORM_PRUNE_STEP),
+    ] as any[];
+    const pruned = pruneStormContext(messages) as any[];
+    expect(text(pruned[2])).toContain('vault-a');
+    expect(pruned[3].content[0].arguments.text).toBe('quiz A notes');
+    // Only the repeated attach instructions go.
+    expect(text(pruned[0])).toContain(
+      'its quiz state then was: {"id":"quiz-a"}',
+    );
+  });
+
+  test('an attach whose instructions differ from the latest is kept', () => {
+    const attach = (id: string, guidance: string) => ({
+      role: 'user',
+      content: `You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"${id}"}. ${guidance}`,
+    });
+    const messages = [
+      attach('quiz-a', 'Scoped guidance.'),
+      attach('quiz-b', 'Unscoped guidance.'),
+      ...filler(STORM_PRUNE_STEP),
+    ] as any[];
+    expect(pruneStormContext(messages)).toBe(messages);
+  });
+
+  test('a result separated from its call by an attach supersedes nothing', () => {
+    const attach = (id: string) => ({
+      role: 'user',
+      content: `You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"${id}"}. Instructions.`,
+    });
+    const messages = [
+      attach('quiz-b'),
+      call('st1', 'storm', { action: 'status' }),
+      result('st1', 'storm', '{"revision":1}'),
+      call('st2', 'storm', { action: 'status' }),
+      // An attach whose quiz state cannot be read starts its own segment.
+      {
+        role: 'user',
+        content:
+          'You are tutoring in an explicitly attached Storm quiz. Malformed.',
+      },
+      result('st2', 'storm', '{"revision":2}'),
+      ...filler(STORM_PRUNE_STEP),
+    ] as any[];
+    const pruned = pruneStormContext(messages) as any[];
+    expect(text(pruned[2])).not.toContain('superseded');
+  });
+
+  test('a result separated from its call by an attach is not superseded', () => {
+    const attach = (id: string) => ({
+      role: 'user',
+      content: `You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"${id}"}. Instructions.`,
+    });
+    const messages = [
+      attach('quiz-a'),
+      call('c1', 'storm', { action: 'status' }),
+      attach('quiz-b'),
+      result('c1', 'storm', '{"id":"quiz-a","revision":7}'),
+      call('c2', 'storm', { action: 'status' }),
+      result('c2', 'storm', '{"id":"quiz-b","revision":1}'),
+      ...filler(STORM_PRUNE_STEP),
+    ] as any[];
+    const pruned = pruneStormContext(messages) as any[];
+    expect(text(pruned[3])).not.toContain('superseded');
+  });
+
+  test('results pair with the latest call of a reused id', () => {
+    const messages = [
+      call('call_0', 'storm', { action: 'status' }),
+      result('call_0', 'storm', '{"revision":1}'),
+      call('call_0', 'storm', { action: 'question', text: 'Q' }),
+      result(
+        'call_0',
+        'storm',
+        '{"message":"Storm quiz updated (pose-question)."}',
+      ),
+      call('call_1', 'storm', { action: 'status' }),
+      result('call_1', 'storm', '{"revision":2}'),
+      ...filler(STORM_PRUNE_STEP),
+    ] as any[];
+    const pruned = pruneStormContext(messages) as any[];
+    expect(text(pruned[1])).toContain('superseded by a later status read');
+    // The question write result is not mistaken for a status read.
+    expect(text(pruned[3])).toContain('pose-question');
+  });
+
+  test('later reads only stub earlier ones once the boundary passes them', () => {
+    const base = [...conversation(), ...filler(STORM_PRUNE_STEP * 2 - 4)];
+    const before = pruneStormContext(base);
+    // A learner read arriving after the boundary leaves the prefix untouched.
+    const after = pruneStormContext([
+      ...base,
+      call('l3', 'storm', { action: 'learner' }),
+      result('l3', 'storm', '{"learner":"three","omittedConcepts":0}'),
+    ]);
+    expect(JSON.stringify(after.slice(0, before.length))).toBe(
+      JSON.stringify(before),
+    );
+    expect(text(after[11])).toContain('two');
+  });
+});
+
+describe('reader fallback', () => {
+  test('unreadable files come back as absolute paths with guidance', () => {
+    const value = withReaderFallback(
+      {
+        snapshotId: 'snap',
+        chunks: [],
+        issues: [
+          { path: 'Slides/Week1.pdf', reason: 'reader-unavailable' },
+          { path: 'Slides/Week1.pdf', reason: 'reader-unavailable' },
+          { path: 'Notes/a.md', reason: 'source-unavailable' },
+        ],
+      },
+      '/Users/me/Vault/',
+    );
+    expect(value.readerFallback.files).toEqual([
+      '/Users/me/Vault/Slides/Week1.pdf',
+    ]);
+    expect(value.readerFallback.root).toBe('/Users/me/Vault/');
+    // Retrieve results skip the repeated guidance; trees carry it.
+    expect(value.readerFallback.guidance).toBeUndefined();
+  });
+
+  test('trees with non-note files get the root, Markdown-only results stay unchanged', () => {
+    const tree = {
+      entries: [
+        { path: 'a.md', kind: 'note' },
+        { path: 'b.docx', kind: 'docx' },
+      ],
+      issues: [],
+    };
+    expect(withReaderFallback(tree, '/v').readerFallback).toMatchObject({
+      root: '/v',
+      guidance: expect.stringContaining('externalSource'),
+    });
+    const notes = { entries: [{ path: 'a.md', kind: 'note' }], issues: [] };
+    expect(withReaderFallback(notes, '/v')).toBe(notes);
+    expect(withReaderFallback(tree, undefined)).toBe(tree);
+  });
+});
+
+test('externalSource must be a non-Markdown file inside the vault', () => {
+  expect(externalSourceAllowed('/vault/Slides/W1.pdf', '/vault')).toBe(true);
+  expect(externalSourceAllowed('/vault/Slides/W1.pdf', '/vault/')).toBe(true);
+  expect(externalSourceAllowed('/vault/Notes/W1.md', '/vault')).toBe(false);
+  expect(externalSourceAllowed('/vaulted/W1.pdf', '/vault')).toBe(false);
+  expect(externalSourceAllowed('/vault/../etc/x.pdf', '/vault')).toBe(false);
+  expect(externalSourceAllowed('/vault/Slides/../../x.pdf', '/vault')).toBe(
+    false,
+  );
+  expect(externalSourceAllowed('/vault', '/vault')).toBe(false);
+  expect(externalSourceAllowed('Slides/W1.pdf', '/vault')).toBe(false);
+  expect(externalSourceAllowed('/vault/Slides/W1.pdf', undefined)).toBe(false);
+});
+
+describe('reattach', () => {
+  const session = { id: 'quiz-a', revision: 3, status: 'connected' };
+  test('effective SDK context restores full attaches after compaction or omission', () => {
+    const full = attachPrompt(
+      { ...session, tutorNotes: { text: 'Retained plan', version: 2 } },
+      { study: { indexRevision: 'r1', entries: [{ path: 'retained.pdf' }] } },
+    );
+    for (const operation of ['compact', 'omit'] as const) {
+      const manager = SessionManager.inMemory();
+      const first = manager.appendMessage({
+        role: 'user',
+        content: full,
+        timestamp: 1,
+      });
+      const second = manager.appendMessage({
+        role: 'user',
+        content: full,
+        timestamp: 2,
+      });
+      const before = compactAttachPrompts(
+        manager.buildSessionContext().messages,
+      );
+      expect(before[1].content).not.toContain('Retained plan');
+      expect(before[1].content).toContain('Reattached in this conversation');
+      // Shortening is transient: the saved second attach remains complete.
+      expect(manager.buildSessionContext().messages[1].content).toBe(full);
+      if (operation === 'compact')
+        manager.appendCompaction('Summary', second, 1000);
+      else manager.appendContextEdit(first, null);
+      const after = pruneStormContext(
+        compactAttachPrompts(manager.buildSessionContext().messages),
+      );
+      expect(after.at(-1)?.content).toBe(full);
+    }
+  });
+
+  test('references survive earlier attach pruning across multiple boundaries', () => {
+    const study = { indexRevision: 'r1', entries: [{ path: 'retained.pdf' }] };
+    const full = attachPrompt(
+      { ...session, tutorNotes: { text: 'Retained plan', version: 2 } },
+      { study },
+    );
+    const filler = Array.from({ length: STORM_PRUNE_STEP }, () => ({
+      role: 'user',
+      content: 'filler',
+    }));
+    const prior = [
+      { role: 'user', content: full },
+      { role: 'user', content: full },
+      ...filler,
+    ];
+    expect(pruneStormContext(prior)[0].content).toContain(
+      'Earlier Storm attach.',
+    );
+    const short = reattachPrompt(full, [full, full]);
+    const pruned = pruneStormContext([
+      ...prior,
+      { role: 'user', content: short },
+      ...filler,
+    ]);
+    // Even a shortened earlier attach retains its complete state. The latest
+    // short attach also prevents pruning the full instructions it references.
+    expect(JSON.stringify(pruned)).toContain('retained.pdf');
+    expect(JSON.stringify(pruned)).toContain('Retained plan');
+    expect(pruned[1].content).toBe(full);
+  });
+
+  test('a re-attach with instructions already held sends only the state', () => {
+    const first = attachPrompt(session, { contextId: 'one' });
+    const again = attachPrompt(
+      { ...session, revision: 4 },
+      { contextId: 'two' },
+    );
+    const short = reattachPrompt(again, ['other message', first]);
+    expect(short.length).toBeLessThan(again.length / 3);
+    expect(short).toContain('"revision":4');
+    expect(short).toContain('"contextId":"two"');
+    expect(short).toContain('instructions given in the earlier attach above');
+    // The pruner keeps the earlier full attach, whose instructions differ.
+    const messages = [
+      { role: 'user', content: first },
+      { role: 'user', content: short },
+      ...Array.from({ length: STORM_PRUNE_STEP }, (_, i) => ({
+        role: 'user',
+        content: `filler ${i}`,
+      })),
+    ];
+    expect(pruneStormContext(messages)).toBe(messages);
+  });
+
+  test('an unchanged study listing and notes text are referenced, changed ones sent', () => {
+    const study = {
+      available: true,
+      indexRevision: 'r1',
+      entries: [{ path: 'a.pdf' }],
+    };
+    const notes = { text: 'Plan: logic laws', version: 2 };
+    const first = attachPrompt({ ...session, tutorNotes: notes }, { study });
+    const same = reattachPrompt(
+      attachPrompt({ ...session, tutorNotes: notes }, { study }),
+      [first],
+    );
+    expect(same).not.toContain('a.pdf');
+    expect(same).not.toContain('Plan: logic laws');
+    expect(same).toContain('indexRevision r1) is in the earlier attach');
+    const changed = reattachPrompt(
+      attachPrompt(
+        { ...session, tutorNotes: { text: 'Plan v3', version: 3 } },
+        {
+          study: {
+            ...study,
+            indexRevision: 'r2',
+            entries: [{ path: 'b.pdf' }],
+          },
+        },
+      ),
+      [first],
+    );
+    expect(changed).toContain('b.pdf');
+    expect(changed).toContain('Plan v3');
+  });
+
+  test('instructions not already held are sent in full', () => {
+    const scoped = attachPrompt({ ...session, scope: { folderPath: '.' } });
+    const unscoped = attachPrompt(session);
+    expect(reattachPrompt(unscoped, [scoped])).toBe(unscoped);
+    expect(reattachPrompt(unscoped, [])).toBe(unscoped);
+  });
 });

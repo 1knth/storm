@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mock } from 'bun:test';
+import { attachPrompt, STORM_PRUNE_STEP } from './storm-runtime';
 
 // The production extension is imported below with only its Typebox schema
 // builder replaced. Extension registration, command/tool handlers, wait loop,
@@ -96,7 +97,9 @@ function makePi() {
       await commands.get('storm').handler(input, ctx);
     },
     async emit(event: string, value?: any) {
-      for (const fn of listeners.get(event) ?? []) await fn(value);
+      let result;
+      for (const fn of listeners.get(event) ?? []) result = await fn(value);
+      return result;
     },
     async shutdown() {
       for (const fn of listeners.get('session_shutdown') ?? []) await fn();
@@ -145,7 +148,7 @@ function save(){
   }finally{fs.closeSync(fd);fs.unlinkSync(lock);}
 }
 function ok(value){process.stdout.write(JSON.stringify({ok:true,result:{ok:true,value}}));}
-if(a[0]==='study'){if(!s.study){ok({});}else if(op==='capabilities'){ok({schemaVersion:1});}else{let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{const r=JSON.parse(b);s.studyRequests=(s.studyRequests||[]).concat(r);save();ok(r.action==='open'?{studyId:'study-test',entries:[{path:'Course/Note.md'}]}:{studyId:'study-test',snapshotId:'a'.repeat(64),sources:[],chunks:[{id:'chunk-test',text:'Pinned course definition'}]});});}}
+if(a[0]==='study'){if(!s.study){ok({});}else if(op==='capabilities'){ok({schemaVersion:1});}else{let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{const r=JSON.parse(b);s.studyRequests=(s.studyRequests||[]).concat(r);save();ok(r.action==='open'?{studyId:'study-test',root:'/vault',entries:[{path:'Course/Note.md'}]}:{studyId:'study-test',snapshotId:'a'.repeat(64),sources:[],chunks:[{id:'chunk-test',text:'Pinned course definition'}]});});}}
 else if(op==='capabilities'){ok(s.quizCapabilities ?? {integrationVersion:2,features:['learning', 'support-update', 'answer-confidence', 'tutor-notes']});}
 else if(op==='list'){ok(s.list ?? [{id:'quiz-test',status:s.listStatus ?? s.status}]);}
 else if(op==='attach'){ok({agentToken:'synthetic-capability',snapshot:{session:{id,revision:s.revision,eventCursor:s.cursor,status:s.status,scope:s.scope ?? 'synthetic'},events:[]}});}
@@ -253,6 +256,17 @@ test('shared study context bootstraps the attached scope, guards question basis,
     expect((await state(stateFile)).requests.at(-1).studyBasis).toBe(
       'a'.repeat(64),
     );
+    // A question grounded in a PDF read with the tutor's own tools names it.
+    await pi.tools.get('storm').execute('with-external-source', {
+      action: 'question',
+      kind: 'short-answer',
+      text: 'Explain the slide',
+      externalSource: '/vault/Course/Slides.pdf',
+      unmodelledReason: 'External source regression fixture.',
+    });
+    expect((await state(stateFile)).requests.at(-1).question).toBe(
+      'Explain the slide',
+    );
     await pi.command('disconnect');
     expect(pi.getActiveTools()).toContain('quiz');
     expect(pi.getActiveTools()).toContain('ask_user_question');
@@ -264,6 +278,35 @@ test('shared study context bootstraps the attached scope, guards question basis,
 });
 
 describe('registered Storm quiz extension integration (synthetic CLI only)', () => {
+  test('context hook shortens repeats and restores full state when the source disappears', async () => {
+    const pi = makePi();
+    const full = attachPrompt(
+      { id: 'quiz-a', revision: 1 },
+      {
+        tutorNotes: { text: 'The durable plan', version: 1 },
+        study: { indexRevision: 'r1', entries: [{ path: 'source.pdf' }] },
+      },
+    );
+    const first = { role: 'user', content: [{ type: 'text', text: full }] };
+    const second = { role: 'user', content: full };
+    const filler = Array.from({ length: STORM_PRUNE_STEP * 2 }, () => ({
+      role: 'user',
+      content: 'filler',
+    }));
+    const messages = [first, second, ...filler];
+    const projected = await pi.emit('context', { messages });
+    expect(projected.messages[0]).toBe(first);
+    expect(projected.messages[1].content).toContain(
+      'Reattached in this conversation',
+    );
+    expect(projected.messages[1].content).not.toContain('The durable plan');
+    expect(second.content).toBe(full);
+    // Pi supplies only surviving effective messages after compaction or edits.
+    expect(
+      await pi.emit('context', { messages: [second, ...filler] }),
+    ).toBeUndefined();
+  });
+
   test('registers the production command and private capability tool; attach preserves tools and never exposes capability', async () => {
     await fixture();
     const pi = makePi();
@@ -373,7 +416,10 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
         action: 'learner',
         contextId: undefined,
       });
-      expect(JSON.parse(result.content[0].text)).toEqual(learner);
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        ...learner,
+        conceptDefaults: expect.stringContaining('false'),
+      });
       expect(result.content[0].text).not.toContain('contextId');
       const stored = await state(stateFile);
       expect(stored.learnerCalls).toEqual([
