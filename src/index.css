@@ -854,6 +854,15 @@
   max-height: 16rem;
 }
 
+.quiz-answer-editor:focus-within {
+  border-color: rgb(255 255 255 / 35%);
+}
+
+.quiz-answer-rendered {
+  padding: 2px 0;
+  cursor: text;
+}
+
 .quiz-answer-assist kbd {
   margin-left: 1px;
   border-radius: 3px;
@@ -862,11 +871,11 @@
   font-family: inherit;
 }
 
-.quiz-answer-preview > :first-child {
+.quiz-answer-rendered .quiz-agent-markdown > :first-child {
   margin-top: 0;
 }
 
-.quiz-answer-preview > :last-child {
+.quiz-answer-rendered .quiz-agent-markdown > :last-child {
   margin-bottom: 0;
 }
 

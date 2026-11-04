@@ -11,6 +11,7 @@ import {
   type DragEvent as ReactDragEvent,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
+import QuizAnswerEditor from './QuizAnswerEditor';
 import remarkGfm from 'remark-gfm';
 import 'katex/dist/katex.min.css';
 import {
@@ -686,20 +687,14 @@ export function QuizAnswerActions({
   );
 }
 
-const QUIZ_ANSWER_FORMATTING = /[$*_`#\\]|^\s*(?:[-+]|\d+\.)\s/m;
-
 export function QuizAnswerAssist({
-  text,
   imageCount,
   onPickImages,
 }: {
-  text: string;
   imageCount: number;
   onPickImages: (files: File[]) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [previewOpen, setPreviewOpen] = useState(true);
-  const showPreview = QUIZ_ANSWER_FORMATTING.test(text);
   return (
     <div className="quiz-answer-assist mt-1">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-white/45">
@@ -710,16 +705,6 @@ export function QuizAnswerAssist({
           <kbd>↵</kbd> to submit
         </span>
         <span className="flex items-center gap-1">
-          {showPreview && (
-            <button
-              type="button"
-              className="cursor-pointer rounded px-1.5 py-0.5 hover:bg-white/10 hover:text-white/80"
-              aria-pressed={previewOpen}
-              onClick={() => setPreviewOpen((open) => !open)}
-            >
-              {previewOpen ? 'Hide preview' : 'Show preview'}
-            </button>
-          )}
           <button
             type="button"
             title="Attach images of your work"
@@ -743,14 +728,6 @@ export function QuizAnswerAssist({
           />
         </span>
       </div>
-      {showPreview && previewOpen && (
-        <div
-          aria-label="Answer preview"
-          className="quiz-agent-markdown quiz-answer-preview mt-1.5 rounded-lg border border-white/10 bg-white/[3%] px-2.5 py-1.5 text-sm"
-        >
-          <QuizMarkdown>{text}</QuizMarkdown>
-        </div>
-      )}
     </div>
   );
 }
@@ -2121,37 +2098,37 @@ export default function QuizPane({
                                     <>
                                       <label className="mt-2 block">
                                         Your answer
-                                        <textarea
-                                          aria-label="Your answer"
-                                          rows={
-                                            questionKind === 'long-answer'
-                                              ? 6
-                                              : 2
-                                          }
-                                          className="quiz-answer-input mt-1 w-full resize-y rounded-lg border border-white/15 bg-black/20 p-2"
-                                          placeholder="Type your answer, or paste a photo of your work"
+                                        <div
                                           onPaste={handleImagePaste}
                                           onDrop={handleImageDrop}
-                                          value={
-                                            session.currentQuestion.textDraft ??
-                                            ''
-                                          }
-                                          onChange={(e) =>
-                                            updateContentDraft(
-                                              'currentQuestion',
-                                              {
-                                                textDraft: e.target.value,
-                                              },
-                                            )
-                                          }
-                                          onKeyDown={handleAnswerKeyDown}
-                                        />
+                                        >
+                                          <QuizAnswerEditor
+                                            key={session.currentQuestion.id}
+                                            value={
+                                              session.currentQuestion
+                                                .textDraft ?? ''
+                                            }
+                                            long={
+                                              questionKind === 'long-answer'
+                                            }
+                                            onChange={(textDraft) =>
+                                              updateContentDraft(
+                                                'currentQuestion',
+                                                { textDraft },
+                                              )
+                                            }
+                                            onKeyDown={handleAnswerKeyDown}
+                                            renderMarkdown={(text) => (
+                                              <QuizMarkdown
+                                                appearance={appearance}
+                                              >
+                                                {text}
+                                              </QuizMarkdown>
+                                            )}
+                                          />
+                                        </div>
                                       </label>
                                       <QuizAnswerAssist
-                                        text={
-                                          session.currentQuestion.textDraft ??
-                                          ''
-                                        }
                                         imageCount={sessionImages.length}
                                         onPickImages={addImageFiles}
                                       />
