@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   isQuizConfidence,
+  QUIZ_SUPPORTS,
   quizLearningFromRequest,
   type QuizAgentRequest,
   type QuizChoice,
@@ -50,6 +51,10 @@ export class QuizService {
   readonly imageRegistry = new QuizImageRegistry();
   private attachQueue: Promise<void> = Promise.resolve();
   private readonly startupRecovery: Promise<void>;
+  private reconciliationQueue: Promise<unknown> = Promise.resolve();
+  private readonly recordingFailures = new Map<string, string>();
+  private readonly recordingFailureCounts = new Map<string, number>();
+  private readonly unmodelledQuestions = new Map<string, string>();
 
   constructor(
     private readonly store: QuizStore,
@@ -68,7 +73,7 @@ export class QuizService {
       operationId: string,
       revision: number,
     ) => Promise<void>,
-    /** Records a graded, tagged answer in the learner model after the feedback commit. */
+    /** Records graded answers after their durable feedback commit. Must be idempotent by question ID. */
     private readonly recordAttempt?: (
       session: QuizSession,
       question: QuizQuestion,
@@ -85,6 +90,105 @@ export class QuizService {
       if (session.status === 'connected')
         await this.disconnectAgentExclusive(session.id, session.agentToken);
     }
+    // Transcripts are durable and unbounded. Replay repairs crashes between the
+    // feedback commit and derived-model recording, including legacy questions.
+    for (const session of sessions) await this.reconcileSession(session);
+  }
+
+  private async recordGradedQuestion(
+    session: QuizSession,
+    question: QuizQuestion,
+  ): Promise<void> {
+    if (!question.verdict) return;
+    if (!question.learning)
+      this.unmodelledQuestions.set(question.id, session.id);
+    if (
+      !this.recordAttempt ||
+      (!question.learning && question.confidence === undefined)
+    )
+      return;
+    try {
+      await this.recordAttempt(session, question);
+      this.recordingFailures.delete(question.id);
+    } catch {
+      // Keep accepted feedback successful and expose a safe, actionable signal.
+      this.recordingFailures.set(question.id, session.id);
+      this.recordingFailureCounts.set(
+        session.id,
+        (this.recordingFailureCounts.get(session.id) ?? 0) + 1,
+      );
+    }
+  }
+
+  private async reconcileSession(session: QuizSession): Promise<void> {
+    const questions = new Map<string, QuizQuestion>();
+    for (const message of session.transcript) {
+      const question = message.question;
+      if (!question?.verdict) continue;
+      questions.set(question.id, {
+        ...question,
+        gradedAt: question.gradedAt ?? message.createdAt,
+        status: 'feedback',
+        selectedChoiceId: null,
+        reasoningDraft: '',
+        feedback: message.text,
+      });
+    }
+    const current = session.currentQuestion;
+    if (current?.verdict && !questions.has(current.id))
+      questions.set(current.id, {
+        ...current,
+        gradedAt: current.gradedAt ?? session.updatedAt,
+      });
+    for (const question of questions.values())
+      await this.recordGradedQuestion(session, question);
+  }
+
+  /** Retry durable grades before serving model state, serializing concurrent reads. */
+  async reconcileLearner(sessionId: string) {
+    await this.startupRecovery;
+    const operation = this.reconciliationQueue.then(async () => {
+      const current = await this.store.get(sessionId);
+      const scopeSessions = new Set<string>([sessionId]);
+      if (current) {
+        const sessions = await this.store.list({ includeDrafts: true });
+        for (const session of sessions) {
+          if (
+            current.scope
+              ? session.scope?.vaultId === current.scope.vaultId
+              : session.id === sessionId
+          ) {
+            scopeSessions.add(session.id);
+            await this.reconcileSession(session);
+          }
+        }
+      }
+      return this.learnerRecordingDiagnostics(scopeSessions);
+    });
+    this.reconciliationQueue = operation.catch(() => {});
+    return operation;
+  }
+
+  learnerRecordingDiagnostics(sessionIds?: ReadonlySet<string>): {
+    pending: number;
+    failures: number;
+    unmodelled: number;
+    lastError?: string;
+  } {
+    const included = (id: string) => !sessionIds || sessionIds.has(id);
+    const pending = [...this.recordingFailures.values()].filter(
+      included,
+    ).length;
+    return {
+      pending,
+      failures: [...this.recordingFailureCounts].reduce(
+        (total, [id, count]) => total + (included(id) ? count : 0),
+        0,
+      ),
+      unmodelled: [...this.unmodelledQuestions.values()].filter(included)
+        .length,
+      ...(pending ? { lastError: 'LEARNER_RECORDING_RETRY_PENDING' } : {}),
+    };
   }
 
   async createSession(scope?: QuizScope): Promise<QuizResult<QuizSession>> {
@@ -395,7 +499,10 @@ export class QuizService {
         `${request.sessionId}:${request.idempotencyKey}`,
         fingerprint,
       );
-      if (prior) return { ok: true, value: prior };
+      if (prior) {
+        if (request.type === 'feedback') await this.reconcileSession(prior);
+        return { ok: true, value: prior };
+      }
     } catch {
       return { ok: false, error: 'invalid-input' };
     }
@@ -503,6 +610,9 @@ export class QuizService {
           id: questionId,
           ...(request.studyBasis ? { studyBasis: request.studyBasis } : {}),
           ...(learning ? { learning } : {}),
+          ...(request.unmodelledReason
+            ? { unmodelledReason: request.unmodelledReason }
+            : {}),
           kind,
           prompt: request.question,
           choices:
@@ -645,6 +755,45 @@ export class QuizService {
           return { ok: false, error: 'invalid-state' };
         addMessage('agent', request.text);
         break;
+      case 'support-update': {
+        const question = next.currentQuestion;
+        if (
+          next.status !== 'connected' ||
+          question?.status !== 'open' ||
+          question.id !== request.questionId
+        )
+          return { ok: false, error: 'invalid-state' };
+        if (
+          !QUIZ_SUPPORTS.includes(request.support) ||
+          typeof request.text !== 'string' ||
+          !request.text.trim() ||
+          request.text.length > 10000
+        )
+          return { ok: false, error: 'invalid-input' };
+        const previous =
+          question.suppliedSupport ??
+          question.learning?.support ??
+          'independent';
+        const support =
+          QUIZ_SUPPORTS[
+            Math.max(
+              QUIZ_SUPPORTS.indexOf(previous),
+              QUIZ_SUPPORTS.indexOf(request.support),
+            )
+          ]!;
+        question.suppliedSupport = support;
+        if (question.learning) question.learning.support = support;
+        // The original question and the later grade both retain the supplied help.
+        const posed = next.transcript.find(
+          (message) => message.question?.id === question.id,
+        )?.question;
+        if (posed) {
+          posed.suppliedSupport = support;
+          if (posed.learning) posed.learning.support = support;
+        }
+        addMessage('agent', request.text);
+        break;
+      }
       case 'feedback':
         if (
           next.status !== 'connected' ||
@@ -653,6 +802,7 @@ export class QuizService {
         )
           return { ok: false, error: 'invalid-state' };
         next.currentQuestion.feedback = request.text;
+        next.currentQuestion.gradedAt = timestamp;
         if (request.verdict !== undefined)
           next.currentQuestion.verdict = request.verdict;
         next.currentQuestion.status = 'feedback';
@@ -666,6 +816,13 @@ export class QuizService {
             : undefined;
           next.transcript[next.transcript.length - 1]!.question = {
             id: question.id,
+            gradedAt: timestamp,
+            ...(question.suppliedSupport
+              ? { suppliedSupport: question.suppliedSupport }
+              : {}),
+            ...(question.unmodelledReason
+              ? { unmodelledReason: question.unmodelledReason }
+              : {}),
             ...(question.learning ? { learning: question.learning } : {}),
             ...(question.confidence !== undefined
               ? { confidence: question.confidence }
@@ -786,7 +943,8 @@ export class QuizService {
       request.type === 'pose-prompt' ||
       request.type === 'feedback' ||
       request.type === 'skip-question' ||
-      request.type === 'agent-message'
+      request.type === 'agent-message' ||
+      request.type === 'support-update'
     ) {
       next.awaitingAgent = false;
       next.respondedThroughCursor =
@@ -841,6 +999,12 @@ export class QuizService {
                 ? { confidence: request.confidence }
                 : {}),
             };
+          case 'support-update':
+            return {
+              questionId: request.questionId,
+              support: next.currentQuestion?.suppliedSupport,
+              text: request.text,
+            };
           case 'skip':
             return { questionId: request.questionId };
           case 'skip-question':
@@ -875,20 +1039,8 @@ export class QuizService {
         fingerprint,
       );
       if (updated.transcript.length > 0) await this.store.promote(updated.id);
-      if (
-        request.type === 'feedback' &&
-        request.verdict &&
-        updated.currentQuestion?.learning &&
-        this.recordAttempt
-      ) {
-        // The learner model is derived data: a recording failure must not turn an
-        // accepted feedback commit into a failed agent write.
-        try {
-          await this.recordAttempt(updated, updated.currentQuestion);
-        } catch {
-          /* Attempt is absent from the model; the transcript retains the verdict. */
-        }
-      }
+      if (request.type === 'feedback' && updated.currentQuestion)
+        await this.recordGradedQuestion(updated, updated.currentQuestion);
       return { ok: true, value: updated };
     } catch (error) {
       return {

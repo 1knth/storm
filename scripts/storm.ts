@@ -381,6 +381,7 @@ export async function runCli(
         );
     }
     let quizOperation:
+      | 'capabilities'
       | 'list'
       | 'attach'
       | 'detach'
@@ -408,6 +409,7 @@ export async function runCli(
       quizOperation = rest[1] as typeof quizOperation;
       if (
         ![
+          'capabilities',
           'list',
           'attach',
           'detach',
@@ -422,12 +424,16 @@ export async function runCli(
         ].includes(quizOperation ?? '')
       )
         throw new CliUsageError(
-          'quiz requires list|attach|detach|activity|status|learner|context|wait|request|image|image-release',
+          'quiz requires capabilities|list|attach|detach|activity|status|learner|context|wait|request|image|image-release',
         );
       quizSession = rest[2] && !rest[2]!.startsWith('--') ? rest[2] : undefined;
       const tail = rest.slice(quizSession ? 3 : 2);
       for (let i = 0; i < tail.length; i++) {
         const flag = tail[i]!;
+        if (quizOperation === 'capabilities') {
+          if (flag === '--json') continue;
+          throw new CliUsageError('quiz capabilities accepts only --json');
+        }
         if (quizOperation === 'learner' && flag !== '--token')
           throw new CliUsageError(`Invalid quiz learner argument: ${flag}`);
         if (
@@ -481,7 +487,12 @@ export async function runCli(
           quizAfter = Number(value);
         else throw new CliUsageError(`Invalid quiz argument: ${flag}`);
       }
-      if (quizOperation !== 'list' && !quizSession)
+      if (quizOperation === 'capabilities' && quizSession)
+        throw new CliUsageError('quiz capabilities does not take a session');
+      if (
+        !['list', 'capabilities'].includes(quizOperation ?? '') &&
+        !quizSession
+      )
         throw new CliUsageError(`quiz ${quizOperation} requires SESSION_ID`);
       if (
         quizOperation === 'wait' &&
@@ -558,10 +569,11 @@ export async function runCli(
             'feedback',
             'agent-message',
             'skip-question',
+            'support-update',
           ].includes(quizPayload.type)
         )
           throw new CliUsageError(
-            'quiz request type must be pose-question, pose-prompt, feedback, agent-message, or skip-question',
+            'quiz request type must be pose-question, pose-prompt, feedback, agent-message, skip-question, or support-update',
           );
         if (
           !Number.isSafeInteger(quizPayload.expectedRevision) ||
@@ -581,6 +593,19 @@ export async function runCli(
         )
           throw new CliUsageError(
             'skip-question requires questionId and explanation text of 1-10000 characters',
+          );
+        if (
+          quizPayload.type === 'support-update' &&
+          (typeof quizPayload.questionId !== 'string' ||
+            !quizPayload.questionId.trim() ||
+            quizPayload.questionId.length > 128 ||
+            !QUIZ_SUPPORTS.includes(quizPayload.support) ||
+            typeof quizPayload.text !== 'string' ||
+            !quizPayload.text.trim() ||
+            quizPayload.text.length > 10000)
+        )
+          throw new CliUsageError(
+            'support-update requires questionId, support independent|hinted|worked, and the help text of 1-10000 characters',
           );
         if (quizPayload.type === 'pose-prompt') {
           const choices = quizPayload.choices;
@@ -614,7 +639,19 @@ export async function runCli(
             );
         }
         if (quizPayload.type === 'pose-question') {
-          const { concepts, level, support } = quizPayload;
+          const { concepts, level, support, unmodelledReason } = quizPayload;
+          if (
+            unmodelledReason !== undefined &&
+            (typeof unmodelledReason !== 'string' ||
+              !unmodelledReason.trim() ||
+              unmodelledReason.length > 500 ||
+              concepts !== undefined ||
+              level !== undefined ||
+              support !== undefined)
+          )
+            throw new CliUsageError(
+              'unmodelledReason must be 1-500 characters and used without learning tags',
+            );
           if ((concepts !== undefined) !== (level !== undefined))
             throw new CliUsageError(
               'pose-question concepts and level must be supplied together',

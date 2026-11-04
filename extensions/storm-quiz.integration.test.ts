@@ -142,6 +142,7 @@ function save(){
 }
 function ok(value){process.stdout.write(JSON.stringify({ok:true,result:{ok:true,value}}));}
 if(a[0]==='study'){if(!s.study){ok({});}else if(op==='capabilities'){ok({schemaVersion:1});}else{let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{const r=JSON.parse(b);s.studyRequests=(s.studyRequests||[]).concat(r);save();ok(r.action==='open'?{studyId:'study-test',entries:[{path:'Course/Note.md'}]}:{studyId:'study-test',snapshotId:'a'.repeat(64),sources:[],chunks:[{id:'chunk-test',text:'Pinned course definition'}]});});}}
+else if(op==='capabilities'){ok(s.quizCapabilities ?? {integrationVersion:2,features:['learning','support-update','answer-confidence']});}
 else if(op==='list'){ok(s.list ?? [{id:'quiz-test',status:s.listStatus ?? s.status}]);}
 else if(op==='attach'){ok({agentToken:'synthetic-capability',snapshot:{session:{id,revision:s.revision,eventCursor:s.cursor,status:s.status,scope:s.scope ?? 'synthetic'},events:[]}});}
 else if(op==='wait'){if(s.waitError){process.stderr.write(JSON.stringify({error:{code:s.waitError}}));process.exitCode=1;}else if(s.waitSnapshot){process.stdout.write(JSON.stringify({ok:true,snapshot:s.waitSnapshot,after:s.waitSnapshot.session.eventCursor,timedOut:false}));}else {process.stdin.resume();setInterval(()=>{},1000);}}
@@ -166,6 +167,15 @@ async function state(path: string) {
 }
 async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
+async function until(check: () => boolean | Promise<boolean>) {
+  const deadline = Date.now() + 2500;
+  while (!(await check())) {
+    if (Date.now() >= deadline)
+      throw new Error('Synthetic extension condition timed out');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 async function writeState(path: string, value: unknown) {
@@ -234,6 +244,7 @@ test('shared study context bootstraps the attached scope, guards question basis,
       kind: 'short-answer',
       text: 'Explain this',
       studyBasis: 'a'.repeat(64),
+      unmodelledReason: 'Source retrieval regression fixture.',
     });
     expect((await state(stateFile)).requests.at(-1).studyBasis).toBe(
       'a'.repeat(64),
@@ -337,6 +348,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await tool.execute('q', {
       action: 'question',
       text: 'Match',
+      unmodelledReason: 'Payload routing regression fixture.',
       kind: 'matching',
       leftItems: [{ id: 'a', text: 'A' }],
       rightItems: [{ id: 'b', text: 'B' }],
@@ -529,6 +541,9 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await pi.command('disconnect');
     await attach(pi);
     await flush();
+    await until(() =>
+      pi.calls.some((call) => call.command.includes('Attached images:')),
+    );
     const delivered = pi.calls.find((call) =>
       call.command.includes('Attached images:'),
     );
@@ -642,7 +657,68 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await flush();
     await pi.emit('agent_end');
     await flush();
+    await until(
+      async () => (await state(stateFile)).activity.at(-1) === 'idle',
+    );
     expect((await state(stateFile)).activity.at(-1)).toBe('idle');
     await pi.shutdown();
   });
+});
+
+test('incompatible app cannot attach or activate the new extension', async () => {
+  const { stateFile } = await fixture({
+    quizCapabilities: { integrationVersion: 1, features: [] },
+  });
+  const pi = makePi();
+  try {
+    await attach(pi);
+    expect(pi.calls).toHaveLength(0);
+    expect(pi.getActiveTools()).not.toContain('storm_quiz');
+    expect(pi.notices.some((n) => n.message.includes('incompatible'))).toBe(
+      true,
+    );
+    expect((await state(stateFile)).requests).toEqual([]);
+  } finally {
+    await pi.shutdown();
+  }
+});
+
+test('new Tutor questions enforce metadata and support updates forward actual help with its question ID', async () => {
+  const { stateFile } = await fixture();
+  const pi = makePi();
+  try {
+    await attach(pi);
+    const tool = pi.tools.get('storm_quiz');
+    await expect(
+      tool.execute('missing-learning', {
+        action: 'question',
+        kind: 'short-answer',
+        text: 'Explain.',
+      }),
+    ).rejects.toThrow('complete concepts');
+    await tool.execute('unmodelled', {
+      action: 'question',
+      kind: 'short-answer',
+      text: 'Explain.',
+      unmodelledReason: 'An exploratory diagnostic outside this material.',
+    });
+    expect((await state(stateFile)).requests.at(-1)).toMatchObject({
+      type: 'pose-question',
+      unmodelledReason: 'An exploratory diagnostic outside this material.',
+    });
+    await tool.execute('help', {
+      action: 'support-update',
+      questionId: 'q1',
+      support: 'hinted',
+      text: 'Check what happens before the first iteration.',
+    });
+    expect((await state(stateFile)).requests.at(-1)).toMatchObject({
+      type: 'support-update',
+      questionId: 'q1',
+      support: 'hinted',
+      text: 'Check what happens before the first iteration.',
+    });
+  } finally {
+    await pi.shutdown();
+  }
 });

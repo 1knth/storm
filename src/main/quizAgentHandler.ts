@@ -1,3 +1,7 @@
+import {
+  QUIZ_INTEGRATION_VERSION,
+  QUIZ_REQUIRED_FEATURES,
+} from '../shared/quizIntegrationVersion';
 import type {
   AgentRequest,
   AgentResponse,
@@ -77,8 +81,13 @@ export function createQuizAgentHandler(
     | 'request'
     | 'getImageForAgent'
     | 'releaseImageForAgent'
+    | 'reconcileLearner'
   >,
-  learnerState?: (scope: QuizScope | undefined) => Promise<LearnerState>,
+  learnerState?: (
+    scope: QuizScope | undefined,
+    sessionId: string,
+  ) => Promise<LearnerState>,
+  appVersion?: string,
 ) {
   return async (
     request: Extract<AgentRequest, { type: 'quiz' }>,
@@ -90,6 +99,23 @@ export function createQuizAgentHandler(
       type: 'quiz' as const,
     };
     switch (request.operation) {
+      case 'capabilities':
+        return {
+          ...base,
+          operation: 'capabilities',
+          result: {
+            ok: true,
+            value: {
+              integrationVersion: QUIZ_INTEGRATION_VERSION,
+              features: [
+                ...QUIZ_REQUIRED_FEATURES,
+                'confidence-learning',
+                'durable-learner-reconciliation',
+              ],
+              ...(appVersion ? { appVersion } : {}),
+            },
+          },
+        };
       case 'list':
         return {
           ...base,
@@ -253,12 +279,17 @@ export function createQuizAgentHandler(
             operation: 'learner',
             result: { ok: false, error: 'study-unavailable' },
           };
+        const recording = await service.reconcileLearner(snapshot.session.id);
+        const state = {
+          ...(await learnerState(snapshot.session.scope, snapshot.session.id)),
+          recording,
+        };
         return {
           ...base,
           operation: 'learner',
           result: {
             ok: true,
-            value: await learnerState(snapshot.session.scope),
+            value: state,
           },
         };
       }

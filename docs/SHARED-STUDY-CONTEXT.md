@@ -4,7 +4,7 @@ Storm provides read-only context for selected Markdown notes. Main owns persiste
 
 ## Tutor workflow
 
-Build with `pnpm package`, launch that app, then run `pnpm tutor`. The launcher checks the running app/CLI for study support and loads this checkout's extension and Tutor prompt together. It does not replace `/Applications/Storm.app` or modify global Pi configuration. `STORM_TUTOR_CLI` selects another compatible bundled CLI; `STORM_ENDPOINT` selects a running app endpoint. Pass Pi options to resume a chosen Pi session when needed.
+Build with `pnpm package`, launch that app, then run `pnpm tutor:doctor` and `pnpm tutor`. The launcher prefers the local built app's CLI, falls back to `/Applications/Storm.app`, and checks explicit quiz integration version/features (including learning, support updates, and answer confidence) plus study support. It loads this checkout's extension and Tutor prompt together. It does not replace the installed app or modify global Pi configuration. CLI/argument and endpoint overrides are preserved. Use `pnpm tutor:install` for a backed-up global extension wrapper that imports the maintained checkout. Restart Pi after updating the extension or prompt. See [Tutor deployment](TUTOR-DEPLOYMENT.md) for installation, diagnostics, overrides, and rollback. Pass Pi options to resume a chosen Pi session when needed.
 
 Create/select a scoped quiz in Storm and use `/storm-quiz attach SESSION_ID` once. Attach supplies a bounded file tree and activates `storm_study`. While attached, Pi's `quiz` and `ask_user_question` tools are masked; detach restores them. Missing study capability produces a warning without losing conversation recovery.
 

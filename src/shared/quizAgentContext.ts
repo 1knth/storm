@@ -41,6 +41,9 @@ export function quizAgentQuestion(value: unknown): Record<string, any> | null {
     'feedback',
     'verdict',
     'studyBasis',
+    'suppliedSupport',
+    'gradedAt',
+    'unmodelledReason',
   ]);
   if (source.omitted) return { ...result, omitted: true, section: 'question' };
   if (source.learning) {
@@ -99,6 +102,7 @@ export function quizAgentEvent(event: {
     'verdict',
     'effect',
     'confidence',
+    'support',
   ]);
   if (source.matches) data.matches = strings(source.matches);
   if (source.attachments)
@@ -191,6 +195,7 @@ function message(value: unknown) {
               'answerLabel',
               'chosenChoiceId',
               'chosenChoiceText',
+              'confidence',
             ]),
           },
         }

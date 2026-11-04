@@ -156,6 +156,12 @@ describe('quiz broker requests', () => {
       pose({ kind: 'short-answer' }),
       pose({ kind: 'long-answer' }),
       pose({
+        type: 'support-update',
+        questionId: 'q',
+        support: 'hinted',
+        text: 'Check the condition.',
+      }),
+      pose({
         type: 'skip-question',
         questionId: 'q',
         text: 'Cleared on request.',
@@ -171,6 +177,24 @@ describe('quiz broker requests', () => {
       assert.equal((await broker.handle(request)).ok, true);
     for (const request of [
       pose({ choices: [] }),
+      pose({
+        type: 'support-update',
+        questionId: 'q',
+        support: 'unknown',
+        text: 'Hint',
+      }),
+      pose({
+        type: 'support-update',
+        questionId: '',
+        support: 'hinted',
+        text: 'Hint',
+      }),
+      pose({
+        type: 'support-update',
+        questionId: 'q',
+        support: 'hinted',
+        text: ' ',
+      }),
       pose({ type: 'skip-question', text: 'Missing question ID' }),
       pose({ type: 'skip-question', questionId: 'q', text: '' }),
       pose({

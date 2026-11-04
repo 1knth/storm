@@ -263,8 +263,10 @@ agentBroker = new AgentBroker({
   },
   withVaultLifecycle: runVaultLifecycleExclusive,
   renderer: agentTransport,
-  quiz: createQuizAgentHandler(quizService, (scope) =>
-    learnerStore.state(scope),
+  quiz: createQuizAgentHandler(
+    quizService,
+    (scope, sessionId) => learnerStore.state(scope, sessionId),
+    app.getVersion(),
   ),
   discover: async (vaultId, query, limit, options) =>
     discoverVaultNotes(

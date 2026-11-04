@@ -54,7 +54,7 @@ export function getQuizComposerIntent(
 export function getQuizConfidenceLabel(confidence: number): string {
   if (confidence <= 20) return 'Guessing';
   if (confidence <= 45) return 'Unsure';
-  if (confidence <= 70) return 'Fairly sure';
+  if (confidence < 70) return 'Fairly sure';
   if (confidence <= 90) return 'Confident';
   return 'Certain';
 }

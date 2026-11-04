@@ -1047,6 +1047,16 @@ function isQuizAgentRequest(value: unknown): boolean {
           r.promptId.length <= 128))
     );
   }
+  if (r.type === 'support-update')
+    return (
+      typeof r.questionId === 'string' &&
+      !!r.questionId.trim() &&
+      r.questionId.length <= 128 &&
+      ['independent', 'hinted', 'worked'].includes(String(r.support)) &&
+      typeof r.text === 'string' &&
+      !!r.text.trim() &&
+      r.text.length <= 10000
+    );
   if (r.type === 'skip-question')
     return (
       typeof r.questionId === 'string' &&
@@ -1078,7 +1088,7 @@ function isRequest(v: unknown): v is AgentRequest {
     return false;
   if (r.type === 'study') return isStudyRequest(r.study);
   if (r.type === 'quiz') {
-    if (r.operation === 'list') return true;
+    if (r.operation === 'list' || r.operation === 'capabilities') return true;
     if (r.operation === 'detach' || r.operation === 'activity')
       return (
         typeof r.sessionId === 'string' &&

@@ -165,8 +165,8 @@ test('confidence anchors cover every slider step and bucket boundaries', () => {
   const buckets = [
     [0, 20, 'Guessing'],
     [25, 45, 'Unsure'],
-    [50, 70, 'Fairly sure'],
-    [75, 90, 'Confident'],
+    [50, 65, 'Fairly sure'],
+    [70, 90, 'Confident'],
     [95, 100, 'Certain'],
   ] as const;
   for (const [start, end, label] of buckets) {

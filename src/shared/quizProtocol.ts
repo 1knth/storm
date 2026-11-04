@@ -40,7 +40,7 @@ export const QUIZ_SUPPORTS: readonly QuizSupport[] = [
 /** Stable lowercase concept slug, e.g. `while-loop-condition`. */
 export const QUIZ_CONCEPT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const QUIZ_MAX_CONCEPTS = 3;
-/** Agent-declared learning metadata. Missing metadata means the attempt is not modelled. */
+/** Agent-declared concept metadata. Untagged rated answers still inform calibration. */
 export type QuizLearning = {
   concepts: string[];
   level: QuizCognitiveLevel;
@@ -53,6 +53,11 @@ export type QuizQuestion = {
   id: string;
   studyBasis?: string;
   learning?: QuizLearning;
+  unmodelledReason?: string;
+  /** Strongest help actually supplied before submission, including help after posing. */
+  suppliedSupport?: QuizSupport;
+  /** Original feedback commit time; stable across reconciliation and later session edits. */
+  gradedAt?: string;
   /** Submitted learner confidence (0-100); absent for historical or unrated answers. */
   confidence?: number;
   /** Missing kind denotes a historical multiple-choice question. */
@@ -87,6 +92,9 @@ export type QuizMessage = {
     id: string;
     studyBasis?: string;
     learning?: QuizLearning;
+    unmodelledReason?: string;
+    suppliedSupport?: QuizSupport;
+    gradedAt?: string;
     confidence?: number;
     kind?: QuizQuestionKind;
     prompt: string;
@@ -141,6 +149,7 @@ export type QuizAgentRequest = (
   | {
       type: 'pose-question';
       studyBasis?: string;
+      unmodelledReason?: string;
       /** Optional learner-model metadata; concepts and level must be supplied together. */
       concepts?: string[];
       level?: QuizCognitiveLevel;
@@ -203,6 +212,17 @@ export type QuizAgentRequest = (
       expectedRevision: number;
       idempotencyKey: string;
       questionId: string;
+      text: string;
+    }
+  | {
+      type: 'support-update';
+      sessionId: string;
+      agentToken: string;
+      expectedRevision: number;
+      idempotencyKey: string;
+      questionId: string;
+      support: QuizSupport;
+      /** Help actually displayed to the learner with this update. */
       text: string;
     }
   | {
@@ -323,8 +343,19 @@ export function quizLearningFromRequest(request: {
   concepts?: unknown;
   level?: unknown;
   support?: unknown;
+  unmodelledReason?: unknown;
 }): QuizLearning | undefined | null {
-  const { concepts, level, support } = request;
+  const { concepts, level, support, unmodelledReason } = request;
+  if (
+    unmodelledReason !== undefined &&
+    (typeof unmodelledReason !== 'string' ||
+      !unmodelledReason.trim() ||
+      unmodelledReason.length > 500 ||
+      concepts !== undefined ||
+      level !== undefined ||
+      support !== undefined)
+  )
+    return null;
   if (concepts === undefined && level === undefined && support === undefined)
     return undefined;
   if (

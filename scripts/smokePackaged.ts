@@ -38,6 +38,8 @@ await writeFile(
 const note = join(vault, 'probe.md');
 await writeFile(note, '');
 const quizId = randomUUID();
+const gradedQuizId = randomUUID();
+const gradedAt = '2026-11-01T12:00:00.000Z';
 await writeFile(
   join(profile, 'quiz-sessions.json'),
   JSON.stringify({
@@ -61,8 +63,48 @@ await writeFile(
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
+      {
+        id: gradedQuizId,
+        agentToken: 'synthetic-grade',
+        revision: 0,
+        eventCursor: 0,
+        scope: {
+          vaultId,
+          notePath: 'probe.md',
+          folderPath: null,
+          selectedNotePaths: [],
+        },
+        status: 'waiting-agent',
+        freeChatDraft: '',
+        createdAt: gradedAt,
+        updatedAt: gradedAt,
+        transcript: [
+          {
+            id: 'grade',
+            role: 'agent',
+            text: 'Worked correction',
+            createdAt: gradedAt,
+            question: {
+              id: 'graded-q',
+              prompt: 'Saved graded check',
+              choices: [],
+              kind: 'short-answer',
+              learning: {
+                concepts: ['smoke-concept'],
+                level: 'recall',
+                support: 'worked',
+              },
+              suppliedSupport: 'worked',
+              confidence: 95,
+              verdict: 'incorrect',
+              gradedAt,
+            },
+          },
+        ],
+        currentQuestion: null,
+      },
     ],
-    events: { [quizId]: [] },
+    events: { [quizId]: [], [gradedQuizId]: [] },
     idempotency: {},
   }),
 );
@@ -160,6 +202,9 @@ try {
   assert.ok(
     context.context.registeredVaults.some((entry) => entry.id === vaultId),
   );
+  const capabilities = JSON.parse(await run(['quiz', 'capabilities']));
+  assert.equal(capabilities.result.value.integrationVersion, 2);
+  assert.ok(capabilities.result.value.features.includes('support-update'));
   const inspected = await json(['inspect', note]);
   assert.ok(inspected.ok && inspected.type === 'inspected');
   assert.equal(inspected.content, '');
@@ -210,12 +255,44 @@ try {
         expectedRevision: attached.snapshot.session.revision,
         kind: 'short-answer',
         question: 'Explain the original source.',
+        concepts: ['source-summary'],
+        level: 'explain',
+        support: 'independent',
         studyBasis: snapshotId,
       }),
       attached.agentToken,
     ),
   );
   assert.equal(posed.result.value.currentQuestion.studyBasis, snapshotId);
+  const helped = JSON.parse(
+    await run(
+      ['quiz', 'request', quizId],
+      JSON.stringify({
+        type: 'support-update',
+        questionId: posed.result.value.currentQuestion.id,
+        support: 'worked',
+        text: 'Here is a worked explanation of the source.',
+        expectedRevision: posed.result.value.revision,
+      }),
+      attached.agentToken,
+    ),
+  );
+  assert.equal(helped.result.value.currentQuestion.suppliedSupport, 'worked');
+  const learner = JSON.parse(
+    await run(['quiz', 'learner', quizId], undefined, attached.agentToken),
+  ).result.value;
+  assert.equal(learner.calibration.rated, 1);
+  assert.equal(learner.calibration.supportCounts.assisted, 1);
+  const model = JSON.parse(
+    await readFile(join(profile, 'learner-model.json'), 'utf8'),
+  );
+  const recorded = Object.values(model.scopes).flatMap(
+    (scope: any) => scope.attempts,
+  ) as any[];
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].at, gradedAt);
+  assert.equal(recorded[0].support, 'worked');
+
   const replacement = 'Changed source for study freshness.\n';
   const reconnect = await json(['connect', note]);
   assert.ok(reconnect.ok && reconnect.type === 'connected');
@@ -277,6 +354,10 @@ try {
       questionBasisPersistence: true,
       quizReattach: true,
       tutorLauncherWiring: true,
+      quizCapabilityNegotiation: true,
+      midQuestionSupportUpdate: true,
+      durableLearningReplay: true,
+      assistedConfidenceCalibration: true,
       finished: true,
       expectedBytes: Buffer.byteLength(expected),
       savedBytes: Buffer.byteLength(actual),

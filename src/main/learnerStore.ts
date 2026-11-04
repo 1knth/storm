@@ -21,8 +21,12 @@ type LearnerDatabase = {
 };
 
 /** Concepts accumulate per vault so evidence carries across sessions on the same material. */
-export function learnerScopeKey(scope: QuizScope | undefined): string {
-  return scope ? `vault:${scope.vaultId}` : 'unscoped';
+export function learnerScopeKey(
+  scope: QuizScope | undefined,
+  sessionId?: string,
+): string {
+  // Never replay the historical global unscoped pool into unrelated sessions.
+  return scope ? `vault:${scope.vaultId}` : `session:${sessionId ?? 'unknown'}`;
 }
 
 /** Exact session scope, used only to prioritize concepts from the current material. */
@@ -36,20 +40,25 @@ export function learnerScopeSignature(scope: QuizScope | undefined): string {
   ]);
 }
 
-/** Graded, tagged questions become attempts; anything else is not modelled. */
+/** Tagged grades inform concepts; all rated grades inform confidence calibration. */
 export function learnerAttempt(
   session: Pick<QuizSession, 'id' | 'scope' | 'updatedAt'>,
   question: QuizQuestion,
 ): LearnerAttempt | null {
-  if (!question.learning || !question.verdict) return null;
+  if (
+    !question.verdict ||
+    (!question.learning && question.confidence === undefined)
+  )
+    return null;
   return {
     id: question.id,
     sessionId: session.id,
     scopeSignature: learnerScopeSignature(session.scope),
-    at: session.updatedAt,
-    concepts: [...question.learning.concepts],
-    level: question.learning.level,
-    support: question.learning.support,
+    at: question.gradedAt ?? session.updatedAt,
+    concepts: [...(question.learning?.concepts ?? [])],
+    level: question.learning?.level ?? 'recall',
+    support:
+      question.suppliedSupport ?? question.learning?.support ?? 'unknown',
     verdict: question.verdict,
     ...(question.confidence !== undefined
       ? { confidence: question.confidence }
@@ -91,11 +100,15 @@ export class LearnerStore {
       const scope = (data.scopes[scopeKey] ??= { attempts: [] });
       scope.attempts = scope.attempts.filter((item) => item.id !== attempt.id);
       scope.attempts.push(structuredClone(attempt));
+      scope.attempts.sort(
+        (a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id),
+      );
       if (scope.attempts.length > LEARNER_LIMITS.attemptsPerScope)
         scope.attempts.splice(
           0,
           scope.attempts.length - LEARNER_LIMITS.attemptsPerScope,
         );
+      if (JSON.stringify(data) === JSON.stringify(await this.load())) return;
       await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
       const temporary = `${this.file}.${randomUUID()}.tmp`;
       await writeFile(temporary, JSON.stringify(data), { mode: 0o600 });
@@ -109,7 +122,8 @@ export class LearnerStore {
     question: QuizQuestion,
   ): Promise<void> {
     const attempt = learnerAttempt(session, question);
-    if (attempt) await this.record(learnerScopeKey(session.scope), attempt);
+    if (attempt)
+      await this.record(learnerScopeKey(session.scope, session.id), attempt);
   }
 
   async attempts(scopeKey: string): Promise<LearnerAttempt[]> {
@@ -118,12 +132,27 @@ export class LearnerStore {
     );
   }
 
-  async state(scope: QuizScope | undefined): Promise<LearnerState> {
-    const scopeKey = learnerScopeKey(scope);
-    return computeLearnerState(await this.attempts(scopeKey), {
+  async state(
+    scope: QuizScope | undefined,
+    sessionId?: string,
+  ): Promise<
+    LearnerState & { diagnostics: { untagged: number; ratedUntagged: number } }
+  > {
+    const scopeKey = learnerScopeKey(scope, sessionId);
+    const attempts = await this.attempts(scopeKey);
+    const state = computeLearnerState(attempts, {
       scopeKey,
       scopeSignature: learnerScopeSignature(scope),
       now: this.now(),
     });
+    return {
+      ...state,
+      diagnostics: {
+        untagged: attempts.filter((a) => a.concepts.length === 0).length,
+        ratedUntagged: attempts.filter(
+          (a) => a.concepts.length === 0 && a.confidence !== undefined,
+        ).length,
+      },
+    };
   }
 }

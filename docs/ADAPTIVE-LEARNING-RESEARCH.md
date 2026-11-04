@@ -18,12 +18,29 @@ computed (due reviews appear in learner recommendations) but has no dedicated
   ability (independent and assisted), FSRS-style stability with fixed default
   weights, zones, recommendations, and calibration.
 - Storage: `LearnerStore` persists attempts only, per vault, idempotent by
-  question ID.
+  question ID. Unscoped sessions are isolated by session ID; rated untagged
+  grades are calibration-only evidence with unknown support.
 - Agent surface: `storm quiz learner SESSION_ID --token TOKEN` and the Pi
   `storm_quiz` `learner` action; Tutor prompts carry the session policy below.
 
 All numeric parameters (band, level difficulties, K-factor, stability weights,
 confident-error threshold) are unfitted starting values.
+
+### Reliability and confidence changes
+
+Questions retain the strongest assistance supplied before submission, including
+help given after posing. Failed assisted attempts do not justify removing help.
+Confident partial answers are diagnosis candidates rather than automatic full
+misconceptions. Assisted misconceptions stay visible without changing independent
+memory evidence. Confidence rechecks allow intervening practice or a review gap.
+
+Calibration exposes absolute confidence error as well as signed bias, and counts
+independent, assisted, and unknown support. Pattern commentary requires at least
+20 rated attempts and an absolute bias of at least 15 percentage points; these
+are tunable defaults, not validated diagnostic thresholds. Tutor discusses these
+patterns supportively at most once per session unless asked. Durable grades are
+reconciled on startup and before learner reads so a failed derived-record write
+can be retried without duplicating an attempt or changing its grading time.
 
 ## Recommendation
 
@@ -116,8 +133,8 @@ ones explicitly, otherwise tags drift and evidence fragments.
 
 **Attempt record.** Question ID, 1–3 concept IDs, `level`, `support`
 (`independent | hinted | worked`), verdict (correct = 1, partial = 0.5,
-incorrect = 0; ungraded excluded), optional learner confidence (low / medium /
-high), latency, and timestamp. Store it in the durable store recommended in
+incorrect = 0; ungraded excluded), optional learner confidence (0–100, in steps
+of 5), latency, and timestamp. Store it in the durable store recommended in
 `quiz-review-limits.md`.
 
 **Ability: Elo per concept** (Pelánek 2016). Expected success is
@@ -169,7 +186,8 @@ When the learner presses Continue:
    session.
 1. **Protocol:** add optional `concepts`, `level`, and `support` to
    `pose-question`, and optional `confidence` to learner `answer`. These are
-   backward compatible, like `studyBasis`. Add a three-level confidence control in
+   backward compatible, like `studyBasis`. Use the explicit 0–100 confidence slider
+   (steps of 5) in
    `QuizPane`.
 2. **Durable attempts and concept registry**, in the SQLite store already
    recommended for review.
@@ -222,3 +240,14 @@ When the learner presses Continue:
 - Wood, Bruner & Ross (1976), The role of tutoring in problem solving, _Journal of Child Psychology and Psychiatry_.
 - Ye, Su & Cao (2022), A stochastic shortest path algorithm for optimizing spaced repetition scheduling, _KDD_; [open-spaced-repetition](https://github.com/open-spaced-repetition).
 - LLM difficulty estimation: [Zotos et al., EDM 2025](https://educationaldatamining.org/edm2025/proceedings/2025.EDM.long-papers.104/2025.EDM.long-papers.104.pdf); [Li et al. 2025](https://arxiv.org/abs/2512.18880). LLM knowledge tracing: [arXiv 2403.14661](https://arxiv.org/abs/2403.14661); [Cho et al. review](https://arxiv.org/abs/2412.09248).
+
+### Confidence interaction diagnostics
+
+Storm keeps bounded, local aggregate counters under
+`storm.quizConfidenceMetrics.v1` in renderer local storage. They count answer-form
+observations, forms rated, forms submitted, exits without a rating, time to first
+rating, and time to submission. Reopening a form is another observation. An exit
+is not proof of abandonment caused by the slider. Counters contain no answer text,
+confidence values, session IDs, or network telemetry; clearing local storage
+resets them. Compare these observations with usability feedback before changing
+the required-rating interaction or adopting a smaller set of confidence options.

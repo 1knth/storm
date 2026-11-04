@@ -22,7 +22,9 @@
     "lint:fix": "oxlint --fix && oxfmt --write",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.tools.json",
     "test:packaged": "bun scripts/smokePackaged.ts",
-    "tutor": "sh scripts/startTutor.sh"
+    "tutor": "sh scripts/startTutor.sh",
+    "tutor:install": "bun scripts/installTutor.ts",
+    "tutor:doctor": "bun scripts/runTutor.ts --doctor"
   },
   "peerDependencies": {
     "electron-winstaller": "^5.4.0"

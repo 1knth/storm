@@ -3,6 +3,8 @@ import {
   createWaitRuntime,
   parseWaitResponse,
   attachStateMessage,
+  assertQuizCapabilities,
+  validateTutorQuestionLearning,
   responseValue,
   snapshotValue,
   learnerNotification,
@@ -148,7 +150,9 @@ describe('model-safe quiz context', () => {
       'After Continue and before choosing or posing a question, read storm_quiz with action learner',
       'Tag every substantive question with concepts, level, and support',
       'Reuse existing concept IDs',
-      'worked for a shown worked example, hinted for a given hint, independent otherwise',
+      'help actually supplied, not help merely planned',
+      'action support-update',
+      'strongest support (independent < hinted < worked)',
       'Levels are recall, explain, apply, transfer',
       'independent performance, zpd',
       'beyond (teach with support first)',
@@ -162,12 +166,15 @@ describe('model-safe quiz context', () => {
       'Fade support from worked to hinted to independent',
       'Once two or more concepts are introduced, mix earlier concepts in',
       'data.confidence (0–100)',
-      'High-confidence errors (>=70) need an explicit, elaborated correction',
-      'low-confidence correct answers need brief reinforcement of why',
-      'calibration bias is large, mention it supportively and occasionally',
+      'High-confidence incorrect or partial answers (>=70) are correction candidates',
+      'Low-confidence correct answers need brief reinforcement of why',
+      'calibration.guidanceEligible is true',
+      'at least 20 ratings',
+      'at most one brief, supportive comment per session',
+      'fresh independent item',
       'Recommendations are advisory; explicit learner requests win',
       'Never present model numbers as grades or mastery',
-      'Untagged or ungraded answers are not modelled',
+      'Rated graded answers inform confidence calibration even when untagged',
       'Keep the existing Continue and Skip rules',
       'continue only after explicit Continue or learner Skip',
       'use storm_quiz with action skip-question',
@@ -431,4 +438,59 @@ describe('quiz wait runtime', () => {
     expect(killed).toBe(1);
     expect(delivered).toEqual([]);
   });
+});
+
+test('Tutor questions require deliberate complete tags or an explicit reason while legacy parsing remains separate', () => {
+  for (const request of [
+    {},
+    { concepts: ['loops'] },
+    { level: 'recall' },
+    { concepts: ['loops'], level: 'recall' },
+    { unmodelledReason: '' },
+    { unmodelledReason: '  ' },
+    { unmodelledReason: 'x'.repeat(501) },
+    {
+      concepts: ['loops'],
+      level: 'recall',
+      support: 'independent',
+      unmodelledReason: 'mixed',
+    },
+    { concepts: ['Bad Slug'], level: 'recall', support: 'independent' },
+  ])
+    expect(() => validateTutorQuestionLearning(request)).toThrow(
+      'complete concepts',
+    );
+  expect(() =>
+    validateTutorQuestionLearning({
+      concepts: ['loops'],
+      level: 'recall',
+      support: 'independent',
+    }),
+  ).not.toThrow();
+  expect(() =>
+    validateTutorQuestionLearning({
+      unmodelledReason: 'A diagnostic outside the studied concepts.',
+    }),
+  ).not.toThrow();
+});
+
+test('extension handshake rejects old or incomplete app capabilities before attaching', () => {
+  for (const value of [
+    undefined,
+    {},
+    {
+      integrationVersion: 1,
+      features: ['learning', 'support-update', 'answer-confidence'],
+    },
+    { integrationVersion: 2, features: ['learning', 'answer-confidence'] },
+  ])
+    expect(() => assertQuizCapabilities(value)).toThrow(
+      'Update the installed Storm app/CLI',
+    );
+  expect(() =>
+    assertQuizCapabilities({
+      integrationVersion: 2,
+      features: ['learning', 'support-update', 'answer-confidence'],
+    }),
+  ).not.toThrow();
 });

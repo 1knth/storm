@@ -567,6 +567,9 @@ describe('question answer footer', () => {
       html,
       /type="range" min="0" max="100" step="5" aria-valuetext="Not rated"/,
     );
+    assert.match(html, /aria-describedby="quiz-confidence-question-a-help"/);
+    assert.match(html, /How likely is your whole answer to be correct/);
+    assert.match(html, /does not change your grade/);
     assert.match(html, /quiz-confidence-slider--unrated/);
     assert.match(html, /role="status"/);
     assert.match(
@@ -580,7 +583,7 @@ describe('question answer footer', () => {
         confidence: 70,
       }),
     );
-    assert.match(rated, /70% · Fairly sure/);
+    assert.match(rated, /70% · Confident/);
     assert.doesNotMatch(rated, /role="status"|quiz-confidence-slider--unrated/);
   });
 

@@ -186,6 +186,12 @@ export type AgentRequest =
       protocol: typeof AGENT_PROTOCOL_VERSION;
       requestId: string;
       type: 'quiz';
+      operation: 'capabilities';
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      type: 'quiz';
       operation: 'attach';
       sessionId: string;
       clientId: string;
@@ -434,6 +440,18 @@ export type AgentResponse =
       type: 'quiz';
       operation: 'list';
       result: QuizResult<AgentQuizSession[]>;
+    }
+  | {
+      protocol: typeof AGENT_PROTOCOL_VERSION;
+      requestId: string;
+      ok: true;
+      type: 'quiz';
+      operation: 'capabilities';
+      result: QuizResult<{
+        integrationVersion: number;
+        features: string[];
+        appVersion?: string;
+      }>;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;

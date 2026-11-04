@@ -40,7 +40,8 @@ const file = n => path.join(root,n), exists = n => fs.existsSync(file(n));
 const log = (n,v) => fs.appendFileSync(file(n),JSON.stringify(v)+'\\n');
 const ok = value => process.stdout.write(JSON.stringify({ok:true,result:{ok:true,value}}));
 const session = {id:args[2],revision:8,eventCursor:3,status:'connected'};
-if(op==='attach') ok({agentToken:'synthetic',snapshot:{session,events:[]}});
+if(op==='capabilities') ok({integrationVersion:2,features:['learning','support-update','answer-confidence']});
+else if(op==='attach') ok({agentToken:'synthetic',snapshot:{session,events:[]}});
 else if(op==='activity'||op==='detach') ok({});
 else if(op==='status') process.stdout.write(JSON.stringify({ok:true,operation:'snapshot',snapshot:{session,events:[]}}));
 else if(op==='wait') {

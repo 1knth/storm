@@ -16,6 +16,7 @@ test('agent IPC remains active through before-quit and is removed at will-quit',
     const userData = mkdtempSync(path.join(tmpdir(), 'storm-shutdown-wiring-'));
     const app = new EventEmitter();
     app.setName = () => {};
+    app.getVersion = () => '1.0.0-test';
     app.setPath = () => {};
     app.commandLine = { hasSwitch: () => false };
     app.getPath = (name) => name === 'userData' ? userData : tmpdir();
