@@ -7,6 +7,8 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  lazy,
+  Suspense,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
 } from 'react';
@@ -45,6 +47,10 @@ import { FaPlus } from 'react-icons/fa';
 import { FiStopCircle } from 'react-icons/fi';
 import { MdCloseFullscreen, MdOpenInFull } from 'react-icons/md';
 import QuizSessionName from './QuizSessionName';
+import { LuPencilLine, LuTable } from 'react-icons/lu';
+
+// Excalidraw is large; load it only when a sketch is opened.
+const QuizSketch = lazy(() => import('./QuizSketch'));
 import {
   IoArrowForward,
   IoChevronDown,
@@ -709,21 +715,54 @@ export function QuizAnswerActions({
 export function QuizAnswerAssist({
   imageCount,
   onPickImages,
+  onInsertTable,
 }: {
   imageCount: number;
+  onInsertTable?: () => void;
   onPickImages: (files: File[]) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [sketching, setSketching] = useState(false);
   return (
     <div className="quiz-answer-assist mt-1">
+      {sketching && (
+        <Suspense fallback={null}>
+          <QuizSketch
+            onAttach={(file) => onPickImages([file])}
+            onClose={() => setSketching(false)}
+          />
+        </Suspense>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-white/45">
         <span>
-          Markdown and LaTeX (<code>$x^2$</code>) supported
+          Markdown and LaTeX supported
           {' · '}
           <kbd>⌘</kbd>
           <kbd>↵</kbd> to submit
         </span>
         <span className="flex items-center gap-1">
+          <button
+            type="button"
+            title="Draw your work, such as a truth table"
+            className="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 hover:bg-white/10 hover:text-white/80"
+            onClick={() => setSketching(true)}
+          >
+            <LuPencilLine aria-hidden="true" />
+            Sketch
+          </button>
+          {onInsertTable && (
+            <button
+              type="button"
+              title="Insert a table"
+              className="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 hover:bg-white/10 hover:text-white/80"
+              // Keep the caret in the answer so the table goes where it is.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onInsertTable}
+            >
+              <LuTable aria-hidden="true" />
+              Table
+            </button>
+          )}
           <button
             type="button"
             title="Attach images of your work"
@@ -857,6 +896,7 @@ export default function QuizPane({
   const [session, setSession] = useState<PublicQuizSession | null>(null);
   const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
+  const insertTableRef = useRef<(() => void) | null>(null);
   const [pendingImages, setPendingImages] = useState<
     Record<string, PendingImage[]>
   >({});
@@ -1634,8 +1674,8 @@ export default function QuizPane({
                 <button
                   type="button"
                   aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
-                  aria-keyshortcuts="Control+Shift+Q"
-                  title={`${fullscreen ? 'Exit full screen' : 'Full screen'} (${navigator.platform.toLowerCase().includes('mac') ? '⌃⇧Q' : 'Ctrl+Shift+Q'})`}
+                  aria-keyshortcuts="Meta+Shift+F Control+Shift+F"
+                  title={`${fullscreen ? 'Exit full screen' : 'Full screen'} (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧F' : 'Ctrl+Shift+F'})`}
                   aria-pressed={fullscreen}
                   className="quiz-header-icon rounded p-2"
                   onClick={onToggleFullscreen}
@@ -2184,7 +2224,8 @@ export default function QuizPane({
                                   questionKind === 'long-answer') &&
                                   session.currentQuestion.status === 'open' && (
                                     <>
-                                      <label className="mt-2 block">
+                                      {/* Not a <label>: it would forward every click to the composer's first button. */}
+                                      <div className="mt-2 block">
                                         Your answer
                                         <div
                                           onPaste={handleImagePaste}
@@ -2206,6 +2247,7 @@ export default function QuizPane({
                                               )
                                             }
                                             onKeyDown={handleAnswerKeyDown}
+                                            insertTableRef={insertTableRef}
                                             renderMarkdown={(text, inline) => (
                                               <QuizMarkdown
                                                 inline={inline}
@@ -2216,10 +2258,13 @@ export default function QuizPane({
                                             )}
                                           />
                                         </div>
-                                      </label>
+                                      </div>
                                       <QuizAnswerAssist
                                         imageCount={sessionImages.length}
                                         onPickImages={addImageFiles}
+                                        onInsertTable={() =>
+                                          insertTableRef.current?.()
+                                        }
                                       />
                                     </>
                                   )}

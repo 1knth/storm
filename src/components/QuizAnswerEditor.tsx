@@ -1,6 +1,13 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react';
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { EditorState, StateEffect, StateField } from '@codemirror/state';
+import type { Text } from '@codemirror/state';
 import {
   EditorView,
   Decoration,
@@ -8,8 +15,14 @@ import {
   keymap,
   placeholder,
 } from '@codemirror/view';
-import { markdown } from '@codemirror/lang-markdown';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { answerPreviewRanges } from './quizAnswerDecorations';
+import { insertTable } from './quizAnswerTables';
+import {
+  TableWidget,
+  type TableAction,
+  type TableTools,
+} from './QuizAnswerTable';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { createMarkdownSyntaxHighlighting } from './Editor/markdownHighlighting';
 
@@ -50,7 +63,24 @@ type Props = {
   onChange: (text: string) => void;
   onKeyDown: (event: KeyboardEvent) => void;
   renderMarkdown: (text: string, inline?: boolean) => ReactNode;
+  /** Receives the editor's insert-table command for buttons outside the box. */
+  insertTableRef?: RefObject<(() => void) | null>;
 };
+
+const endsWithTable = (doc: Text) =>
+  doc.line(doc.lines).text.trimStart().startsWith('|');
+const withLineAfterTable = (text: string) =>
+  text.split('\n').at(-1)!.trimStart().startsWith('|') ? `${text}\n` : text;
+
+const TABLE_ACTIONS: [TableAction, string, string][] = [
+  ['column-left', '+ Column left', 'Insert a column left of this cell'],
+  ['column-right', '+ Column right', 'Insert a column right of this cell'],
+  ['row-above', '+ Row above', 'Insert a row above this cell'],
+  ['row-below', '+ Row below', 'Insert a row below this cell'],
+  ['delete-column', '− Column', 'Delete this column'],
+  ['delete-row', '− Row', 'Delete this row'],
+  ['delete-table', 'Delete table', 'Delete the whole table'],
+];
 
 /** Render completed Markdown blocks in place; reveal source around the caret. */
 export default function QuizAnswerEditor(props: Props) {
@@ -58,6 +88,11 @@ export default function QuizAnswerEditor(props: Props) {
   const viewRef = useRef<EditorView | null>(null);
   const latest = useRef(props);
   latest.current = props;
+  const [tableTools, setTableTools] = useState<TableTools>(null);
+  // Stable across renders so table widgets can report their focused cell.
+  const reportTools = useRef((tools: TableTools) =>
+    setTableTools(() => tools),
+  ).current;
   useLayoutEffect(() => {
     const focusChanged = StateEffect.define<boolean>();
     const focused = StateField.define({
@@ -82,11 +117,17 @@ export default function QuizAnswerEditor(props: Props) {
       return Decoration.set(
         answerPreviewRanges(state, state.field(focused)).map((range) =>
           Decoration.replace({
-            widget: new MarkdownWidget(
-              state.sliceDoc(range.from, range.to),
-              (text) => latest.current.renderMarkdown(text, !range.block),
-              range.block,
-            ),
+            widget: range.table
+              ? new TableWidget(
+                  state.sliceDoc(range.from, range.to),
+                  (text) => latest.current.renderMarkdown(text, true),
+                  reportTools,
+                )
+              : new MarkdownWidget(
+                  state.sliceDoc(range.from, range.to),
+                  (text) => latest.current.renderMarkdown(text, !range.block),
+                  range.block,
+                ),
             block: range.block,
           }).range(range.from, range.to),
         ),
@@ -96,13 +137,25 @@ export default function QuizAnswerEditor(props: Props) {
     const view = new EditorView({
       parent: host.current!,
       state: EditorState.create({
-        doc: latest.current.value,
+        doc: withLineAfterTable(latest.current.value),
         extensions: [
-          markdown(),
+          // GFM so pipe tables parse as tables rather than paragraphs.
+          markdown({ base: markdownLanguage }),
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
           createMarkdownSyntaxHighlighting(),
           focused,
+          // Keep a line below a trailing table so the caret can reach it.
+          EditorState.transactionFilter.of((tr) => {
+            if (!tr.docChanged || !endsWithTable(tr.newDoc)) return tr;
+            return [
+              tr,
+              {
+                changes: { from: tr.newDoc.length, insert: '\n' },
+                sequential: true,
+              },
+            ];
+          }),
           previews,
           EditorView.lineWrapping,
           placeholder('Type your answer, or paste a photo of your work'),
@@ -160,10 +213,53 @@ export default function QuizAnswerEditor(props: Props) {
       });
     }
   }, [props.value]);
+  if (props.insertTableRef) props.insertTableRef.current = addTable;
+  function addTable() {
+    const view = viewRef.current;
+    if (!view) return;
+    const text = view.state.doc.toString();
+    const { text: next, cursor } = insertTable(
+      text,
+      view.hasFocus ? view.state.selection.main.head : text.length,
+    );
+    view.dispatch({
+      changes: { from: 0, to: text.length, insert: next },
+      userEvent: 'input',
+    });
+    // Start typing in the first body cell of the new grid.
+    requestAnimationFrame(() => {
+      for (const grid of view.dom.querySelectorAll<HTMLElement>(
+        '.quiz-answer-table',
+      )) {
+        if (view.posAtDOM(grid) !== cursor) continue;
+        grid
+          .querySelectorAll('tr')[1]
+          ?.firstElementChild?.dispatchEvent(
+            new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+          );
+      }
+    });
+  }
   return (
-    <div
-      ref={host}
-      className="quiz-answer-editor mt-1 w-full rounded-lg border border-white/15 bg-black/20"
-    />
+    <div className="quiz-answer-editor mt-1 w-full rounded-lg border border-white/15 bg-black/20">
+      {tableTools && (
+        <div className="flex flex-wrap items-center gap-1 border-b border-white/10 px-1.5 py-1 text-[11px] text-white/55">
+          {TABLE_ACTIONS.map(([action, label, title]) => (
+            <button
+              key={action}
+              type="button"
+              title={title}
+              className={`cursor-pointer rounded px-1.5 py-0.5 hover:bg-white/10 ${action.startsWith('delete') ? 'hover:text-red-300' : 'hover:text-white/85'}`}
+              // Keep focus in the cell so the action knows where it applies.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => tableTools(action)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div ref={host} />
+    </div>
   );
 }

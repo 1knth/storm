@@ -3,7 +3,12 @@ import { syntaxTree } from '@codemirror/language';
 
 /** Source ranges are kept intact: moving into a preview reveals the original text. */
 export function answerPreviewRanges(state: EditorState, focused: boolean) {
-  const ranges: { from: number; to: number; block: boolean }[] = [];
+  const ranges: {
+    from: number;
+    to: number;
+    block: boolean;
+    table?: boolean;
+  }[] = [];
   const active = (from: number, to: number) =>
     focused &&
     state.selection.ranges.some((selection) =>
@@ -13,6 +18,11 @@ export function answerPreviewRanges(state: EditorState, focused: boolean) {
     );
   const tree = syntaxTree(state);
   for (let block = tree.topNode.firstChild; block; block = block.nextSibling) {
+    // Tables are always edited as a grid, never as revealed source.
+    if (block.name === 'Table') {
+      ranges.push({ from: block.from, to: block.to, block: true, table: true });
+      continue;
+    }
     if (!active(block.from, block.to)) {
       ranges.push({ from: block.from, to: block.to, block: true });
       continue;
