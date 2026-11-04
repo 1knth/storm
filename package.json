@@ -60,7 +60,6 @@
     "@codemirror/commands": "6.8.1",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language": "6.13.1",
-    "@excalidraw/excalidraw": "0.18.1",
     "@lezer/highlight": "1.2.5",
     "@replit/codemirror-vim": "6.3.0",
     "chart.js": "4.5.1",
