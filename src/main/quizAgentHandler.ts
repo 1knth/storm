@@ -82,6 +82,7 @@ export function createQuizAgentHandler(
     | 'getImageForAgent'
     | 'releaseImageForAgent'
     | 'reconcileLearner'
+    | 'withTutorNotesFile'
   >,
   learnerState?: (
     scope: QuizScope | undefined,
@@ -130,7 +131,21 @@ export function createQuizAgentHandler(
           },
         };
       case 'attach': {
-        const result = await service.attachSession(request.sessionId);
+        const attached = await service.attachSession(request.sessionId);
+        const result = attached.ok
+          ? {
+              ...attached,
+              value: {
+                ...attached.value,
+                snapshot: {
+                  ...attached.value.snapshot,
+                  session: await service.withTutorNotesFile(
+                    attached.value.snapshot.session,
+                  ),
+                },
+              },
+            }
+          : attached;
         return {
           ...base,
           operation: 'attach',
@@ -205,11 +220,19 @@ export function createQuizAgentHandler(
         return { ...base, operation: 'image-release', result };
       }
       case 'snapshot': {
-        const snapshot = await service.getSnapshot(
+        const read = await service.getSnapshot(
           request.sessionId,
           request.recover ? 0 : (request.after ?? 0),
           request.compact && !request.recover,
         );
+        // Only recovery reads touch the vault; polling waits stay in memory.
+        const snapshot =
+          read && request.recover
+            ? {
+                ...read,
+                session: await service.withTutorNotesFile(read.session),
+              }
+            : read;
         if (!snapshot)
           return { ...base, operation: 'snapshot', snapshot: null };
         if (snapshot.session.agentToken !== request.agentToken)

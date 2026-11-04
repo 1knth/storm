@@ -23,7 +23,7 @@ mock.module('typebox', () => ({
     Array: type('array'),
   },
 }));
-const { default: extension } = await import('./storm-quiz');
+const { default: extension } = await import('./storm');
 
 type Call = { command: string; options: any };
 type Harness = ReturnType<typeof makePi>;
@@ -89,7 +89,7 @@ function makePi() {
     },
     getActiveTools: () => activeTools,
     async command(input: string) {
-      await commands.get('storm-quiz').handler(input, ctx);
+      await commands.get('storm').handler(input, ctx);
     },
     async emit(event: string, value?: any) {
       for (const fn of listeners.get(event) ?? []) await fn(value);
@@ -142,7 +142,7 @@ function save(){
 }
 function ok(value){process.stdout.write(JSON.stringify({ok:true,result:{ok:true,value}}));}
 if(a[0]==='study'){if(!s.study){ok({});}else if(op==='capabilities'){ok({schemaVersion:1});}else{let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{const r=JSON.parse(b);s.studyRequests=(s.studyRequests||[]).concat(r);save();ok(r.action==='open'?{studyId:'study-test',entries:[{path:'Course/Note.md'}]}:{studyId:'study-test',snapshotId:'a'.repeat(64),sources:[],chunks:[{id:'chunk-test',text:'Pinned course definition'}]});});}}
-else if(op==='capabilities'){ok(s.quizCapabilities ?? {integrationVersion:2,features:['learning','support-update','answer-confidence']});}
+else if(op==='capabilities'){ok(s.quizCapabilities ?? {integrationVersion:2,features:['learning', 'support-update', 'answer-confidence', 'tutor-notes']});}
 else if(op==='list'){ok(s.list ?? [{id:'quiz-test',status:s.listStatus ?? s.status}]);}
 else if(op==='attach'){ok({agentToken:'synthetic-capability',snapshot:{session:{id,revision:s.revision,eventCursor:s.cursor,status:s.status,scope:s.scope ?? 'synthetic'},events:[]}});}
 else if(op==='wait'){if(s.waitError){process.stderr.write(JSON.stringify({error:{code:s.waitError}}));process.exitCode=1;}else if(s.waitSnapshot){process.stdout.write(JSON.stringify({ok:true,snapshot:s.waitSnapshot,after:s.waitSnapshot.session.eventCursor,timedOut:false}));}else {process.stdin.resume();setInterval(()=>{},1000);}}
@@ -233,13 +233,13 @@ test('shared study context bootstraps the attached scope, guards question basis,
       'synthetic-capability',
     );
     await expect(
-      pi.tools.get('storm_quiz').execute('missing-basis', {
+      pi.tools.get('storm').execute('missing-basis', {
         action: 'question',
         kind: 'short-answer',
         text: 'Explain this',
       }),
     ).rejects.toThrow('studyBasis');
-    await pi.tools.get('storm_quiz').execute('with-basis', {
+    await pi.tools.get('storm').execute('with-basis', {
       action: 'question',
       kind: 'short-answer',
       text: 'Explain this',
@@ -253,7 +253,7 @@ test('shared study context bootstraps the attached scope, guards question basis,
     expect(pi.getActiveTools()).toContain('quiz');
     expect(pi.getActiveTools()).toContain('ask_user_question');
     expect(pi.getActiveTools()).not.toContain('storm_study');
-    expect(pi.getActiveTools()).not.toContain('storm_quiz');
+    expect(pi.getActiveTools()).not.toContain('storm');
   } finally {
     await pi.shutdown();
   }
@@ -264,11 +264,11 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await fixture();
     const pi = makePi();
     await attach(pi);
-    expect(pi.commands.has('storm-quiz')).toBe(true);
-    expect(pi.tools.has('storm_quiz')).toBe(true);
-    expect(pi.getActiveTools()).toEqual(['read', 'custom', 'storm_quiz']);
+    expect(pi.commands.has('storm')).toBe(true);
+    expect(pi.tools.has('storm')).toBe(true);
+    expect(pi.getActiveTools()).toEqual(['read', 'custom', 'storm']);
     expect(pi.calls[0].command).not.toContain('synthetic-capability');
-    expect(pi.tools.get('storm_quiz').description).not.toContain(
+    expect(pi.tools.get('storm').description).not.toContain(
       'synthetic-capability',
     );
     expect(pi.notices[0].message).toContain('Attached');
@@ -284,7 +284,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     const pi = makePi();
     await attach(pi);
     const result = await pi.tools
-      .get('storm_quiz')
+      .get('storm')
       .execute('call', { action: 'status' });
     expect(JSON.parse(result.content[0].text).revision).toBe(11);
     expect((await state(stateFile)).requests).toEqual([]);
@@ -296,7 +296,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     const pi = makePi();
     try {
       await attach(pi);
-      const tool = pi.tools.get('storm_quiz');
+      const tool = pi.tools.get('storm');
       await expect(
         tool.execute('map-bad', { action: 'map', focus: ['loops'] }),
       ).rejects.toThrow('first map update');
@@ -326,6 +326,31 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     }
   });
 
+  test('notes send tutor-notes without a context ID', async () => {
+    const { stateFile } = await fixture();
+    const pi = makePi();
+    try {
+      await attach(pi);
+      const tool = pi.tools.get('storm');
+      await expect(
+        tool.execute('notes-bad', { action: 'notes', text: 'x'.repeat(6001) }),
+      ).rejects.toThrow('at most 6000');
+      await tool.execute('notes-1', {
+        action: 'notes',
+        text: 'Plan: loop condition, then loop body.',
+      });
+      const [request] = (await state(stateFile)).requests;
+      expect(request).toMatchObject({
+        type: 'tutor-notes',
+        expectedRevision: 8,
+        text: 'Plan: loop condition, then loop body.',
+      });
+      expect(request.contextId).toBeUndefined();
+    } finally {
+      await pi.shutdown();
+    }
+  });
+
   test('learner reads use the held token without context or write bookkeeping', async () => {
     const learner = {
       concepts: [{ id: 'loop-condition', zone: 'zpd' }],
@@ -339,7 +364,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
       const originalContext = pi.calls[0].command.match(
         /"contextId":"([^"]+)"/,
       )![1];
-      const tool = pi.tools.get('storm_quiz');
+      const tool = pi.tools.get('storm');
       const result = await tool.execute('same-operation', {
         action: 'learner',
         contextId: undefined,
@@ -379,7 +404,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     const { stateFile } = await fixture();
     const pi = makePi();
     await attach(pi);
-    const tool = pi.tools.get('storm_quiz');
+    const tool = pi.tools.get('storm');
     await tool.execute('q', {
       action: 'question',
       text: 'Match',
@@ -521,7 +546,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await attach(pi);
     await flush();
     await flush();
-    expect(pi.getActiveTools()).not.toContain('storm_quiz');
+    expect(pi.getActiveTools()).not.toContain('storm');
     expect(
       pi.notices.filter(
         (n: any) => n.message === 'Storm stopped the quiz; Pi detached.',
@@ -532,7 +557,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     saved.status = 'waiting';
     await writeState(stateFile, saved);
     await attach(pi);
-    expect(pi.getActiveTools()).toContain('storm_quiz');
+    expect(pi.getActiveTools()).toContain('storm');
     await pi.shutdown();
   });
 
@@ -542,7 +567,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await attach(pi);
     await flush();
     await flush();
-    expect(pi.getActiveTools()).toContain('storm_quiz');
+    expect(pi.getActiveTools()).toContain('storm');
     expect(
       pi.notices.some(
         (n: any) => n.message === 'Storm stopped the quiz; Pi detached.',
@@ -585,7 +610,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     expect(delivered?.command).toContain(join(dir, 'learner.png'));
     expect(delivered?.command).not.toMatch(/base64|data:image/);
     expect((await state(stateFile)).released).toBeUndefined();
-    await pi.tools.get('storm_quiz').execute('reply', {
+    await pi.tools.get('storm').execute('reply', {
       action: 'message',
       text: 'I inspected the image.',
     });
@@ -620,12 +645,12 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
         throw new Error('The learner image context was not delivered.');
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    await pi.tools.get('storm_quiz').execute('reply', {
+    await pi.tools.get('storm').execute('reply', {
       action: 'feedback',
       text: 'I reviewed the image.',
     });
     expect((await state(stateFile)).released).toBeUndefined();
-    await pi.tools.get('storm_quiz').execute('reply-again', {
+    await pi.tools.get('storm').execute('reply-again', {
       action: 'message',
       text: 'Follow-up.',
     });
@@ -708,7 +733,7 @@ test('incompatible app cannot attach or activate the new extension', async () =>
   try {
     await attach(pi);
     expect(pi.calls).toHaveLength(0);
-    expect(pi.getActiveTools()).not.toContain('storm_quiz');
+    expect(pi.getActiveTools()).not.toContain('storm');
     expect(pi.notices.some((n) => n.message.includes('incompatible'))).toBe(
       true,
     );
@@ -723,7 +748,7 @@ test('new Tutor questions enforce metadata and support updates forward actual he
   const pi = makePi();
   try {
     await attach(pi);
-    const tool = pi.tools.get('storm_quiz');
+    const tool = pi.tools.get('storm');
     await expect(
       tool.execute('missing-learning', {
         action: 'question',

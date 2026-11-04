@@ -53,6 +53,7 @@ import { registerVaultRegistryIpc } from './main/registerVaultRegistryIpc';
 import { AgentBroker } from './main/agentBroker';
 import { createQuizAgentHandler } from './main/quizAgentHandler';
 import { runVaultLifecycleExclusive } from './main/vaultLifecycle';
+import { createTutorNotesFile } from './main/tutorNotesFile';
 import { bindAgentBrokerIpc, registerAgentIpc } from './main/registerAgentIpc';
 import {
   isAcceptedUrl,
@@ -153,6 +154,11 @@ const quizService = new QuizService(
     ),
   (session, question) => learnerStore.recordQuestion(session, question),
   (entries) => learnerStore.recordGrades(entries),
+  createTutorNotesFile({
+    vaults: async () => (await vaultRegistry.list()).vaults,
+    exclusive: (root, operation) =>
+      runVaultLifecycleExclusive(root, () => vaultWriteBarrier.run(operation)),
+  }),
 );
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;

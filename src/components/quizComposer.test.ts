@@ -236,7 +236,7 @@ test('all four answer payloads include the learner confidence and existing field
 });
 
 test('the Pi clipboard route carries only the attach command', () => {
-  assert.equal(quizPiAttachCommand('quiz-1'), '/storm-quiz attach quiz-1');
+  assert.equal(quizPiAttachCommand('quiz-1'), '/storm attach quiz-1');
 });
 
 test('CLI instructions bootstrap an agent without restating help', () => {

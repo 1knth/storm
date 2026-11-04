@@ -16,8 +16,8 @@ export const tutorRepo = path.resolve(
   '..',
 );
 export const TUTOR_SOURCES = [
-  'extensions/storm-quiz.ts',
-  'extensions/storm-quiz-runtime.ts',
+  'extensions/storm.ts',
+  'extensions/storm-runtime.ts',
   'src/shared/quizProtocol.ts',
   'src/shared/quizAgentContext.ts',
   'src/shared/quizIntegrationVersion.ts',
@@ -144,7 +144,7 @@ export function checkTutorCapabilities(
 
 export function tutorDoctor(repo = tutorRepo, env: Environment = process.env) {
   const sources = tutorSourceDiagnostics(repo);
-  const target = path.join(piAgentDir(env), 'extensions/storm-quiz.ts');
+  const target = path.join(piAgentDir(env), 'extensions/storm.ts');
   const manifest = path.join(piAgentDir(env), 'storm-tutor-install.json');
   let installed: unknown = null;
   if (existsSync(manifest))

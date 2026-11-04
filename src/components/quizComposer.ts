@@ -136,7 +136,7 @@ export function handleQuizComposerEnter(
 /** The Pi route needs only the command: the extension's attach prompt carries
  * the tutoring, waiter-ownership, and Continue rules once attached. */
 export function quizPiAttachCommand(sessionId: string): string {
-  return `/storm-quiz attach ${sessionId}`;
+  return `/storm attach ${sessionId}`;
 }
 
 /** Agents without the extension get bootstrap facts plus a pointer to CLI help,

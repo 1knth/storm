@@ -13,6 +13,7 @@ import {
   type QuizScope,
   type QuizSession,
   type QuizSnapshot,
+  TUTOR_NOTES_MAX_LENGTH,
 } from '../shared/quizProtocol';
 import {
   orderQuizChoices,
@@ -24,6 +25,7 @@ import {
   isLessonMapUpdate,
 } from '../shared/lessonMap';
 import { QuizStore } from './quizStore';
+import type { TutorNotesFile } from './tutorNotesFile';
 import {
   MAX_QUIZ_MESSAGE_IMAGES,
   QuizImageRegistry,
@@ -87,6 +89,7 @@ export class QuizService {
     private readonly recordAttempts?: (
       entries: Array<{ session: QuizSession; question: QuizQuestion }>,
     ) => Promise<void>,
+    private readonly tutorNotesFile?: TutorNotesFile,
   ) {
     // A persisted connected state belongs to a prior process. Recover it once,
     // before any new operation can attach or observe a session.
@@ -493,6 +496,67 @@ export class QuizService {
     return { ok: true, value: result };
   }
 
+  /** Tutor notes are handoff metadata, committed like the lesson map. */
+  private async setTutorNotes(
+    request: Extract<QuizAgentRequest, { type: 'tutor-notes' }>,
+    current: QuizSession,
+  ): Promise<QuizResult<QuizSession>> {
+    const text = request.text.trim();
+    if (!text || text.length > TUTOR_NOTES_MAX_LENGTH)
+      return { ok: false, error: 'invalid-input' };
+    if (current.status !== 'connected')
+      return { ok: false, error: 'invalid-state' };
+    // The vault file is the copy learners and later sessions read. The session
+    // copy is the fallback for unscoped quizzes or an unavailable vault.
+    let file: { vaultId: string; path: string } | undefined;
+    if (current.scope && this.tutorNotesFile)
+      try {
+        file = {
+          vaultId: current.scope.vaultId,
+          path: await this.tutorNotesFile.write(
+            current.scope,
+            current.id,
+            text,
+          ),
+        };
+      } catch {
+        file = undefined;
+      }
+    const result = await this.store.setLessonMap(
+      request.sessionId,
+      request.agentToken,
+      (session) =>
+        session.status !== 'connected'
+          ? 'invalid-state'
+          : {
+              ...session,
+              tutorNotes: {
+                text,
+                version: (session.tutorNotes?.version ?? 0) + 1,
+                updatedAt: this.now(),
+                ...file,
+              },
+            },
+    );
+    if (result === undefined) return { ok: false, error: 'unauthorized' };
+    if (typeof result === 'string')
+      return {
+        ok: false,
+        error: result === 'invalid-state' ? 'invalid-state' : 'invalid-input',
+      };
+    return { ok: true, value: result };
+  }
+
+  /** Prefer the vault file, which the learner may have edited since it was written. */
+  async withTutorNotesFile(session: QuizSession): Promise<QuizSession> {
+    const notes = session.tutorNotes;
+    if (!notes?.path || !notes.vaultId || !this.tutorNotesFile) return session;
+    const text = await this.tutorNotesFile.read(notes.vaultId, notes.path);
+    return text && text !== notes.text
+      ? { ...session, tutorNotes: { ...notes, text } }
+      : session;
+  }
+
   async setAgentActivity(
     sessionId: string,
     agentToken: string,
@@ -527,6 +591,8 @@ export class QuizService {
     if (request.agentToken !== current.agentToken)
       return { ok: false, error: 'unauthorized' };
     if (request.type === 'lesson-map') return this.setLessonMap(request);
+    if (request.type === 'tutor-notes')
+      return this.setTutorNotes(request, current);
     const result = await this.applyRequest(current, request);
     if (
       request.type === 'pose-question' &&

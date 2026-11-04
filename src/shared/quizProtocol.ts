@@ -108,6 +108,17 @@ export type QuizMessage = {
     chosenChoiceText?: string;
   };
 };
+/** Bounded, overwritable notes a later agent session reads on attach. */
+export type QuizTutorNotes = {
+  text: string;
+  version: number;
+  updatedAt: string;
+  /** Vault-relative Markdown file holding the notes, when the quiz has a scope. */
+  path?: string;
+  vaultId?: string;
+};
+export const TUTOR_NOTES_MAX_LENGTH = 6000;
+
 export type QuizSession = {
   id: string;
   /** User-editable display name; absent in older persisted sessions. */
@@ -120,6 +131,8 @@ export type QuizSession = {
   scope?: QuizScope;
   /** Live lesson dependency map maintained by the agent; absent until posted. */
   lessonMap?: QuizLessonMap;
+  /** Agent-private handoff notes (plan, ledger, next step); absent until written. */
+  tutorNotes?: QuizTutorNotes;
   status: 'waiting-agent' | 'connected' | 'disconnected' | 'complete';
   transcript: QuizMessage[];
   currentQuestion: QuizQuestion | null;
@@ -208,6 +221,15 @@ export type QuizAgentRequest = (
       expectedRevision: number;
       idempotencyKey: string;
       map: LessonMapUpdate;
+    }
+  | {
+      /** Metadata-only: replaces the tutor handoff notes without advancing revision. */
+      type: 'tutor-notes';
+      sessionId: string;
+      agentToken: string;
+      expectedRevision: number;
+      idempotencyKey: string;
+      text: string;
     }
   | {
       type: 'agent-message';

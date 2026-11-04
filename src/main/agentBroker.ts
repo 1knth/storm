@@ -5,7 +5,10 @@ import {
   type StudyValue,
 } from '../shared/studyContext';
 import { isAgentEditPlan } from '../shared/agentEditValidation';
-import { quizLearningFromRequest } from '../shared/quizProtocol';
+import {
+  quizLearningFromRequest,
+  TUTOR_NOTES_MAX_LENGTH,
+} from '../shared/quizProtocol';
 import { isLessonMapUpdate } from '../shared/lessonMap';
 import type {
   AgentBridgeRequest,
@@ -1068,6 +1071,12 @@ function isQuizAgentRequest(value: unknown): boolean {
       r.text.length <= 10000
     );
   if (r.type === 'lesson-map') return isLessonMapUpdate(r.map);
+  if (r.type === 'tutor-notes')
+    return (
+      typeof r.text === 'string' &&
+      !!r.text.trim() &&
+      r.text.length <= TUTOR_NOTES_MAX_LENGTH
+    );
   if (r.type === 'feedback' || r.type === 'agent-message')
     return (
       typeof r.text === 'string' &&

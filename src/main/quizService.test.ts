@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QuizService } from './quizService';
 import { QuizStore } from './quizStore';
+import { quizAgentSession } from '../shared/quizAgentContext';
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'storm-quiz-'));
@@ -537,6 +538,61 @@ describe('QuizService', () => {
       const snapshot = await f.service.getSnapshot(f.session.id);
       assert.deepEqual(snapshot?.session.lessonMap?.focus, ['constant-laws']);
       assert.equal(snapshot?.session.lessonMap?.nodes.length, 2);
+    } finally {
+      await rm(f.dir, { recursive: true, force: true });
+    }
+  });
+  test('tutor notes are metadata-only, versioned, and survive reattach', async () => {
+    const f = await fixture();
+    try {
+      const attached = await f.service.attachSession(f.session.id);
+      assert.equal(attached.ok, true);
+      if (!attached.ok) return;
+      const revision = attached.value.snapshot.session.revision;
+      const notes = (agentToken: string, text: string, key: string) =>
+        f.service.request({
+          type: 'tutor-notes',
+          sessionId: f.session.id,
+          agentToken,
+          expectedRevision: revision,
+          idempotencyKey: key,
+          text,
+        });
+      const token = attached.value.agentToken;
+      const first = await notes(token, 'Plan: identity laws first.', 'n-1');
+      assert.equal(first.ok, true);
+      if (!first.ok) return;
+      assert.equal(first.value.revision, revision);
+      assert.equal(first.value.tutorNotes?.version, 1);
+      const second = await notes(token, '  Next: constant laws.  ', 'n-2');
+      assert.equal(second.ok && second.value.tutorNotes?.version, 2);
+      assert.equal(
+        second.ok && second.value.tutorNotes?.text,
+        'Next: constant laws.',
+      );
+      assert.deepEqual(await notes(token, '   ', 'n-3'), {
+        ok: false,
+        error: 'invalid-input',
+      });
+      assert.deepEqual(await notes(token, 'x'.repeat(6001), 'n-4'), {
+        ok: false,
+        error: 'invalid-input',
+      });
+
+      await f.service.disconnectAgent(f.session.id, token);
+      const reattached = await f.service.attachSession(f.session.id);
+      assert.equal(reattached.ok, true);
+      if (!reattached.ok) return;
+      const session = reattached.value.snapshot.session;
+      assert.equal(session.tutorNotes?.text, 'Next: constant laws.');
+      assert.equal(
+        quizAgentSession(session).tutorNotes?.text,
+        'Next: constant laws.',
+      );
+      assert.deepEqual(await notes('wrong-token', 'forged', 'n-5'), {
+        ok: false,
+        error: 'unauthorized',
+      });
     } finally {
       await rm(f.dir, { recursive: true, force: true });
     }

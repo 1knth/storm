@@ -3,7 +3,7 @@
 Keep the app, CLI, maintained Pi extension, and Tutor prompt together. Storm's app
 version is not a protocol compatibility check: different builds can have the same
 app version. The current quiz integration contract is **2** and requires the
-`learning`, `support-update`, and `answer-confidence` features, plus study schema
+`learning`, `support-update`, `answer-confidence`, and `tutor-notes` features, plus study schema
 version **1** for the dedicated Tutor launcher.
 
 ## Build and launch
@@ -18,7 +18,7 @@ pnpm tutor
 ```
 
 `pnpm tutor` requires Bun and Pi on PATH. It loads the checkout's
-`extensions/storm-quiz.ts` and `skills/storm/TUTOR.md` directly and checks the
+`extensions/storm.ts` and `skills/storm/TUTOR.md` directly and checks the
 running app through read-only `quiz capabilities` and `study capabilities`
 requests before starting Pi or creating its session directory. A CLI that can
 read study sources but lacks learning/support updates fails preflight with an
@@ -58,7 +58,7 @@ pnpm tutor:install
 pnpm tutor:install --pi-agent-dir /absolute/path/to/pi/agent
 ```
 
-The installer writes only `extensions/storm-quiz.ts` and
+The installer writes only `extensions/storm.ts` and
 `storm-tutor-install.json` inside the selected agent directory. The wrapper imports
 this checkout's extension and deployment helper by absolute path. It does not copy
 dependencies into `storm-integration`, change Pi settings, contact Storm, start Pi,
@@ -67,11 +67,16 @@ moves. Existing stale `storm-integration` directories are left untouched for
 rollback but are no longer imported by this wrapper.
 
 A different existing wrapper is saved as
-`extensions/storm-quiz.ts.backup-HASH`; the exact backup path is printed in the
+`extensions/storm.ts.backup-HASH`; the exact backup path is printed in the
 installer's JSON output. Repeating the install is idempotent. Source changes refresh
 the manifest hashes without making redundant wrapper backups. Environment CLI
 and argument overrides continue to win. Custom code inside an old wrapper is
 preserved in the backup; it is not evaluated or migrated into Pi settings.
+
+The extension was previously named `storm-quiz`. If `extensions/storm-quiz.ts`
+exists, the installer saves it as `extensions/storm-quiz.ts.backup-HASH` and
+removes it, so Pi does not load two copies. The command is now `/storm` and the
+tool is `storm`.
 
 The global wrapper loads the Storm extension in ordinary Pi sessions. It does not
 replace their system prompt. Use `pnpm tutor` to load the maintained Tutor system
@@ -100,12 +105,12 @@ and explicitly reattach only when the quiz permits it.
 To restore the old wrapper, use the exact backup path from the installation output:
 
 ```sh
-cp '/absolute/path/to/storm-quiz.ts.backup-HASH' '/absolute/path/to/extensions/storm-quiz.ts'
+cp '/absolute/path/to/storm.ts.backup-HASH' '/absolute/path/to/extensions/storm.ts'
 ```
 
 Then restart Pi. The manifest may show a wrapper mismatch until you reinstall;
 it is diagnostic metadata. If there was no previous wrapper, remove only the new
-`extensions/storm-quiz.ts` and `storm-tutor-install.json` to undo the installation,
+`extensions/storm.ts` and `storm-tutor-install.json` to undo the installation,
 then restart Pi. No settings rollback is needed.
 
 Deployment regressions run with a temporary fake Pi directory, fake CLI, and fake

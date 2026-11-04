@@ -5,6 +5,7 @@ export const QUIZ_REQUIRED_FEATURES = [
   'learning',
   'support-update',
   'answer-confidence',
+  'tutor-notes',
 ] as const;
 
 export function quizIntegrationCompatibilityError(

@@ -21,7 +21,7 @@ computed (due reviews appear in learner recommendations) but has no dedicated
   question ID. Unscoped sessions are isolated by session ID; rated untagged
   grades are calibration-only evidence with unknown support.
 - Agent surface: `storm quiz learner SESSION_ID --token TOKEN` and the Pi
-  `storm_quiz` `learner` action; Tutor prompts carry the session policy below.
+  `storm` `learner` action; Tutor prompts carry the session policy below.
 
 All numeric parameters (band, level difficulties, K-factor, stability weights,
 confident-error threshold) are unfitted starting values.
@@ -60,7 +60,7 @@ only work within one conversation.
 ## What Storm does today
 
 - Tutor chooses each question from conversation context alone
-  (`skills/storm/TUTOR.md`, `extensions/storm-quiz.ts`).
+  (`skills/storm/TUTOR.md`, `extensions/storm.ts`).
 - A question has a kind, prompt, choices, optional `studyBasis`, and an optional
   agent `verdict` (`src/shared/quizProtocol.ts`). It has no concept/outcome tag,
   difficulty level, help condition, learner confidence, or latency.
@@ -153,7 +153,7 @@ review datasets), gives each concept a due date. Ability and retention stay
 separate dimensions, as TEACHING-MODEL.md requires. Response time can refine
 multiple-choice scheduling, as in ARTS; free-text latency is too noisy to use.
 
-**Tool surface.** A read-only `learner` action on `storm_quiz` returns compact
+**Tool surface.** A read-only `learner` action on `storm` returns compact
 state for the attached scope: each concept's zone, evidence counts, predicted
 success per level, due reviews, and up to three candidate next items with a
 one-line reason. Tutor still chooses and teaches; the application owns the

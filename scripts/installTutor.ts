@@ -31,6 +31,22 @@ function replaceFile(target: string, contents: string) {
   }
 }
 
+/** The extension was renamed from storm-quiz; Pi would otherwise load both. */
+function retireLegacyWrapper(agentDir: string): string | null {
+  const legacy = path.join(agentDir, 'extensions/storm-quiz.ts');
+  if (!existsSync(legacy)) return null;
+  const previous = readFileSync(legacy, 'utf8');
+  const backup = `${legacy}.backup-${hash(previous).slice(0, 16)}`;
+  if (!existsSync(backup))
+    copyFileSync(legacy, backup, constants.COPYFILE_EXCL);
+  else if (readFileSync(backup, 'utf8') !== previous)
+    throw new Error(
+      `Backup collision at ${backup}; the legacy extension was preserved.`,
+    );
+  rmSync(legacy);
+  return backup;
+}
+
 export function installTutor(
   options: { repo?: string; agentDir?: string } = {},
 ) {
@@ -39,7 +55,7 @@ export function installTutor(
   // Read all sources before writing anything. Never install a broken checkout.
   const sources = tutorSourceDiagnostics(repo);
   const wrapper = `// Storm Tutor installer v${sources.integrationVersion}. Maintained source, no copied dependencies.
-import stormQuiz from ${JSON.stringify(path.join(repo, 'extensions/storm-quiz.ts'))};
+import stormQuiz from ${JSON.stringify(path.join(repo, 'extensions/storm.ts'))};
 import { configureTutorCli } from ${JSON.stringify(path.join(repo, 'scripts/tutorDeployment.ts'))};
 
 export default function (pi) {
@@ -48,7 +64,7 @@ export default function (pi) {
   return stormQuiz(pi);
 }
 `;
-  const target = path.join(agentDir, 'extensions/storm-quiz.ts');
+  const target = path.join(agentDir, 'extensions/storm.ts');
   const manifestPath = path.join(agentDir, 'storm-tutor-install.json');
   const previous = existsSync(target) ? readFileSync(target, 'utf8') : null;
   const changed = previous !== wrapper;
@@ -73,10 +89,12 @@ export default function (pi) {
     if (changed) replaceFile(target, wrapper);
     if (manifestChanged) replaceFile(manifestPath, manifestText);
   }
+  const legacyBackup = retireLegacyWrapper(agentDir);
   return {
     changed,
     manifestChanged,
     backup,
+    legacyBackup,
     manifestPath,
     ...manifest,
     restart:

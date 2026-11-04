@@ -14,7 +14,7 @@ mock.module('typebox', () => ({
     ),
   ),
 }));
-const { default: extension } = await import('./storm-quiz');
+const { default: extension } = await import('./storm');
 
 const contextId = (text: string) => text.match(/"contextId":"([^"]+)"/)![1];
 const pause = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -40,7 +40,7 @@ const file = n => path.join(root,n), exists = n => fs.existsSync(file(n));
 const log = (n,v) => fs.appendFileSync(file(n),JSON.stringify(v)+'\\n');
 const ok = value => process.stdout.write(JSON.stringify({ok:true,result:{ok:true,value}}));
 const session = {id:args[2],revision:8,eventCursor:3,status:'connected'};
-if(op==='capabilities') ok({integrationVersion:2,features:['learning','support-update','answer-confidence']});
+if(op==='capabilities') ok({integrationVersion:2,features:['learning', 'support-update', 'answer-confidence', 'tutor-notes']});
 else if(op==='attach') ok({agentToken:'synthetic',snapshot:{session,events:[]}});
 else if(op==='activity'||op==='detach') ok({});
 else if(op==='status') process.stdout.write(JSON.stringify({ok:true,operation:'snapshot',snapshot:{session,events:[]}}));
@@ -119,7 +119,7 @@ else if(op==='request') {
     cliArgs: JSON.stringify([executable]),
     flag: (name: string) => writeFile(join(dir, name), ''),
     unflag: (name: string) => rm(join(dir, name), { force: true }),
-    command: (input: string) => commands.get('storm-quiz').handler(input, ctx),
+    command: (input: string) => commands.get('storm').handler(input, ctx),
     busy: () => {
       idle = false;
     },
@@ -164,7 +164,7 @@ test('a transient listener failure recovers without losing the pending event', a
     await pause(60);
     await f.unflag('fail-wait');
     await f.flag('allow-events');
-    await f.tools.get('storm_quiz').execute('status', { action: 'status' });
+    await f.tools.get('storm').execute('status', { action: 'status' });
     await f.command('status');
     await until(() => f.calls.length === 2);
     expect((await f.log('waits.log')).length).toBeGreaterThanOrEqual(2);
@@ -188,14 +188,14 @@ test('queued learner activity rejects an older turn context without submitting i
     await until(() => f.calls.length === 2);
     expect(f.calls[1].options).toEqual({ deliverAs: 'followUp' });
     await expect(
-      f.tools.get('storm_quiz').execute('old-turn', {
+      f.tools.get('storm').execute('old-turn', {
         action: 'message',
         text: 'Response prepared before the new requirement.',
         contextId: contextId(f.calls[0].text),
       }),
     ).rejects.toThrow('Stale contextId');
     expect(await f.log('requests.log')).toEqual([]);
-    await f.tools.get('storm_quiz').execute('new-turn', {
+    await f.tools.get('storm').execute('new-turn', {
       action: 'message',
       text: 'I will use the new requirement.',
       contextId: contextId(f.calls[1].text),
@@ -235,14 +235,14 @@ test('an old-turn reply cannot release a queued image; its owning context can', 
     await until(() => f.calls.length === 2);
     expect(f.calls[1].options).toEqual({ deliverAs: 'followUp' });
     await expect(
-      f.tools.get('storm_quiz').execute('old-turn', {
+      f.tools.get('storm').execute('old-turn', {
         action: 'message',
         text: 'Reply to an earlier topic.',
         contextId: contextId(f.calls[0].text),
       }),
     ).rejects.toThrow('Stale contextId');
     expect(await f.log('released.log')).toEqual([]);
-    await f.tools.get('storm_quiz').execute('image-turn', {
+    await f.tools.get('storm').execute('image-turn', {
       action: 'message',
       text: 'I reviewed the image.',
       contextId: contextId(f.calls[1].text),
@@ -258,7 +258,7 @@ test('identical retry after a lost reply preserves its idempotency key and revis
   try {
     await f.command('attach diagnostic');
     await f.flag('drop-reply');
-    const tool = f.tools.get('storm_quiz');
+    const tool = f.tools.get('storm');
     const request = {
       action: 'message',
       text: 'Same intended reply.',
@@ -291,7 +291,7 @@ test('switching quizzes invalidates the old queued context', async () => {
     await f.command('attach new-quiz');
     // The old follow-up is already in Pi's queue; stop() cannot retract it.
     await expect(
-      f.tools.get('storm_quiz').execute('old-event-reply', {
+      f.tools.get('storm').execute('old-event-reply', {
         action: 'message',
         text: 'Response to OLD-QUIZ-learner-request.',
         contextId: contextId(f.calls[1].text),
@@ -307,7 +307,7 @@ test('model-facing schemas expose limits, context ownership, and Continue effect
   const f = await fixture();
   try {
     const variants = f.tools
-      .get('storm_quiz')
+      .get('storm')
       .parameters.args[1].anyOf.map((variant: any) => variant.args[0]);
     const prompt = variants.find(
       (fields: any) => fields.action.args[0] === 'prompt',
@@ -315,7 +315,7 @@ test('model-facing schemas expose limits, context ownership, and Continue effect
     expect(prompt.text.args[0].maxLength).toBe(4000);
     expect(prompt.contextId).toBeDefined();
     expect(prompt.choices.args[0].args[0]).toHaveProperty('effect');
-    const schema = f.tools.get('storm_quiz').parameters.args[0];
+    const schema = f.tools.get('storm').parameters.args[0];
     const learner = variants.find(
       (fields: any) => fields.action.args[0] === 'learner',
     );
@@ -357,7 +357,7 @@ test('real CLI validation returns a safe actionable error to the model', async (
       new URL('../scripts/storm.ts', import.meta.url).pathname,
     ]);
     await expect(
-      f.tools.get('storm_quiz').execute('too-long', {
+      f.tools.get('storm').execute('too-long', {
         contextId: contextId(f.calls[0].text),
         action: 'prompt',
         kind: 'clarification',

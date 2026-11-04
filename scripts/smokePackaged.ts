@@ -337,7 +337,7 @@ try {
     },
   });
   assert.equal(launch.status, 0, launch.stderr);
-  assert.ok(launch.stdout.includes(resolve('extensions/storm-quiz.ts')));
+  assert.ok(launch.stdout.includes(resolve('extensions/storm.ts')));
   assert.ok(launch.stdout.includes(resolve('skills/storm/TUTOR.md')));
   console.log(
     JSON.stringify({

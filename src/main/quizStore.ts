@@ -45,6 +45,9 @@ function preserveSessionMetadata(
     ...((current.lessonMap?.version ?? 0) > (incoming.lessonMap?.version ?? 0)
       ? { lessonMap: current.lessonMap }
       : {}),
+    ...((current.tutorNotes?.version ?? 0) > (incoming.tutorNotes?.version ?? 0)
+      ? { tutorNotes: current.tutorNotes }
+      : {}),
   };
 }
 
@@ -370,7 +373,7 @@ export class QuizStore {
     });
   }
 
-  /** Metadata-only lesson map write by the attached agent. */
+  /** Metadata-only write (lesson map, tutor notes) by the attached agent. */
   async setLessonMap(
     id: string,
     agentToken: string,

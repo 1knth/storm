@@ -2143,6 +2143,59 @@ test('quiz request forwards lesson-map updates to the broker', async () => {
   }
 });
 
+test('quiz request forwards tutor-notes updates to the broker', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'storm-cli-notes-'));
+  const requests: any[] = [];
+  const endpoint = await startAgentEndpoint({
+    userDataPath: directory,
+    broker: {
+      async handle(request: any) {
+        requests.push(request);
+        return {
+          protocol: 1,
+          requestId: request.requestId,
+          ok: true,
+          type: 'quiz',
+          operation: 'request',
+          result: { ok: true, value: {} },
+        };
+      },
+    },
+  });
+  try {
+    let error = '';
+    const code = await runCli(
+      [
+        '--endpoint',
+        endpoint.metadataPath,
+        'quiz',
+        'request',
+        'quiz-1',
+        '--token',
+        'synthetic',
+      ],
+      {
+        stdin: Readable.from([
+          JSON.stringify({
+            type: 'tutor-notes',
+            expectedRevision: 1,
+            idempotencyKey: 'notes-1',
+            text: 'Plan: constant laws next.',
+          }),
+        ]),
+        stdout: () => {},
+        stderr: (text) => (error += text),
+      },
+    );
+    assert.equal(code, 0, error);
+    assert.equal(requests.at(-1).request.type, 'tutor-notes');
+    assert.equal(requests.at(-1).request.text, 'Plan: constant laws next.');
+  } finally {
+    await endpoint.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('quiz request validates learning tags before sending pose-question', async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), 'storm-cli-learning-'),

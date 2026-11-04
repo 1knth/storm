@@ -6,6 +6,7 @@ import {
   QUIZ_CONCEPT_ID,
   QUIZ_MAX_CONCEPTS,
   QUIZ_SUPPORTS,
+  TUTOR_NOTES_MAX_LENGTH,
 } from '../src/shared/quizProtocol';
 import {
   applyLessonMapUpdate,
@@ -33,7 +34,7 @@ import {
   attachPrompt,
   learnerNotification,
   modelSession,
-} from './storm-quiz-runtime';
+} from './storm-runtime';
 
 type ResponseContext = { revision: number; cursor: number; imageIds: string[] };
 type PendingOperation = {
@@ -518,9 +519,7 @@ export default function (pi: ExtensionAPI) {
   const removeQuizTool = () => {
     const activeTools = pi.getActiveTools();
     pi.setActiveTools(
-      activeTools.filter(
-        (name) => name !== 'storm_quiz' && name !== 'storm_study',
-      ),
+      activeTools.filter((name) => name !== 'storm' && name !== 'storm_study'),
     );
   };
 
@@ -660,6 +659,10 @@ export default function (pi: ExtensionAPI) {
     Type.Object({ action: Type.Literal('status') }),
     Type.Object({ action: Type.Literal('learner') }),
     Type.Object({
+      action: Type.Literal('notes'),
+      text: text(TUTOR_NOTES_MAX_LENGTH),
+    }),
+    Type.Object({
       action: Type.Literal('map'),
       nodes: Type.Optional(
         Type.Array(
@@ -768,6 +771,7 @@ export default function (pi: ExtensionAPI) {
         'message',
         'prompt',
         'map',
+        'notes',
       ]),
       contextId: Type.Optional(
         Type.String({
@@ -965,10 +969,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: 'storm_quiz',
-    label: 'Storm Quiz',
+    name: 'storm',
+    label: 'Storm',
     description:
-      'Every write requires contextId from the update it answers. Read status to reconcile stale contexts; context reads earlier or omitted source sections; image retrieves a historical attachment by ID when still available. Reuse operationId for an identical uncertain retry. Operate the explicitly attached Storm quiz. After Continue and before posing a question, read learner (read-only; no contextId). Every new substantive question requires complete concepts/level/support tags or an explicit unmodelledReason without tags. Reuse concept IDs from learner state; propose a new slug only for a genuinely new concept. Record help actually supplied, including relevant help supplied before posing. For help supplied after posing and before the answer, use support-update with questionId, support, contextId, and the actual help in text; it displays the help and preserves the strongest supplied support. A worked example or supplied solution means worked, a supplied hint means hinted, otherwise independent. Never report planned help as supplied. High-confidence incorrect or partial answers are correction candidates; address the actual misconception or missing part. Discuss calibration only when calibration.guidanceEligible is true; this requires at least 20 ratings and an absolute bias of at least 15 points (tunable). Make at most one brief, supportive comment per session and tie it to useful practice. Recheck diagnosed misconceptions later with a fresh independent item. Read learner recording diagnostics before relying on complete evidence. Answer events include learner confidence (data.confidence, 0–100). After /storm-quiz attach, use question after Continue, feedback for an answer, message for tutoring chat, prompt with kind next-steps or clarification and 1–6 choices for genuine learner choices, and status to inspect state. Feedback must set its explicit verdict field (correct, partial, or incorrect); Storm displays the verdict and selected option, so do not repeat a verdict heading or selected option in feedback text. Explain why and address supplied reasoning without duplicating Continue instructions. Continue only through explicit Continue or learner Skip. When a response leaves the learner without an open question or prompt, end it with a short line on what was just covered and what you expect next (for example, try a similar problem, ask about anything unclear, or Continue to the next question); offer a next-steps prompt when there are genuine choices. A learner chat message of just "Continue." means proceed with your planned next step, usually the next question. When the learner explicitly asks to skip, clear, or replace an ungraded question, use skip-question with its questionId and explanation text, then honor their requested next step. Never fabricate a verdict for a chat command submitted as an answer. Do not use em dashes in original learner-facing prose; preserve exact source quotations. Write answer choices, matching items, and next-step labels as ordinary text with inline Markdown only (emphasis, code, or math when useful). Never use Markdown headings (# through ###### or setext underlines) or wrap an entire option in bold. For example, send "Check each employee’s hours to identify overtime payments.", not "### Check each employee’s hours to identify overtime payments." Reserve headings for sections in substantial explanations; short questions and feedback usually need paragraphs only. Format question stems with readable Markdown paragraphs and real newlines, and use structured choices instead of duplicating options in the stem. Storm fixes the learner-facing display order when a question is posed: multiple-choice options are reordered (pure quantities ascending, summary options such as “all of the above” last) and the matching option column is reordered away from the authored pair order. Track the correct answer by choice ID, never by position, letter or authored index, and do not refer to “the first option” in a stem or in feedback; read the stored order from status, history or the question action response when you need it. Question quality matters more than quantity. Ask for reasoning, application or discrimination, not for a label the stem already supplies or an answer available without the material. Keep one clear question per stem, state the setup before the question, and avoid double negatives and except/not stacking. Pitch difficulty through the recommended level and support rather than trick wording. Every multiple-choice distractor must be a mistake a learner plausibly makes: a common misconception, a neighbouring concept, or a predictable procedural slip. Three obviously wrong options waste the item. Keep options parallel in grammatical form, length and specificity; do not let the correct option be the longest, the most hedged or the only one echoing a stem keyword, and do not reserve absolutes such as always or never for distractors. Use all/none of the above only when the content genuinely calls for it. For matching, give each left item exactly one defensible partner and make each option plausible for more than one item. Richer learner-facing formatting is available in question stems, feedback and chat: callout blockquotes with the first line “> [!NOTE] optional title”, and the labels note, info, tip, hint, example, important, warning and caution. Hints render as a collapsed disclosure the learner opens on purpose; append - to collapse any callout or + to open it. A hint shipped with a question is help offered, so tag that question support hinted. GFM tables, task lists, footnotes, fenced code with a language, inline and display math, and mermaid fences also render. Raw HTML does not render. Keep answer choices, matching items and next-step labels free of callouts, which stay plain text there. Use map (no contextId) to maintain the live lesson map pinned above the quiz: send nodes (id = concept slug, short label) and edges ([prerequisite, dependent]) once after the plan is approved, plus optional goal. Later send only statuses as [{id, status}] (not-started, introduced, guided, independent, mastered, needs-review) or focus (slugs being taught now). Posing a question tagged with mapped concepts moves focus automatically; set focus yourself when teaching a node before questioning it. Map updates never advance the quiz. This tool is available only in the Pi session where the Storm quiz extension is loaded; attaching activates it in that session without changing other active tools.',
+      'Every write requires contextId from the update it answers. Read status to reconcile stale contexts; context reads earlier or omitted source sections; image retrieves a historical attachment by ID when still available. Reuse operationId for an identical uncertain retry. Operate the explicitly attached Storm quiz. After Continue and before posing a question, read learner (read-only; no contextId). Every new substantive question requires complete concepts/level/support tags or an explicit unmodelledReason without tags. Reuse concept IDs from learner state; propose a new slug only for a genuinely new concept. Record help actually supplied, including relevant help supplied before posing. For help supplied after posing and before the answer, use support-update with questionId, support, contextId, and the actual help in text; it displays the help and preserves the strongest supplied support. A worked example or supplied solution means worked, a supplied hint means hinted, otherwise independent. Never report planned help as supplied. High-confidence incorrect or partial answers are correction candidates; address the actual misconception or missing part. Discuss calibration only when calibration.guidanceEligible is true; this requires at least 20 ratings and an absolute bias of at least 15 points (tunable). Make at most one brief, supportive comment per session and tie it to useful practice. Recheck diagnosed misconceptions later with a fresh independent item. Read learner recording diagnostics before relying on complete evidence. Answer events include learner confidence (data.confidence, 0–100). After /storm attach, use question after Continue, feedback for an answer, message for tutoring chat, prompt with kind next-steps or clarification and 1–6 choices for genuine learner choices, and status to inspect state. Feedback must set its explicit verdict field (correct, partial, or incorrect); Storm displays the verdict and selected option, so do not repeat a verdict heading or selected option in feedback text. Explain why and address supplied reasoning without duplicating Continue instructions. Continue only through explicit Continue or learner Skip. When a response leaves the learner without an open question or prompt, end it with a short line on what was just covered and what you expect next (for example, try a similar problem, ask about anything unclear, or Continue to the next question); offer a next-steps prompt when there are genuine choices. A learner chat message of just "Continue." means proceed with your planned next step, usually the next question. When the learner explicitly asks to skip, clear, or replace an ungraded question, use skip-question with its questionId and explanation text, then honor their requested next step. Never fabricate a verdict for a chat command submitted as an answer. Do not use em dashes in original learner-facing prose; preserve exact source quotations. Write answer choices, matching items, and next-step labels as ordinary text with inline Markdown only (emphasis, code, or math when useful). Never use Markdown headings (# through ###### or setext underlines) or wrap an entire option in bold. For example, send "Check each employee’s hours to identify overtime payments.", not "### Check each employee’s hours to identify overtime payments." Reserve headings for sections in substantial explanations; short questions and feedback usually need paragraphs only. Format question stems with readable Markdown paragraphs and real newlines, and use structured choices instead of duplicating options in the stem. Storm fixes the learner-facing display order when a question is posed: multiple-choice options are reordered (pure quantities ascending, summary options such as “all of the above” last) and the matching option column is reordered away from the authored pair order. Track the correct answer by choice ID, never by position, letter or authored index, and do not refer to “the first option” in a stem or in feedback; read the stored order from status, history or the question action response when you need it. Question quality matters more than quantity. Ask for reasoning, application or discrimination, not for a label the stem already supplies or an answer available without the material. Keep one clear question per stem, state the setup before the question, and avoid double negatives and except/not stacking. Pitch difficulty through the recommended level and support rather than trick wording. Every multiple-choice distractor must be a mistake a learner plausibly makes: a common misconception, a neighbouring concept, or a predictable procedural slip. Three obviously wrong options waste the item. Keep options parallel in grammatical form, length and specificity; do not let the correct option be the longest, the most hedged or the only one echoing a stem keyword, and do not reserve absolutes such as always or never for distractors. Use all/none of the above only when the content genuinely calls for it. For matching, give each left item exactly one defensible partner and make each option plausible for more than one item. Richer learner-facing formatting is available in question stems, feedback and chat: callout blockquotes with the first line “> [!NOTE] optional title”, and the labels note, info, tip, hint, example, important, warning and caution. Hints render as a collapsed disclosure the learner opens on purpose; append - to collapse any callout or + to open it. A hint shipped with a question is help offered, so tag that question support hinted. GFM tables, task lists, footnotes, fenced code with a language, inline and display math, and mermaid fences also render. Raw HTML does not render. Keep answer choices, matching items and next-step labels free of callouts, which stay plain text there. Use map (no contextId) to maintain the live lesson map pinned above the quiz: send nodes (id = concept slug, short label) and edges ([prerequisite, dependent]) once after the plan is approved, plus optional goal. Later send only statuses as [{id, status}] (not-started, introduced, guided, independent, mastered, needs-review) or focus (slugs being taught now). Posing a question tagged with mapped concepts moves focus automatically; set focus yourself when teaching a node before questioning it. Map updates never advance the quiz. Use notes (no contextId) to replace your handoff notes, at most 6000 characters: the approved plan, progress ledger, learner constraints and preferences, suspected misconceptions, sources already consulted, and your intended next step. Storm saves them as a Markdown file in a storm folder inside the attached study folder (the response gives its vault-relative path) and returns them to any later Pi session on attach and status, so a new session can continue without this conversation. The learner may edit that file; attach and status return its current text. Rewrite them whenever the plan, ledger, or next step changes. Notes never advance the quiz and the learner does not see them as chat. This tool is available only in the Pi session where the Storm quiz extension is loaded; attaching activates it in that session without changing other active tools.',
     parameters: toolSchema,
     executionMode: 'sequential',
     async execute(
@@ -978,7 +982,7 @@ export default function (pi: ExtensionAPI) {
       const active = state;
       if (!active || active.stopped)
         throw new Error(
-          'No Storm quiz attached; use /storm-quiz attach SESSION_ID.',
+          'No Storm quiz attached; use /storm attach SESSION_ID.',
         );
       if (params.action === 'learner') {
         const content = responseValue(
@@ -1038,6 +1042,49 @@ export default function (pi: ExtensionAPI) {
             {
               type: 'text',
               text: JSON.stringify({ lessonMap: result.lessonMap }),
+            },
+          ],
+          details: undefined,
+        };
+      }
+      if (params.action === 'notes') {
+        if (
+          typeof params.text !== 'string' ||
+          !params.text.trim() ||
+          params.text.length > TUTOR_NOTES_MAX_LENGTH
+        )
+          throw new Error(
+            `notes requires text of at most ${TUTOR_NOTES_MAX_LENGTH} characters.`,
+          );
+        const result = responseValue(
+          await runCli(
+            cliArgs('request', active.sessionId),
+            {
+              type: 'tutor-notes',
+              expectedRevision: active.snapshot.revision,
+              idempotencyKey: randomUUID(),
+              text: params.text,
+            },
+            active.token,
+          ),
+        );
+        if (state !== active)
+          throw new Error(
+            'Storm session was detached during the notes update.',
+          );
+        active.snapshot = { ...active.snapshot, tutorNotes: result.tutorNotes };
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                tutorNotes: {
+                  version: result.tutorNotes?.version,
+                  updatedAt: result.tutorNotes?.updatedAt,
+                  // Vault-relative file; absent when unscoped or the vault is unavailable.
+                  path: result.tutorNotes?.path ?? null,
+                },
+              }),
             },
           ],
           details: undefined,
@@ -1313,7 +1360,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand('storm-quiz', {
+  pi.registerCommand('storm', {
     description: 'Attach/status/disconnect an existing Storm quiz session',
     handler: async (args, ctx) => {
       const [action, id] = args.trim().split(/\s+/, 2);
@@ -1330,8 +1377,8 @@ export default function (pi: ExtensionAPI) {
           waitOwner = state;
           waitRuntime.start(state.cursor, state.token);
           ctx.ui.notify(
-            `Quiz ${state.sessionId}: revision ${state.revision}, cursor ${state.cursor}; listener ${lastWaitError ?? waitRuntime.health}; storm_quiz ${pi.getActiveTools().includes('storm_quiz') ? 'active' : 'inactive'}.`,
-            lastWaitError || !pi.getActiveTools().includes('storm_quiz')
+            `Quiz ${state.sessionId}: revision ${state.revision}, cursor ${state.cursor}; listener ${lastWaitError ?? waitRuntime.health}; storm ${pi.getActiveTools().includes('storm') ? 'active' : 'inactive'}.`,
+            lastWaitError || !pi.getActiveTools().includes('storm')
               ? 'warning'
               : 'info',
           );
@@ -1339,7 +1386,7 @@ export default function (pi: ExtensionAPI) {
         }
         if (action !== 'attach' || !id)
           throw new Error(
-            'Usage: /storm-quiz attach SESSION_ID | status | disconnect',
+            'Usage: /storm attach SESSION_ID | status | disconnect',
           );
         assertQuizCapabilities(
           responseValue(await runCli(['quiz', 'capabilities'])),
@@ -1374,8 +1421,8 @@ export default function (pi: ExtensionAPI) {
             'Attach response did not include a quiz capability and snapshot.',
           );
         const activeTools = pi.getActiveTools();
-        if (!activeTools.includes('storm_quiz')) {
-          pi.setActiveTools([...activeTools, 'storm_quiz']);
+        if (!activeTools.includes('storm')) {
+          pi.setActiveTools([...activeTools, 'storm']);
         }
         state = {
           sessionId: id,
@@ -1441,7 +1488,7 @@ export default function (pi: ExtensionAPI) {
     if (
       active &&
       state === active &&
-      event.toolName === 'storm_quiz' &&
+      event.toolName === 'storm' &&
       event.args?.action !== 'status'
     ) {
       publishActivity(active, 'drafting');

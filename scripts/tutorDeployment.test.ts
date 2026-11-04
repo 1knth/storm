@@ -50,7 +50,7 @@ function fakeRepo(dir: string) {
   for (const source of TUTOR_SOURCES)
     put(path.join(repo, source), `// ${source}\n`);
   put(
-    path.join(repo, 'extensions/storm-quiz.ts'),
+    path.join(repo, 'extensions/storm.ts'),
     'export default function () { return "current-source"; }\n',
   );
   put(
@@ -68,7 +68,7 @@ const args = process.argv.slice(2);
 if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({args, endpoint:process.env.STORM_ENDPOINT})+'\\n');
 if (process.env.FAKE_MODE === 'exit') { console.error('SECRET_TOKEN'); process.exit(1); }
 if (process.env.FAKE_MODE === 'invalid') { console.log('not json SECRET_TOKEN'); process.exit(0); }
-const quiz = { integrationVersion: 2, features: ['learning','support-update','answer-confidence'] };
+const quiz = { integrationVersion: 2, features: ['learning', 'support-update', 'answer-confidence', 'tutor-notes'] };
 if (process.env.FAKE_MODE === 'missing') quiz.features = ['learning','answer-confidence'];
 if (process.env.FAKE_MODE === 'version') quiz.integrationVersion = 1;
 console.log(JSON.stringify({ok:true,result:{ok:true,value: args.includes('quiz') ? quiz : {schemaVersion: process.env.FAKE_MODE === 'study' ? 0 : 1}}}));
@@ -188,7 +188,7 @@ test('installer backs up old wrapper, preserves settings, is idempotent, and rec
     const repo = fakeRepo(dir),
       agentDir = path.join(dir, 'fake pi home');
     const target = put(
-      path.join(agentDir, 'extensions/storm-quiz.ts'),
+      path.join(agentDir, 'extensions/storm.ts'),
       "import stale from '../storm-integration/old.ts';\nexport default stale;\n",
     );
     const settings = put(
@@ -206,9 +206,7 @@ test('installer backs up old wrapper, preserves settings, is idempotent, and rec
     assert.equal(existsSync(path.join(agentDir, 'storm-integration')), false);
     const wrapper = readFileSync(target, 'utf8');
     assert.ok(
-      wrapper.includes(
-        JSON.stringify(path.join(repo, 'extensions/storm-quiz.ts')),
-      ),
+      wrapper.includes(JSON.stringify(path.join(repo, 'extensions/storm.ts'))),
     );
     assert.ok(!wrapper.includes('storm-integration'));
     assert.match(result.hashes['skills/storm/TUTOR.md'], /^[a-f0-9]{64}$/);
@@ -227,6 +225,22 @@ test('installer backs up old wrapper, preserves settings, is idempotent, and rec
       refreshed.hashes['skills/storm/TUTOR.md'],
       result.hashes['skills/storm/TUTOR.md'],
     );
+  }));
+
+test('installer retires the legacy storm-quiz wrapper with a backup', () =>
+  temporary((dir) => {
+    const repo = fakeRepo(dir),
+      agentDir = path.join(dir, 'pi');
+    const legacy = put(
+      path.join(agentDir, 'extensions/storm-quiz.ts'),
+      '// Storm Tutor installer v2.\nexport default () => {};\n',
+    );
+    const old = readFileSync(legacy, 'utf8');
+    const result = installTutor({ repo, agentDir });
+    assert.equal(existsSync(legacy), false);
+    assert.equal(readFileSync(result.legacyBackup!, 'utf8'), old);
+    assert.ok(existsSync(path.join(agentDir, 'extensions/storm.ts')));
+    assert.equal(installTutor({ repo, agentDir }).legacyBackup, null);
   }));
 
 test('installed wrapper executes maintained source, preserves overrides, and reflects source updates after restart', () =>
@@ -252,7 +266,7 @@ test('installed wrapper executes maintained source, preserves overrides, and ref
       'current-source\nmy-explicit-cli\n["keep these args"]',
     );
     put(
-      path.join(repo, 'extensions/storm-quiz.ts'),
+      path.join(repo, 'extensions/storm.ts'),
       'export default function () { return "updated-source"; }',
     );
     assert.match(run(), /^updated-source/);
@@ -405,7 +419,7 @@ test('shell launcher starts only fake Pi with maintained extension/prompt, overr
     assert.deepEqual(called.args, [
       '--no-extensions',
       '--extension',
-      path.join(tutorRepo, 'extensions/storm-quiz.ts'),
+      path.join(tutorRepo, 'extensions/storm.ts'),
       '--system-prompt',
       path.join(tutorRepo, 'skills/storm/TUTOR.md'),
       '--session-dir',
@@ -460,7 +474,7 @@ console.log(JSON.stringify({errors:result.errors.map(e=>({...e,error:e.error.sli
         }),
       );
       assert.deepEqual(result.errors, []);
-      assert.ok(result.tools.includes('storm_quiz'));
+      assert.ok(result.tools.includes('storm'));
       assert.ok(result.tools.includes('storm_study'));
       assert.equal(result.diagnostics, true);
       assert.equal(existsSync(log), false);
@@ -489,5 +503,5 @@ test('doctor preserves source diagnostics when app is incompatible and detects d
     assert.ok(
       result.sourcesChangedSinceInstall.includes('skills/storm/TUTOR.md'),
     );
-    assert.match(result.hashes['extensions/storm-quiz.ts'], /^[a-f0-9]{64}$/);
+    assert.match(result.hashes['extensions/storm.ts'], /^[a-f0-9]{64}$/);
   }));

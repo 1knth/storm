@@ -1,4 +1,8 @@
-import type { QuizEvent, QuizQuestion } from './quizProtocol';
+import {
+  TUTOR_NOTES_MAX_LENGTH,
+  type QuizEvent,
+  type QuizQuestion,
+} from './quizProtocol';
 
 const encoder = new TextEncoder();
 export const QUIZ_CONTEXT_BYTES = 24_000;
@@ -183,6 +187,15 @@ export function quizAgentSession(
             ]),
             'lessonMap',
             8000,
+          ),
+        }
+      : {}),
+    ...(session.tutorNotes
+      ? {
+          tutorNotes: limited(
+            pick(session.tutorNotes, ['text', 'version', 'updatedAt', 'path']),
+            'tutorNotes',
+            TUTOR_NOTES_MAX_LENGTH * 4 + 200,
           ),
         }
       : {}),

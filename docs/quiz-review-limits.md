@@ -31,7 +31,7 @@ learning semantics or source provenance by itself.
   chunk, content hash, quote, and location persisted with the review item.
 
 Relevant owners: `src/shared/quizProtocol.ts`, `src/main/quizService.ts`,
-`src/shared/quizAgentContext.ts`, `extensions/storm-quiz.ts`.
+`src/shared/quizAgentContext.ts`, `extensions/storm.ts`.
 
 ## Reproduced retention limits
 

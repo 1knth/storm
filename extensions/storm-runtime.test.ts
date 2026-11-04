@@ -10,7 +10,7 @@ import {
   learnerNotification,
   attachPrompt,
   modelSession,
-} from './storm-quiz-runtime';
+} from './storm-runtime';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -147,7 +147,7 @@ describe('model-safe quiz context', () => {
   test('attach provides adaptive practice and confidence policy without weakening Continue or Skip', () => {
     const prompt = attachPrompt({ id: 'quiz', status: 'connected' });
     for (const guidance of [
-      'After Continue and before choosing or posing a question, read storm_quiz with action learner',
+      'After Continue and before choosing or posing a question, read storm with action learner',
       'Tag every substantive question with concepts, level, and support',
       'Reuse existing concept IDs',
       'help actually supplied, not help merely planned',
@@ -178,7 +178,7 @@ describe('model-safe quiz context', () => {
       'Rated graded answers inform confidence calibration even when untagged',
       'Keep the existing Continue and Skip rules',
       'continue only after explicit Continue or learner Skip',
-      'use storm_quiz with action skip-question',
+      'use storm with action skip-question',
     ])
       expect(prompt).toContain(guidance);
   });
@@ -481,7 +481,12 @@ test('extension handshake rejects old or incomplete app capabilities before atta
     {},
     {
       integrationVersion: 1,
-      features: ['learning', 'support-update', 'answer-confidence'],
+      features: [
+        'learning',
+        'support-update',
+        'answer-confidence',
+        'tutor-notes',
+      ],
     },
     { integrationVersion: 2, features: ['learning', 'answer-confidence'] },
   ])
@@ -491,7 +496,12 @@ test('extension handshake rejects old or incomplete app capabilities before atta
   expect(() =>
     assertQuizCapabilities({
       integrationVersion: 2,
-      features: ['learning', 'support-update', 'answer-confidence'],
+      features: [
+        'learning',
+        'support-update',
+        'answer-confidence',
+        'tutor-notes',
+      ],
     }),
   ).not.toThrow();
 });

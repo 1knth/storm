@@ -29,7 +29,7 @@ function launchTutor() {
     [
       '--no-extensions',
       '--extension',
-      path.join(tutorRepo, 'extensions/storm-quiz.ts'),
+      path.join(tutorRepo, 'extensions/storm.ts'),
       '--system-prompt',
       path.join(tutorRepo, 'skills/storm/TUTOR.md'),
       '--session-dir',
