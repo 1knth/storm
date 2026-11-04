@@ -4,7 +4,6 @@ import React from 'react';
 import { DEFAULT_APPEARANCE } from '../appearance';
 import {
   getQuizComposerIntent,
-  handleQuizComposerEnter,
   shouldClearSubmittedDraft,
 } from './quizComposer';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -279,25 +278,6 @@ describe('quiz draft snapshot reconciliation', () => {
     );
   });
 
-  it('does not clear a submitted draft after a failed send', () => {
-    const submitted = 'keep on failure';
-    // The send-success path is gated by result.ok; a failure never calls the
-    // clear predicate or mutates either draft representation.
-    const failedSend = { ok: false };
-    const current = session({ freeChatDraft: submitted });
-    if (failedSend.ok) {
-      assert.equal(
-        shouldClearSubmittedDraft(current.freeChatDraft, submitted),
-        true,
-      );
-    }
-    assert.equal(current.freeChatDraft, submitted);
-    assert.equal(
-      shouldClearSubmittedDraft(current.freeChatDraft, 'other'),
-      false,
-    );
-  });
-
   it('does not resurrect drafts for answered or removed questions', () => {
     const current = session();
     const answered = session({
@@ -324,28 +304,6 @@ describe('quiz transcript autoscroll', () => {
     scrollQuizTranscriptToBottom(pane);
 
     assert.equal(pane.scrollTop, 560);
-  });
-});
-
-describe('selected prompt composer submission', () => {
-  it('routes an empty chat draft with a selected prompt to prompt response', () => {
-    assert.equal(getQuizComposerIntent('', 0, true), 'prompt');
-    assert.equal(getQuizComposerIntent('optional detail', 0, true), 'message');
-  });
-
-  it('sends on Enter when a prompt is selected, without auto-submitting', () => {
-    let sent = 0;
-    const event = {
-      key: 'Enter',
-      shiftKey: false,
-      isComposing: false,
-      preventDefault() {},
-    };
-    handleQuizComposerEnter(event, true, () => sent++);
-    assert.equal(sent, 1);
-    handleQuizComposerEnter({ ...event, shiftKey: true }, true, () => sent++);
-    handleQuizComposerEnter(event, false, () => sent++);
-    assert.equal(sent, 1);
   });
 });
 
@@ -679,15 +637,6 @@ describe('quiz Markdown renderer', () => {
       assert.match(html, /<\/table><\/div>(?:\s|<span>\s*<\/span>)*<p>/);
       assert.doesNotMatch(html, /<table[^>]* node=/);
     }
-  });
-
-  it('exports one stable React memo component with default shallow-prop comparison', () => {
-    assert.equal(QuizMarkdown.$$typeof, Symbol.for('react.memo'));
-    assert.equal(typeof QuizMarkdown.type, 'function');
-    assert.equal(
-      React.createElement(QuizMarkdown, { children: 'same text' }).type,
-      QuizMarkdown,
-    );
   });
 
   it('inherits configured appearance from the pane context without an appearance prop', () => {

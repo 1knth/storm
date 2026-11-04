@@ -53,8 +53,9 @@ describe('Markdown preview styled reveal units', () => {
     })(tree);
     const mathUnits = find(tree, 'span').filter(
       (span: any) =>
-        String(span.properties?.['data-reveal-key'] ?? '').startsWith('math:') &&
-        span.properties['data-reveal-at'] !== undefined,
+        String(span.properties?.['data-reveal-key'] ?? '').startsWith(
+          'math:',
+        ) && span.properties['data-reveal-at'] !== undefined,
     );
     assert.equal(mathUnits.length, 3);
   });

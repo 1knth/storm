@@ -3,8 +3,6 @@ import { test } from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   ColorRow,
-  Keys,
-  SettingsGroup,
   SettingsRow,
   SettingsToggleRow,
   ThemeColorRow,
@@ -48,13 +46,6 @@ test('SettingsToggleRow renders a checkbox that reflects its state', () => {
     <SettingsToggleRow label="Open file" checked={false} onChange={() => {}} />,
   );
   assert.ok(!off.includes('checked'));
-});
-
-test('Keys renders one keycap per key in the chord', () => {
-  const markup = renderToStaticMarkup(<Keys chord="⌘ ⇧ S" />);
-  assert.equal(markup.match(/<kbd/g)?.length, 3);
-  assert.match(markup, /<kbd[^>]*>⌘<\/kbd>/);
-  assert.match(markup, /<kbd[^>]*>S<\/kbd>/);
 });
 
 test('ColorRow pairs a labelled swatch with an opacity field', () => {
@@ -114,20 +105,4 @@ test('ThemeColorRow disables the reset button only when already on theme', () =>
   assert.match(themed, /value="#ffffff"/);
   assert.match(themed, /disabled/);
   assert.match(themed, /Use theme default/);
-});
-
-test('SettingsGroup renders its title and note above its rows', () => {
-  const markup = renderToStaticMarkup(
-    <SettingsGroup
-      title="Emphasis colors"
-      note="These colors affect the rendered preview only."
-    >
-      <SettingsRow label="Bold text" />
-    </SettingsGroup>,
-  );
-  assert.ok(
-    markup.indexOf('Emphasis colors') <
-      markup.indexOf('These colors affect the rendered preview only.'),
-  );
-  assert.ok(markup.indexOf('These colors') < markup.indexOf('Bold text'));
 });

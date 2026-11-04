@@ -19,6 +19,15 @@ import { assertNativeTarget, buildCliBinary } from './buildCli';
 import { startAgentEndpoint } from '../src/main/agentEndpoint';
 import { AgentBroker } from '../src/main/agentBroker';
 
+// Exercise default discovery using the current host's installed-app location.
+function installedAppData(home: string) {
+  if (process.platform === 'darwin')
+    return path.join(home, 'Library', 'Application Support', 'Storm');
+  if (process.platform === 'win32')
+    return path.join(home, 'AppData', 'Roaming', 'storm');
+  return path.join(home, '.config', 'storm');
+}
+
 test('context CLI round-trips through the endpoint and broker without a note session', async () => {
   const scratch = await mkdtemp(path.join(os.tmpdir(), 'storm-context-cli-'));
   const context = {
@@ -601,204 +610,212 @@ test('CLI compiler packages the matching host target into the resource directory
   }
 });
 
-test('standalone CLI works from a spaced path without development tools or an installed app', async () => {
-  const scratch = await mkdtemp(path.join(os.tmpdir(), 'Storm CLI Test '));
-  const home = path.join(scratch, 'isolated home');
-  const root = path.join(scratch, 'bundle');
-  const bin = path.join(scratch, 'bin');
-  await mkdir(home, { recursive: true });
-  await mkdir(bin, { recursive: true });
-  let endpoint: Awaited<ReturnType<typeof startAgentEndpoint>> | undefined;
-  const requests: any[] = [];
-  try {
-    const bundledCli = await buildCliBinary(process.platform, os.arch(), {
-      root,
-      sourceRoot: process.cwd(),
-    });
-    const installedCli = path.join(bin, 'storm');
-    await symlink(bundledCli, installedCli);
-    const env = { PATH: '/usr/bin:/bin', HOME: home };
-    const run = (args: string[]) =>
-      spawnSync(installedCli, args, {
-        cwd: scratch,
-        encoding: 'utf8',
-        env,
+// Bundling and starting several native processes can exceed Bun's default 5 seconds.
+test(
+  'standalone CLI works from a spaced path without development tools or an installed app',
+  { timeout: 20_000 },
+  async () => {
+    const scratch = await mkdtemp(path.join(os.tmpdir(), 'Storm CLI Test '));
+    const home = path.join(scratch, 'isolated home');
+    const root = path.join(scratch, 'bundle');
+    const bin = path.join(scratch, 'bin');
+    await mkdir(home, { recursive: true });
+    await mkdir(bin, { recursive: true });
+    let endpoint: Awaited<ReturnType<typeof startAgentEndpoint>> | undefined;
+    const requests: any[] = [];
+    try {
+      const bundledCli = await buildCliBinary(process.platform, os.arch(), {
+        root,
+        sourceRoot: process.cwd(),
       });
+      const installedCli = path.join(bin, 'storm');
+      await symlink(bundledCli, installedCli);
+      const env = { PATH: '/usr/bin:/bin', HOME: home };
+      const run = (args: string[]) =>
+        spawnSync(installedCli, args, {
+          cwd: scratch,
+          encoding: 'utf8',
+          env,
+        });
 
-    for (const args of [
-      [],
-      ['--help'],
-      ['connect', '--help'],
-      ['activity', '--help'],
-      ['context', '--help'],
-    ]) {
-      const result = run(args);
-      assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stdout, /Usage:/);
-      assert.match(result.stdout, /storm/);
-      assert.doesNotMatch(result.stdout, /bun scripts\/storm\.ts/);
-      assert.doesNotMatch(
-        result.stdout,
-        /there is not yet an installed storm executable/i,
-      );
-      if (args.length === 0 || args[0] === '--help') {
-        assert.match(result.stdout, /Application Support\/Storm/);
-        assert.match(result.stdout, /REQUIRED agent workflow guidance/);
-        assert.match(result.stdout, /best-effort UI telemetry/);
-        assert.match(result.stdout, /do not block valid work/);
-        assert.match(result.stdout, /\[\[note\]\]/);
-        assert.match(result.stdout, /\[\[folder\/note\]\]/);
-        assert.match(result.stdout, /\[\[note\|label\]\]/);
-        assert.match(result.stdout, /list --vault VAULT_ID/);
-        assert.match(result.stdout, /search QUERY --vault VAULT_ID/);
-        assert.match(result.stdout, /resolve-link --vault/);
-        assert.match(result.stdout, /pose-prompt/);
-        assert.match(result.stdout, /image-release/);
-        assert.match(result.stdout, /inspect ABS_PATH --json/);
-        assert.match(result.stdout, /Never use connect as an existence check/);
-        assert.match(result.stdout, /Heading\s+fragments are\s+unsupported/);
-      }
-      if (args[0] === 'context') {
-        assert.match(result.stdout, /read-only snapshot/i);
-        assert.match(result.stdout, /not a complete vault listing/i);
-        assert.match(result.stdout, /Use list\/search to discover/);
-      }
-      if (args[0] === 'activity') {
-        assert.match(result.stdout, /REQUIRED workflow guidance/);
-        assert.match(result.stdout, /best-effort telemetry/);
-        assert.match(
+      for (const args of [
+        [],
+        ['--help'],
+        ['connect', '--help'],
+        ['activity', '--help'],
+        ['context', '--help'],
+      ]) {
+        const result = run(args);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Usage:/);
+        assert.match(result.stdout, /storm/);
+        assert.doesNotMatch(result.stdout, /bun scripts\/storm\.ts/);
+        assert.doesNotMatch(
           result.stdout,
-          /Closed-session responses require reconnect/,
+          /there is not yet an installed storm executable/i,
         );
+        if (args.length === 0 || args[0] === '--help') {
+          assert.match(result.stdout, /Application Support\/Storm/);
+          assert.match(result.stdout, /REQUIRED agent workflow guidance/);
+          assert.match(result.stdout, /best-effort UI telemetry/);
+          assert.match(result.stdout, /do not block valid work/);
+          assert.match(result.stdout, /\[\[note\]\]/);
+          assert.match(result.stdout, /\[\[folder\/note\]\]/);
+          assert.match(result.stdout, /\[\[note\|label\]\]/);
+          assert.match(result.stdout, /list --vault VAULT_ID/);
+          assert.match(result.stdout, /search QUERY --vault VAULT_ID/);
+          assert.match(result.stdout, /resolve-link --vault/);
+          assert.match(result.stdout, /pose-prompt/);
+          assert.match(result.stdout, /image-release/);
+          assert.match(result.stdout, /inspect ABS_PATH --json/);
+          assert.match(
+            result.stdout,
+            /Never use connect as an existence check/,
+          );
+          assert.match(result.stdout, /Heading\s+fragments are\s+unsupported/);
+        }
+        if (args[0] === 'context') {
+          assert.match(result.stdout, /read-only snapshot/i);
+          assert.match(result.stdout, /not a complete vault listing/i);
+          assert.match(result.stdout, /Use list\/search to discover/);
+        }
+        if (args[0] === 'activity') {
+          assert.match(result.stdout, /REQUIRED workflow guidance/);
+          assert.match(result.stdout, /best-effort telemetry/);
+          assert.match(
+            result.stdout,
+            /Closed-session responses require reconnect/,
+          );
+        }
       }
-    }
-    for (const args of [['--unknown'], ['not-a-command']]) {
-      const result = run(args);
-      assert.equal(result.status, 2, result.stderr);
-      assert.match(result.stderr, /Usage:/);
-      assert.doesNotMatch(result.stderr, /ENOENT|isolated home/);
-    }
+      for (const args of [['--unknown'], ['not-a-command']]) {
+        const result = run(args);
+        assert.equal(result.status, 2, result.stderr);
+        assert.match(result.stderr, /Usage:/);
+        assert.doesNotMatch(result.stderr, /ENOENT|isolated home/);
+      }
 
-    const appData = path.join(home, 'Library', 'Application Support', 'Storm');
-    endpoint = await startAgentEndpoint({
-      userDataPath: appData,
-      broker: {
-        async handle(value: any) {
-          requests.push(value);
-          return {
-            protocol: 1,
-            requestId: value.requestId,
-            ok: true,
-            type: value.type === 'connect' ? 'connected' : value.type,
-            name: value.name,
-            sessionId:
-              value.type === 'connect' ? 'packaged-session' : undefined,
-            sessions: [],
-          };
+      const appData = installedAppData(home);
+      endpoint = await startAgentEndpoint({
+        userDataPath: appData,
+        broker: {
+          async handle(value: any) {
+            requests.push(value);
+            return {
+              protocol: 1,
+              requestId: value.requestId,
+              ok: true,
+              type: value.type === 'connect' ? 'connected' : value.type,
+              name: value.name,
+              sessionId:
+                value.type === 'connect' ? 'packaged-session' : undefined,
+              sessions: [],
+            };
+          },
         },
-      },
-    });
-    const child = spawn(
-      installedCli,
-      ['connect', '/vault/note.md', '--name', 'OpenAI', '--json'],
-      { cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    let stdout = '';
-    let stderr = '';
-    child.stdout
-      .setEncoding('utf8')
-      .on('data', (text: string) => (stdout += text));
-    child.stderr
-      .setEncoding('utf8')
-      .on('data', (text: string) => (stderr += text));
-    const code = await new Promise<number>((resolve, reject) => {
-      child.once('error', reject);
-      child.once('exit', (status) => resolve(status ?? -1));
-    });
-    assert.equal(code, 0, stderr);
-    const response = JSON.parse(stdout);
-    assert.equal(response.ok, true);
-    assert.equal(response.type, 'connected');
-    assert.equal(response.name, 'OpenAI');
-    assert.doesNotMatch(stdout, /token|secret/i);
-
-    const stream = spawn(
-      installedCli,
-      ['stream', 'packaged-session', '--stdin'],
-      {
-        cwd: scratch,
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      },
-    );
-    let streamOut = '';
-    let streamError = '';
-    stream.stdout
-      .setEncoding('utf8')
-      .on('data', (text: string) => (streamOut += text));
-    stream.stderr
-      .setEncoding('utf8')
-      .on('data', (text: string) => (streamError += text));
-    stream.stdin.end('bundled stream ✓');
-    const streamCode = await new Promise<number>((resolve, reject) => {
-      stream.once('error', reject);
-      stream.once('exit', (status) => resolve(status ?? -1));
-    });
-    assert.equal(streamCode, 0, streamError);
-    assert.match(streamOut, /"ok":true/);
-    assert.ok(
-      requests.some(
-        (request) =>
-          request.type === 'append' && request.text === 'bundled stream ✓',
-      ),
-    );
-    assert.ok(requests.some((request) => request.type === 'finish'));
-
-    const runActivity = async (phase: string) => {
+      });
       const child = spawn(
         installedCli,
-        ['activity', 'packaged-session', phase],
-        {
-          cwd: scratch,
-          env,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        },
+        ['connect', '/vault/note.md', '--name', 'OpenAI', '--json'],
+        { cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'] },
       );
-      let output = '';
-      let error = '';
+      let stdout = '';
+      let stderr = '';
       child.stdout
         .setEncoding('utf8')
-        .on('data', (text: string) => (output += text));
+        .on('data', (text: string) => (stdout += text));
       child.stderr
         .setEncoding('utf8')
-        .on('data', (text: string) => (error += text));
+        .on('data', (text: string) => (stderr += text));
       const code = await new Promise<number>((resolve, reject) => {
         child.once('error', reject);
         child.once('exit', (status) => resolve(status ?? -1));
       });
-      assert.equal(code, 0, error);
-      return output;
-    };
-    assert.match(await runActivity('thinking'), /"ok":true/);
-    assert.ok(
-      requests.some(
-        (request) =>
-          request.type === 'activity' &&
-          request.sessionId === 'packaged-session' &&
-          request.activity === 'thinking',
-      ),
-    );
-    assert.match(await runActivity('idle'), /"ok":true/);
-    assert.ok(
-      requests.some(
-        (request) => request.type === 'activity' && request.activity === null,
-      ),
-    );
-  } finally {
-    await endpoint?.close();
-    await rm(scratch, { recursive: true, force: true });
-  }
-});
+      assert.equal(code, 0, stderr);
+      const response = JSON.parse(stdout);
+      assert.equal(response.ok, true);
+      assert.equal(response.type, 'connected');
+      assert.equal(response.name, 'OpenAI');
+      assert.doesNotMatch(stdout, /token|secret/i);
+
+      const stream = spawn(
+        installedCli,
+        ['stream', 'packaged-session', '--stdin'],
+        {
+          cwd: scratch,
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      );
+      let streamOut = '';
+      let streamError = '';
+      stream.stdout
+        .setEncoding('utf8')
+        .on('data', (text: string) => (streamOut += text));
+      stream.stderr
+        .setEncoding('utf8')
+        .on('data', (text: string) => (streamError += text));
+      stream.stdin.end('bundled stream ✓');
+      const streamCode = await new Promise<number>((resolve, reject) => {
+        stream.once('error', reject);
+        stream.once('exit', (status) => resolve(status ?? -1));
+      });
+      assert.equal(streamCode, 0, streamError);
+      assert.match(streamOut, /"ok":true/);
+      assert.ok(
+        requests.some(
+          (request) =>
+            request.type === 'append' && request.text === 'bundled stream ✓',
+        ),
+      );
+      assert.ok(requests.some((request) => request.type === 'finish'));
+
+      const runActivity = async (phase: string) => {
+        const child = spawn(
+          installedCli,
+          ['activity', 'packaged-session', phase],
+          {
+            cwd: scratch,
+            env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          },
+        );
+        let output = '';
+        let error = '';
+        child.stdout
+          .setEncoding('utf8')
+          .on('data', (text: string) => (output += text));
+        child.stderr
+          .setEncoding('utf8')
+          .on('data', (text: string) => (error += text));
+        const code = await new Promise<number>((resolve, reject) => {
+          child.once('error', reject);
+          child.once('exit', (status) => resolve(status ?? -1));
+        });
+        assert.equal(code, 0, error);
+        return output;
+      };
+      assert.match(await runActivity('thinking'), /"ok":true/);
+      assert.ok(
+        requests.some(
+          (request) =>
+            request.type === 'activity' &&
+            request.sessionId === 'packaged-session' &&
+            request.activity === 'thinking',
+        ),
+      );
+      assert.match(await runActivity('idle'), /"ok":true/);
+      assert.ok(
+        requests.some(
+          (request) => request.type === 'activity' && request.activity === null,
+        ),
+      );
+    } finally {
+      await endpoint?.close();
+      await rm(scratch, { recursive: true, force: true });
+    }
+  },
+);
 
 test('CLI help is available offline and invalid commands fail with usage', () => {
   const script = new URL('./storm.ts', import.meta.url).pathname;
@@ -880,7 +897,7 @@ test('CLI endpoint discovery follows each platform app-data path', async () => {
 
 test('CLI discovers installed app metadata and rejects ambiguous profile discovery', async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'storm-cli-home-'));
-  const appData = path.join(home, 'Library', 'Application Support', 'Storm');
+  const appData = installedAppData(home);
   await mkdir(appData, { recursive: true });
   const requests: any[] = [];
   const endpoint = await startAgentEndpoint({

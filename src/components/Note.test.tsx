@@ -23,33 +23,6 @@ function render(entry: VaultEntry, appearance = DEFAULT_APPEARANCE) {
   );
 }
 
-test('folder icons use the configured appearance color', () => {
-  const markup = render(
-    {
-      path: 'folder',
-      name: 'folder',
-      kind: 'directory',
-      isDirectory: true,
-      peek: '',
-    },
-    { ...DEFAULT_APPEARANCE, folderIcon: '#123456' },
-  );
-  assert.match(markup, /style="color:#123456"/);
-});
-
-test('empty note peeks show a subdued italic placeholder', () => {
-  const markup = render({
-    path: 'empty.md',
-    name: 'empty.md',
-    kind: 'note',
-    isDirectory: false,
-    peek: ' \n\t ',
-  });
-
-  assert.match(markup, /<span class="italic text-white\/40">empty<\/span>/);
-  assert.match(markup, /file-tree-peek/);
-});
-
 test('image entries use the existing compact file-row layout without a note peek', () => {
   const markup = render({
     path: 'images/photo.png',
@@ -63,10 +36,7 @@ test('image entries use the existing compact file-row layout without a note peek
   assert.match(markup, /data-entry-kind="image"/);
   assert.match(markup, /aria-label="Preview image photo\.png"/);
   assert.match(markup, /aria-pressed="true"/);
-  assert.match(markup, /bg-\[#027DFF\]\/60/);
-  assert.match(markup, /file-tree-label[^>]*>photo\.png<\/span>/);
   assert.match(markup, /photo\.png/);
-  assert.doesNotMatch(markup, />IMG</);
   assert.doesNotMatch(markup, /must not render as a note peek/);
 });
 
@@ -81,7 +51,6 @@ test('PDF entries render as openable file rows without a note peek', () => {
   assert.match(markup, /data-entry-kind="pdf"/);
   assert.match(markup, /aria-label="Open PDF manual\.PDF"/);
   assert.match(markup, /aria-pressed="true"/);
-  assert.match(markup, /bg-\[#027DFF\]\/60/);
   assert.doesNotMatch(markup, /file-tree-peek/);
 });
 

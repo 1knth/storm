@@ -14,7 +14,7 @@ This documentation describes the shipped app and the current `main` branch. Stor
 
 Use the pinned pnpm version from `package.json`. Run `pnpm start` to launch the app, `pnpm test` for the Bun test suite, `pnpm typecheck` for TypeScript, and `pnpm lint` for Oxlint and formatting checks. Bun is required for tests.
 
-Type checks use strict mode for the app and CLI/build scripts. `pnpm audit` includes Electron and build dependencies. After `pnpm package`, run `pnpm test:packaged` on macOS to check the packaged app and bundled CLI in a temporary profile/vault, including exact UTF-8 save readback. These checks also run in the macOS checks workflow.
+Type checks use strict mode for the app, CLI/build scripts, and Pi quiz extension against the pinned SDK types. Lint warnings fail the check. `pnpm audit` includes Electron and build dependencies. After `pnpm package`, run `pnpm test:packaged` on macOS to check the packaged app and bundled CLI in a temporary profile/vault, including exact UTF-8 save readback. On pushes and pull requests, portable checks run on Ubuntu independently of Intel macOS packaging and its smoke test. A formatting failure does not skip the remaining portable checks. The `verify` check requires both jobs to pass. Apple Silicon packaging runs weekly and can be started manually from the **Apple Silicon packaging** workflow; it is separate from the per-push merge check because ARM runner capacity is limited.
 
 ## Vault sidebar
 

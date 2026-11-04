@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["bun", "node"]
   },
-  "include": ["scripts/*.ts", "extensions/storm-quiz-runtime.ts"],
-  "exclude": ["scripts/**/*.test.ts"]
+  "include": ["scripts/*.ts", "extensions/*.ts"],
+  "exclude": ["scripts/**/*.test.ts", "extensions/**/*.test.ts"]
 }

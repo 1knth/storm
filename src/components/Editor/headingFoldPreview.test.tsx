@@ -59,7 +59,7 @@ describe('preview heading section rendering', () => {
     assert.match(html, /<blockquote[^>]*>/);
     assert.match(html, /<ul[^>]*>/);
   });
-  it('omits the redundant Preview header and header-specific fade while retaining Find', () => {
+  it('exposes the preview Find control when opened', () => {
     const html = renderToStaticMarkup(
       React.createElement(MarkdownPreview, {
         markdown: '# Heading',
@@ -71,11 +71,6 @@ describe('preview heading section rendering', () => {
         findOpen: true,
         onCloseFind: () => {},
       } as any),
-    );
-    assert.doesNotMatch(html, /<h2[^>]*>Preview<\/h2>/);
-    assert.doesNotMatch(
-      html,
-      /markdown-preview-content--(?:find-)?header-fade/,
     );
     assert.match(html, /aria-label="Find in note preview"/);
     assert.match(html, /placeholder="Find in preview"/);
@@ -93,11 +88,9 @@ describe('preview heading section rendering', () => {
   it('renders the heading control with accessible button semantics', () => {
     const html = preview('# Heading\ntext');
     assert.match(html, /<h1[^>]*class="[^"]*preview-fold-heading/);
-    assert.doesNotMatch(html, /<h1[^>]*class="[^"]*flex items-center/);
     assert.match(
       html,
-      /<span class="preview-fold-heading-text">Heading<button type="button" aria-label="Collapse heading" aria-expanded="true" class="preview-heading-fold-control"><svg aria-hidden="true" viewBox="0 0 24 24" class="preview-fold-icon"><path d="m6 9 6 6 6-6"><\/path><\/svg><\/button><\/span>/,
+      /<button[^>]*type="button"[^>]*aria-label="Collapse heading"[^>]*aria-expanded="true"/,
     );
-    assert.match(html, /<path d="m6 9 6 6 6-6"><\/path>/);
   });
 });

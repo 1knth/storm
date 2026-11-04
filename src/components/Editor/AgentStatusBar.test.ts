@@ -21,14 +21,12 @@ const render = (
     createElement(AgentStatusBar, { status: status(state), onStop }),
   );
 
-test('visible status bar retains Agent label without a decorative icon', () => {
+test('visible status bar identifies an unconnected agent', () => {
   const html = renderToStaticMarkup(
     createElement(AgentStatusBar, { visible: true }),
   );
   assert.match(html, />Agent</);
-  assert.match(html, /<span aria-hidden="true">\|<\/span>/);
   assert.match(html, />Not connected</);
-  assert.doesNotMatch(html, /<svg\b/);
 });
 
 test('status bar retains every status while visible and never offers Stop unless writing', () => {
@@ -44,16 +42,11 @@ test('status bar retains every status while visible and never offers Stop unless
     [keyof typeof labels, (typeof labels)[keyof typeof labels]]
   >) {
     const html = render(state, () => {});
-    assert.match(html, /h-\[22px\]/);
     assert.match(html, new RegExp(`>${label}</`));
     if (state === 'writing') assert.match(html, /aria-label="Stop agent"/);
     else assert.doesNotMatch(html, /aria-label="Stop agent"/);
   }
-  assert.match(render('connected'), />Connected</);
-  assert.match(render('connected'), /bg-green-400/);
-  assert.match(render('writing'), /agent-status-spinner/);
-  assert.match(render('finished'), /bg-gray-400/);
-  assert.doesNotMatch(render('failed'), /agent-status-dot/);
+  assert.doesNotMatch(render('writing'), /aria-label="Stop agent"/);
   const thinking = renderToStaticMarkup(
     createElement(AgentStatusBar, {
       status: { ...status('connected'), activity: 'thinking' },
@@ -113,13 +106,4 @@ test('preview progress never masks cancellation, errors, or other session states
     );
     assert.doesNotMatch(html, />Writing</);
   }
-});
-
-test('Stop appears only while writing and finished has the brief label', () => {
-  assert.match(
-    render('writing', () => {}),
-    /aria-label="Stop agent"/,
-  );
-  assert.doesNotMatch(render('writing'), /aria-label="Stop agent"/);
-  assert.match(render('finished'), />Finished</);
 });

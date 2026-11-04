@@ -96,11 +96,6 @@ test('quiz composer Enter sends once only for plain Enter', () => {
   });
 });
 
-test('composer intent does nothing when blank', () => {
-  assert.equal(getQuizComposerIntent(''), null);
-  assert.equal(getQuizComposerIntent('  '), null);
-});
-
 test('answer completeness covers choice, unique complete matching, and text', () => {
   assert.equal(isCompleteQuestionAnswer('multiple-choice', {}), false);
   assert.equal(

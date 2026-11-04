@@ -1,4 +1,7 @@
 allowBuilds:
+  # Pi is installed for extension types; its provider SDK build scripts are unused.
+  '@google/genai': false
+  protobufjs: false
   electron: true
   electron-winstaller: true
 
