@@ -64,6 +64,8 @@ export type StudyIssue = { path: string; reason: string };
 export type StudyTree = {
   studyId: string;
   scope: QuizScope;
+  /** Absolute vault folder, so agents can open files Storm cannot read. */
+  root?: string;
   indexRevision: string;
   entries: StudySource[];
   nextOffset: number | null;

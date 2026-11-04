@@ -158,6 +158,7 @@ export class StudyContextService {
       scope: scopeOmitted
         ? { ...info.scope, selectedNotePaths: [] }
         : info.scope,
+      root: info.root,
       indexRevision: info.indexRevision,
       entries: [],
       total: info.sources.length,

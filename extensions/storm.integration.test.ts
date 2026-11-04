@@ -145,7 +145,7 @@ function save(){
   }finally{fs.closeSync(fd);fs.unlinkSync(lock);}
 }
 function ok(value){process.stdout.write(JSON.stringify({ok:true,result:{ok:true,value}}));}
-if(a[0]==='study'){if(!s.study){ok({});}else if(op==='capabilities'){ok({schemaVersion:1});}else{let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{const r=JSON.parse(b);s.studyRequests=(s.studyRequests||[]).concat(r);save();ok(r.action==='open'?{studyId:'study-test',entries:[{path:'Course/Note.md'}]}:{studyId:'study-test',snapshotId:'a'.repeat(64),sources:[],chunks:[{id:'chunk-test',text:'Pinned course definition'}]});});}}
+if(a[0]==='study'){if(!s.study){ok({});}else if(op==='capabilities'){ok({schemaVersion:1});}else{let b='';process.stdin.on('data',x=>b+=x);process.stdin.on('end',()=>{const r=JSON.parse(b);s.studyRequests=(s.studyRequests||[]).concat(r);save();ok(r.action==='open'?{studyId:'study-test',root:'/vault',entries:[{path:'Course/Note.md'}]}:{studyId:'study-test',snapshotId:'a'.repeat(64),sources:[],chunks:[{id:'chunk-test',text:'Pinned course definition'}]});});}}
 else if(op==='capabilities'){ok(s.quizCapabilities ?? {integrationVersion:2,features:['learning', 'support-update', 'answer-confidence', 'tutor-notes']});}
 else if(op==='list'){ok(s.list ?? [{id:'quiz-test',status:s.listStatus ?? s.status}]);}
 else if(op==='attach'){ok({agentToken:'synthetic-capability',snapshot:{session:{id,revision:s.revision,eventCursor:s.cursor,status:s.status,scope:s.scope ?? 'synthetic'},events:[]}});}
@@ -252,6 +252,17 @@ test('shared study context bootstraps the attached scope, guards question basis,
     });
     expect((await state(stateFile)).requests.at(-1).studyBasis).toBe(
       'a'.repeat(64),
+    );
+    // A question grounded in a PDF read with the tutor's own tools names it.
+    await pi.tools.get('storm').execute('with-external-source', {
+      action: 'question',
+      kind: 'short-answer',
+      text: 'Explain the slide',
+      externalSource: '/vault/Course/Slides.pdf',
+      unmodelledReason: 'External source regression fixture.',
+    });
+    expect((await state(stateFile)).requests.at(-1).question).toBe(
+      'Explain the slide',
     );
     await pi.command('disconnect');
     expect(pi.getActiveTools()).toContain('quiz');
@@ -373,7 +384,10 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
         action: 'learner',
         contextId: undefined,
       });
-      expect(JSON.parse(result.content[0].text)).toEqual(learner);
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        ...learner,
+        conceptDefaults: expect.stringContaining('false'),
+      });
       expect(result.content[0].text).not.toContain('contextId');
       const stored = await state(stateFile);
       expect(stored.learnerCalls).toEqual([
