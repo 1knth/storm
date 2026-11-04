@@ -1576,7 +1576,7 @@ export default function QuizPane({
         aria-label="Quiz"
       >
         <header
-          className="quiz-pane-header flex flex-col gap-1.5 border-b border-white/10 px-4 py-2"
+          className="quiz-pane-header @container flex flex-col gap-1.5 border-b border-white/10 px-4 py-2"
           data-pane="quiz"
         >
           <div className="flex min-h-9 items-center justify-between">
@@ -1716,7 +1716,9 @@ export default function QuizPane({
                   aria-hidden="true"
                   className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-emerald-400' : 'bg-white/30'}`}
                 />
-                {connected ? 'Connected' : 'Not connected'}
+                <span className="hidden @[22rem]:inline">
+                  {connected ? 'Connected' : 'Not connected'}
+                </span>
               </span>
               <div className="ml-auto flex shrink-0 items-center gap-1">
                 {connected ? (
@@ -1734,7 +1736,9 @@ export default function QuizPane({
                   </button>
                 ) : (
                   <>
-                    <span className="text-white/40">Attach</span>
+                    <span className="hidden text-white/40 @[26rem]:inline">
+                      Attach
+                    </span>
                     <button
                       type="button"
                       aria-label="Copy Pi attach command"

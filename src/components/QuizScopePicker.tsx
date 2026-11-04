@@ -94,7 +94,7 @@ export default function QuizScopePicker({
     'app-popup-row block w-full truncate text-left disabled:opacity-40';
 
   return (
-    <div ref={root} className="relative">
+    <div ref={root} className="relative min-w-0">
       <button
         type="button"
         aria-label={`Study context: ${quizScopeLabel(scope)}`}
@@ -104,7 +104,7 @@ export default function QuizScopePicker({
             ? `Tutor can read: ${scope.folderPath || scope.notePath || 'entire vault'}`
             : 'Attach a folder so the tutor can read your course material'
         }
-        className={`inline-flex max-w-[12rem] shrink-0 cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-sm hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70 ${scope ? 'text-sky-300' : 'text-white/50'}`}
+        className={`inline-flex min-w-0 max-w-[12rem] cursor-pointer items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-sm hover:text-white/80 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/70 ${scope ? 'text-sky-300' : 'text-white/50'}`}
         onClick={() => setOpen((value) => !value)}
       >
         <FaFolder aria-hidden="true" size={11} />
