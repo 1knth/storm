@@ -12,6 +12,7 @@ import {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import QuizAnswerEditor from './QuizAnswerEditor';
+import QuizChoice from './QuizChoice';
 import QuizScopePicker from './QuizScopePicker';
 import QuizLessonMap from './QuizLessonMap';
 import { recordConfidenceObservation } from './quizConfidenceMetrics';
@@ -2029,30 +2030,21 @@ export default function QuizPane({
                               <QuizMarkdown>{prompt.prompt}</QuizMarkdown>
                             </div>
                             {prompt.choices.map((choice) => (
-                              <label
+                              <QuizChoice
                                 key={choice.id}
-                                className={`quiz-choice-card mb-2 flex cursor-pointer gap-2 break-words rounded-md border border-transparent bg-white/10 px-3 py-2 transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-white ${prompt.selectedChoiceId === choice.id ? 'quiz-choice-card--selected' : ''}`}
+                                name={`quiz-prompt-${session.id}`}
+                                checked={prompt.selectedChoiceId === choice.id}
+                                disabled={!connected || busy}
+                                onChange={() =>
+                                  updateContentDraft('currentPrompt', {
+                                    selectedChoiceId: choice.id,
+                                  })
+                                }
                               >
-                                <input
-                                  className="quiz-choice-radio mt-1 h-4 w-4 shrink-0"
-                                  type="radio"
-                                  name={`quiz-prompt-${session.id}`}
-                                  checked={
-                                    prompt.selectedChoiceId === choice.id
-                                  }
-                                  disabled={!connected || busy}
-                                  onChange={() =>
-                                    updateContentDraft('currentPrompt', {
-                                      selectedChoiceId: choice.id,
-                                    })
-                                  }
-                                />
-                                <span className="quiz-agent-markdown min-w-0">
-                                  <QuizMarkdown choice>
-                                    {choice.text}
-                                  </QuizMarkdown>
-                                </span>
-                              </label>
+                                <QuizMarkdown choice>
+                                  {choice.text}
+                                </QuizMarkdown>
+                              </QuizChoice>
                             ))}
                             <textarea
                               aria-label="Additional detail"
@@ -2089,37 +2081,30 @@ export default function QuizPane({
                                 {questionKind === 'multiple-choice' &&
                                   session.currentQuestion.choices.map(
                                     (choice) => (
-                                      <label
+                                      <QuizChoice
                                         key={choice.id}
-                                        className={`quiz-choice-card mb-2 flex cursor-pointer gap-2 break-words rounded-md border border-transparent bg-white/10 px-3 py-2 transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-white ${session.currentQuestion!.selectedChoiceId === choice.id ? 'quiz-choice-card--selected' : ''}`}
+                                        name={`quiz-choice-${session.id}`}
+                                        checked={
+                                          session.currentQuestion!
+                                            .selectedChoiceId === choice.id
+                                        }
+                                        disabled={
+                                          session.currentQuestion!.status !==
+                                          'open'
+                                        }
+                                        onChange={() =>
+                                          updateContentDraft(
+                                            'currentQuestion',
+                                            {
+                                              selectedChoiceId: choice.id,
+                                            },
+                                          )
+                                        }
                                       >
-                                        <input
-                                          className="quiz-choice-radio mt-1 h-4 w-4 shrink-0"
-                                          type="radio"
-                                          name={`quiz-choice-${session.id}`}
-                                          disabled={
-                                            session.currentQuestion!.status !==
-                                            'open'
-                                          }
-                                          checked={
-                                            session.currentQuestion!
-                                              .selectedChoiceId === choice.id
-                                          }
-                                          onChange={() =>
-                                            updateContentDraft(
-                                              'currentQuestion',
-                                              {
-                                                selectedChoiceId: choice.id,
-                                              },
-                                            )
-                                          }
-                                        />
-                                        <span className="quiz-agent-markdown min-w-0">
-                                          <QuizMarkdown choice>
-                                            {choice.text}
-                                          </QuizMarkdown>
-                                        </span>
-                                      </label>
+                                        <QuizMarkdown choice>
+                                          {choice.text}
+                                        </QuizMarkdown>
+                                      </QuizChoice>
                                     ),
                                   )}
                                 {questionKind === 'matching' &&
