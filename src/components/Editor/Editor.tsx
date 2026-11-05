@@ -78,13 +78,11 @@ import {
   isSaveCompletionContentUnchanged,
   shouldSaveBoundDocument,
 } from './saveBinding';
+// Also registers normal-mode j/k as edge-safe display-line motions.
+import { keepVimCursorInView } from './vimDisplayLines';
 
 // Keep these as Vim mappings (not CodeMirror key handlers) so uppercase J/K remain
 // ordinary inserted text outside Vim modes and Vim's counts/operators keep working.
-// Keep j/k as Vim mappings so counts and Vim's wrapped-line motion preserve
-// normal-mode behavior without intercepting Insert, Visual, or operator-pending keys.
-Vim.map('j', 'gj', 'normal');
-Vim.map('k', 'gk', 'normal');
 Vim.map('J', '}', 'normal');
 Vim.map('J', '}', 'visual');
 Vim.map('J', '}', 'operatorPending');
@@ -1607,9 +1605,17 @@ const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         return;
       }
       expectedEditorScroll.current = null;
+      if (Date.now() < userScrollUntil) keepVimCursorInView(view);
       if (current.current) onLayoutChangeRef.current?.();
     };
+    // Only wheel/touch/scrollbar scrolling moves the cursor; restores and
+    // cursor-reveal scrolls leave the selection alone.
+    let userScrollUntil = 0;
+    const markUserScroll = () => {
+      userScrollUntil = Date.now() + 500;
+    };
     const cancelOnUserInput = () => {
+      markUserScroll();
       if (pendingCursorFollow.current !== null) {
         cancelAnimationFrame(pendingCursorFollow.current);
         pendingCursorFollow.current = null;
