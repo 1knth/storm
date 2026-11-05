@@ -290,6 +290,25 @@ describe('quiz CLI response handling', () => {
       }),
     ).toThrow('attach rejected');
   });
+
+  test('surfaces Storm rejection reasons with their error code', () => {
+    let failure: any;
+    try {
+      responseValue({
+        ok: true,
+        result: {
+          ok: false,
+          error: 'invalid-input',
+          message:
+            'loops: needs a fresh independent correct item in a practice test.',
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure.message).toContain('needs a fresh independent');
+    expect(failure.code).toBe('invalid-input');
+  });
 });
 
 describe('quiz wait runtime', () => {

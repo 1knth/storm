@@ -16,8 +16,8 @@ import { VaultService } from './vault/vaultService';
 import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
 import { QuizStore } from './main/quizStore';
-import { QuizService } from './main/quizService';
-import { LearnerStore } from './main/learnerStore';
+import { QuizDeletionBlocked, QuizService } from './main/quizService';
+import { LearnerStore, learnerScopeKey } from './main/learnerStore';
 import { isQuizConfidence } from './shared/quizProtocol';
 import { StudyContextService } from './main/studyContextService';
 import { StudyContextStore } from './main/studyContextStore';
@@ -159,6 +159,8 @@ const quizService = new QuizService(
     exclusive: (root, operation) =>
       runVaultLifecycleExclusive(root, () => vaultWriteBarrier.run(operation)),
   }),
+  (session) =>
+    learnerStore.attempts(learnerScopeKey(session.scope, session.id)),
 );
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;
@@ -384,7 +386,13 @@ ipcMain.handle('quiz:stop-agent', async (event, id: unknown) => {
 ipcMain.handle('quiz:delete', async (event, id: unknown) => {
   if (typeof id !== 'string' || id.length === 0 || id.length > 128)
     return { ok: false, error: 'invalid-input' };
-  return { ok: true, value: await quizService.deleteSession(id) };
+  try {
+    return { ok: true, value: await quizService.deleteSession(id) };
+  } catch (error) {
+    if (error instanceof QuizDeletionBlocked)
+      return { ok: false, error: error.message };
+    throw error;
+  }
 });
 ipcMain.handle('quiz:list', async () => quizService.listSessionSummaries());
 ipcMain.handle('quiz:snapshot', async (event, id: unknown, after: unknown) => {

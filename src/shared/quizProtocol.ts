@@ -38,6 +38,38 @@ export const QUIZ_SUPPORTS: readonly QuizSupport[] = [
   'hinted',
   'worked',
 ];
+/** Tutor's assessment of the learner's stated reasoning, recorded with feedback. */
+export type QuizReasoningAssessment = 'sound' | 'flawed' | 'none';
+export const QUIZ_REASONING_ASSESSMENTS: readonly QuizReasoningAssessment[] = [
+  'sound',
+  'flawed',
+  'none',
+];
+/** Open practice test: items are posed under test conditions and tagged with its id. */
+export type QuizPracticeTest = {
+  id: string;
+  /** Concept slugs the test must cover before it can end. */
+  concepts: string[];
+  startedAt: string;
+};
+export const QUIZ_PRACTICE_TEST_MAX_CONCEPTS = 40;
+/**
+ * Durable practice-test bookkeeping. Only items from completed tests count as
+ * test evidence; receipts make start/end/cancel safe to replay.
+ */
+export type QuizPracticeTestLog = {
+  /** Increases on every transition so concurrent session writes keep the newest. */
+  version: number;
+  completed: string[];
+  /** idempotencyKey -> request fingerprint. */
+  receipts: Record<string, string>;
+};
+/**
+ * Receipts and completed tests are never trimmed: dropping a receipt would let
+ * an old request replay as new, and dropping a completed test would strip its
+ * evidence. A session at the limit refuses further test transitions instead.
+ */
+export const QUIZ_PRACTICE_TEST_MAX_TRANSITIONS = 500;
 /** Stable lowercase concept slug, e.g. `while-loop-condition`. */
 export const QUIZ_CONCEPT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const QUIZ_MAX_CONCEPTS = 3;
@@ -61,6 +93,12 @@ export type QuizQuestion = {
   gradedAt?: string;
   /** Submitted learner confidence (0-100); absent for historical or unrated answers. */
   confidence?: number;
+  /** sha256 of the normalized item; absent on questions posed before mastery evidence. */
+  fingerprint?: string;
+  /** Practice test the item was posed in. */
+  testId?: string;
+  /** Tutor's assessment of the learner's stated reasoning, set with feedback. */
+  reasoning?: QuizReasoningAssessment;
   /** Missing kind denotes a historical multiple-choice question. */
   kind?: QuizQuestionKind;
   prompt: string;
@@ -97,6 +135,9 @@ export type QuizMessage = {
     suppliedSupport?: QuizSupport;
     gradedAt?: string;
     confidence?: number;
+    fingerprint?: string;
+    testId?: string;
+    reasoning?: QuizReasoningAssessment;
     kind?: QuizQuestionKind;
     prompt: string;
     choices: QuizChoice[];
@@ -133,6 +174,9 @@ export type QuizSession = {
   lessonMap?: QuizLessonMap;
   /** Agent-private handoff notes (plan, ledger, next step); absent until written. */
   tutorNotes?: QuizTutorNotes;
+  /** Practice test in progress; absent when none is open. */
+  practiceTest?: QuizPracticeTest;
+  practiceTestLog?: QuizPracticeTestLog;
   status: 'waiting-agent' | 'connected' | 'disconnected' | 'complete';
   transcript: QuizMessage[];
   currentQuestion: QuizQuestion | null;
@@ -223,6 +267,20 @@ export type QuizAgentRequest = (
       map: LessonMapUpdate;
     }
   | {
+      /**
+       * Metadata-only: opens, ends or cancels a practice test without advancing
+       * revision. While one is open, items must be independent, tagged and new.
+       */
+      type: 'practice-test';
+      sessionId: string;
+      agentToken: string;
+      expectedRevision: number;
+      idempotencyKey: string;
+      action: 'start' | 'end' | 'cancel';
+      /** Concepts the test covers; required for start. */
+      concepts?: string[];
+    }
+  | {
       /** Metadata-only: replaces the tutor handoff notes without advancing revision. */
       type: 'tutor-notes';
       sessionId: string;
@@ -267,6 +325,8 @@ export type QuizAgentRequest = (
       idempotencyKey: string;
       text: string;
       verdict?: 'correct' | 'incorrect' | 'partial';
+      /** Tutor's assessment of the learner's stated reasoning. */
+      reasoning?: QuizReasoningAssessment;
     }
   | {
       type: 'skip';
@@ -367,6 +427,8 @@ export type QuizResult<T> =
         | 'invalid-input'
         | 'study-unavailable'
         | 'unauthorized';
+      /** What the tutor must change, when Storm can say. */
+      message?: string;
     };
 
 /**

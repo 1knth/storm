@@ -143,12 +143,16 @@ export function attachStateMessage(status: unknown): string {
 
 function responseError(response: any): never {
   const error = response?.error ?? response?.result?.error;
+  // Storm explains rejections it can act on (map, mastery, test rules).
+  const detail = response?.result?.message;
   const failure = new Error(
     typeof error?.message === 'string'
       ? error.message
-      : typeof error === 'string'
-        ? error
-        : 'Storm quiz request failed.',
+      : typeof detail === 'string'
+        ? detail
+        : typeof error === 'string'
+          ? error
+          : 'Storm quiz request failed.',
   );
   Object.assign(failure, {
     code: typeof error === 'string' ? error : error?.code,

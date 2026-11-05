@@ -167,6 +167,14 @@ describe('quiz broker requests', () => {
         text: 'Cleared on request.',
       }),
       pose({ type: 'tutor-notes', text: 'Plan: loops next.' }),
+      pose({ type: 'practice-test', action: 'start', concepts: ['loops'] }),
+      pose({ type: 'practice-test', action: 'end' }),
+      pose({
+        type: 'feedback',
+        text: 'Correct.',
+        verdict: 'correct',
+        reasoning: 'sound',
+      }),
       pose({
         choices: [{ id: 'a', text: 'A' }],
         concepts: ['while-loop'],
@@ -200,6 +208,9 @@ describe('quiz broker requests', () => {
       pose({ type: 'skip-question', questionId: 'q', text: '' }),
       pose({ type: 'tutor-notes', text: ' ' }),
       pose({ type: 'tutor-notes', text: 'x'.repeat(6001) }),
+      pose({ type: 'practice-test', action: 'pause' }),
+      pose({ type: 'practice-test', action: 'start', concepts: 'loops' }),
+      pose({ type: 'feedback', text: 'Correct.', reasoning: 'great' }),
       pose({
         kind: 'multiple-choice',
         choices: Array.from({ length: 7 }, (_, index) => ({

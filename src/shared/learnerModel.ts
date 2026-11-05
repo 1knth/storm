@@ -8,6 +8,7 @@
 import {
   QUIZ_COGNITIVE_LEVELS,
   type QuizCognitiveLevel,
+  type QuizReasoningAssessment,
   type QuizSupport,
 } from './quizProtocol';
 
@@ -27,6 +28,12 @@ export type LearnerAttempt = {
   support: LearnerSupport;
   verdict: LearnerVerdict;
   confidence?: number;
+  /** Normalized item identity (sha256); proves an item was fresh. Absent before mastery evidence. */
+  fingerprint?: string;
+  /** Practice test the item was posed in, under test conditions. */
+  testId?: string;
+  /** Tutor's assessment of the learner's stated reasoning. */
+  reasoning?: QuizReasoningAssessment;
 };
 
 export type LearnerZone = 'new' | 'beyond' | 'zpd' | 'independent';

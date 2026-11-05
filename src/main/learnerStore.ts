@@ -42,7 +42,7 @@ export function learnerScopeSignature(scope: QuizScope | undefined): string {
 
 /** Tagged grades inform concepts; all rated grades inform confidence calibration. */
 export function learnerAttempt(
-  session: Pick<QuizSession, 'id' | 'scope' | 'updatedAt'>,
+  session: Pick<QuizSession, 'id' | 'scope' | 'updatedAt' | 'practiceTestLog'>,
   question: QuizQuestion,
 ): LearnerAttempt | null {
   if (
@@ -63,6 +63,13 @@ export function learnerAttempt(
     ...(question.confidence !== undefined
       ? { confidence: question.confidence }
       : {}),
+    ...(question.fingerprint ? { fingerprint: question.fingerprint } : {}),
+    // Only a completed test is test evidence; cancelled or open tests are not.
+    ...(question.testId &&
+    session.practiceTestLog?.completed.includes(question.testId)
+      ? { testId: question.testId }
+      : {}),
+    ...(question.reasoning ? { reasoning: question.reasoning } : {}),
   };
 }
 
@@ -129,7 +136,10 @@ export class LearnerStore {
   /** Group a full replay across sessions into one merge per learning pool. */
   async recordGrades(
     entries: Array<{
-      session: Pick<QuizSession, 'id' | 'scope' | 'updatedAt'>;
+      session: Pick<
+        QuizSession,
+        'id' | 'scope' | 'updatedAt' | 'practiceTestLog'
+      >;
       question: QuizQuestion;
     }>,
   ): Promise<void> {
@@ -146,7 +156,10 @@ export class LearnerStore {
   }
 
   async recordQuestion(
-    session: Pick<QuizSession, 'id' | 'scope' | 'updatedAt'>,
+    session: Pick<
+      QuizSession,
+      'id' | 'scope' | 'updatedAt' | 'practiceTestLog'
+    >,
     question: QuizQuestion,
   ): Promise<void> {
     await this.recordGrades([{ session, question }]);

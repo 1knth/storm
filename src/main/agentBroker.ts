@@ -7,6 +7,9 @@ import {
 import { isAgentEditPlan } from '../shared/agentEditValidation';
 import {
   quizLearningFromRequest,
+  QUIZ_PRACTICE_TEST_MAX_CONCEPTS,
+  QUIZ_REASONING_ASSESSMENTS,
+  type QuizReasoningAssessment,
   TUTOR_NOTES_MAX_LENGTH,
 } from '../shared/quizProtocol';
 import { isLessonMapUpdate } from '../shared/lessonMap';
@@ -1071,6 +1074,14 @@ function isQuizAgentRequest(value: unknown): boolean {
       r.text.length <= 10000
     );
   if (r.type === 'lesson-map') return isLessonMapUpdate(r.map);
+  if (r.type === 'practice-test')
+    return (
+      ['start', 'end', 'cancel'].includes(String(r.action)) &&
+      (r.concepts === undefined ||
+        (Array.isArray(r.concepts) &&
+          r.concepts.length <= QUIZ_PRACTICE_TEST_MAX_CONCEPTS &&
+          r.concepts.every((id) => typeof id === 'string' && id.length <= 64)))
+    );
   if (r.type === 'tutor-notes')
     return (
       typeof r.text === 'string' &&
@@ -1083,8 +1094,12 @@ function isQuizAgentRequest(value: unknown): boolean {
       r.text.length > 0 &&
       r.text.length <= 10000 &&
       (r.type !== 'feedback' ||
-        r.verdict === undefined ||
-        ['correct', 'incorrect', 'partial'].includes(String(r.verdict)))
+        ((r.verdict === undefined ||
+          ['correct', 'incorrect', 'partial'].includes(String(r.verdict))) &&
+          (r.reasoning === undefined ||
+            QUIZ_REASONING_ASSESSMENTS.includes(
+              r.reasoning as QuizReasoningAssessment,
+            ))))
     );
   return false;
 }

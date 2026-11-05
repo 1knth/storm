@@ -48,6 +48,8 @@ export function quizAgentQuestion(value: unknown): Record<string, any> | null {
     'suppliedSupport',
     'gradedAt',
     'unmodelledReason',
+    'testId',
+    'reasoning',
   ]);
   if (source.omitted) return { ...result, omitted: true, section: 'question' };
   if (source.learning) {
@@ -188,6 +190,15 @@ export function quizAgentSession(
             'lessonMap',
             8000,
           ),
+        }
+      : {}),
+    ...(session.practiceTest
+      ? {
+          practiceTest: pick(session.practiceTest, [
+            'id',
+            'concepts',
+            'startedAt',
+          ]),
         }
       : {}),
     ...(session.tutorNotes

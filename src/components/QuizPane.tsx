@@ -1825,6 +1825,17 @@ export default function QuizPane({
         {session?.lessonMap && !showSessionList && (
           <QuizLessonMap map={session.lessonMap} appearance={appearance} />
         )}
+        {session?.practiceTest && !showSessionList && (
+          <div
+            role="status"
+            className="border-b border-white/10 bg-black/20 px-4 py-1.5 text-xs text-white/70"
+          >
+            <span className="font-semibold uppercase tracking-wide">
+              Practice test
+            </span>{' '}
+            in progress: answer on your own. Help resumes after the test.
+          </div>
+        )}
         {!bridge ? (
           <div className="m-auto max-w-md p-6 text-center text-sm text-white/70">
             Quiz sessions are waiting for the quiz bridge to be connected. No AI

@@ -1646,8 +1646,18 @@ body,
   stroke: var(--lm-needs-review) !important;
   stroke-width: 2px !important;
 }
+.lesson-map
+  g.node.lm-status-retained:not(.lm-active)
+  :is(rect, polygon, circle, path) {
+  stroke: var(--lm-mastered) !important;
+  stroke-width: 3.5px !important;
+}
 .lm-swatch-mastered {
   background: var(--lm-mastered);
+}
+.lm-swatch-retained {
+  background: var(--lm-mastered);
+  box-shadow: 0 0 0 1.5px var(--lm-mastered);
 }
 .lm-swatch-independent {
   background: var(--lm-independent);

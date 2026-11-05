@@ -44,6 +44,7 @@ const STATUS_LABEL: Record<LessonNodeStatus, string> = {
   guided: 'Guided',
   independent: 'Independent',
   mastered: 'Mastered',
+  retained: 'Retained',
   'needs-review': 'Needs review',
 };
 
@@ -261,7 +262,8 @@ export default function QuizLessonMap({
 
   const total = map.nodes.length;
   const mastered = map.nodes.filter(
-    (n) => map.statuses[n.id] === 'mastered',
+    (n) =>
+      map.statuses[n.id] === 'mastered' || map.statuses[n.id] === 'retained',
   ).length;
   const now = map.nodes.filter((n) => focus.has(n.id)).map((n) => n.label);
   const control =
@@ -423,17 +425,23 @@ export default function QuizLessonMap({
           </div>
         </div>
         <ul className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1 text-[11px] text-white/50">
-          {(['mastered', 'independent', 'guided', 'needs-review'] as const).map(
-            (status) => (
-              <li key={status} className="flex items-center gap-1">
-                <span
-                  aria-hidden="true"
-                  className={`lm-swatch lm-swatch-${status} inline-block h-2 w-2 rounded-full`}
-                />
-                {STATUS_LABEL[status]}
-              </li>
-            ),
-          )}
+          {(
+            [
+              'retained',
+              'mastered',
+              'independent',
+              'guided',
+              'needs-review',
+            ] as const
+          ).map((status) => (
+            <li key={status} className="flex items-center gap-1">
+              <span
+                aria-hidden="true"
+                className={`lm-swatch lm-swatch-${status} inline-block h-2 w-2 rounded-full`}
+              />
+              {STATUS_LABEL[status]}
+            </li>
+          ))}
           <li className="ml-auto">{Math.round(view.scale * 100)}%</li>
         </ul>
       </div>

@@ -11,6 +11,8 @@ export type LessonNodeStatus =
   | 'guided'
   | 'independent'
   | 'mastered'
+  /** Mastered, then confirmed by a correct independent check in a later session. */
+  | 'retained'
   | 'needs-review';
 export const LESSON_NODE_STATUSES: readonly LessonNodeStatus[] = [
   'not-started',
@@ -18,6 +20,7 @@ export const LESSON_NODE_STATUSES: readonly LessonNodeStatus[] = [
   'guided',
   'independent',
   'mastered',
+  'retained',
   'needs-review',
 ];
 

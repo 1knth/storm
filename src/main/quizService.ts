@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   isQuizConfidence,
+  QUIZ_CONCEPT_ID,
+  QUIZ_PRACTICE_TEST_MAX_TRANSITIONS,
+  QUIZ_PRACTICE_TEST_MAX_CONCEPTS,
+  QUIZ_REASONING_ASSESSMENTS,
   QUIZ_SUPPORTS,
   quizLearningFromRequest,
   type QuizAgentRequest,
@@ -8,6 +12,7 @@ import {
   type QuizEvent,
   type QuizMessage,
   type QuizLearnerRequest,
+  type QuizPracticeTest,
   type QuizQuestion,
   type QuizResult,
   type QuizScope,
@@ -24,6 +29,14 @@ import {
   focusLessonMap,
   isLessonMapUpdate,
 } from '../shared/lessonMap';
+import type { LearnerAttempt } from '../shared/learnerModel';
+import {
+  masteryEvidence,
+  masteryShortfall,
+  questionFingerprintSource,
+  type MasteryExposure,
+} from '../shared/mastery';
+import { learnerAttempt, learnerScopeKey } from './learnerStore';
 import { QuizStore } from './quizStore';
 import type { TutorNotesFile } from './tutorNotesFile';
 import {
@@ -52,6 +65,169 @@ function isValidScope(scope: QuizScope): boolean {
     (scope.notePath === null && hasFolder && noSelection) ||
     (scope.notePath === null && scope.folderPath === null && hasSelected)
   );
+}
+
+/** Every graded question in a session, rebuilt from its durable transcript. */
+function gradedQuestions(session: QuizSession): QuizQuestion[] {
+  const questions = new Map<string, QuizQuestion>();
+  for (const message of session.transcript) {
+    const question = message.question;
+    if (!question?.verdict) continue;
+    questions.set(question.id, {
+      ...question,
+      gradedAt: question.gradedAt ?? message.createdAt,
+      status: 'feedback',
+      selectedChoiceId: null,
+      reasoningDraft: '',
+      feedback: message.text,
+    });
+  }
+  const current = session.currentQuestion;
+  if (current?.verdict && !questions.has(current.id))
+    questions.set(current.id, {
+      ...current,
+      gradedAt: current.gradedAt ?? session.updatedAt,
+    });
+  return [...questions.values()];
+}
+
+/** Fingerprint only what the learner is shown for the item's kind. */
+const fingerprintOf = (
+  question: Parameters<typeof questionFingerprintSource>[0],
+) => {
+  const kind = question.kind ?? 'multiple-choice';
+  return createHash('sha256')
+    .update(
+      questionFingerprintSource({
+        kind,
+        prompt: question.prompt,
+        choices: kind === 'multiple-choice' ? question.choices : [],
+        ...(kind === 'matching'
+          ? { leftItems: question.leftItems, rightItems: question.rightItems }
+          : {}),
+      }),
+    )
+    .digest('hex');
+};
+
+/** A session's graded attempts and every item it showed the learner. */
+function sessionEvidence(session: QuizSession): {
+  attempts: LearnerAttempt[];
+  exposures: MasteryExposure[];
+} {
+  const attempts = gradedQuestions(session).flatMap(
+    (question) => learnerAttempt(session, question) ?? [],
+  );
+  const exposures = session.transcript.flatMap((message) =>
+    message.kind === 'question' && message.question
+      ? [
+          {
+            id: message.question.id,
+            at: message.createdAt,
+            fingerprint:
+              message.question.fingerprint ?? fingerprintOf(message.question),
+          },
+        ]
+      : [],
+  );
+  return { attempts, exposures };
+}
+
+/**
+ * An independent miss withdraws the mastery claim for the item's concepts.
+ * Applied to the committed map, so a claim written meanwhile is not kept.
+ */
+function withLapsedMastery(
+  session: QuizSession,
+  graded: QuizQuestion | null,
+  at: string,
+): QuizSession {
+  const map = session.lessonMap;
+  const support =
+    graded?.suppliedSupport ?? graded?.learning?.support ?? 'independent';
+  if (!map || graded?.verdict !== 'incorrect' || support !== 'independent')
+    return session;
+  const lapsed = (graded.learning?.concepts ?? []).filter(
+    (id) => map.statuses[id] === 'mastered' || map.statuses[id] === 'retained',
+  );
+  if (!lapsed.length) return session;
+  const statuses = { ...map.statuses };
+  for (const id of lapsed) statuses[id] = 'needs-review';
+  return {
+    ...session,
+    lessonMap: { ...map, statuses, version: map.version + 1, updatedAt: at },
+  };
+}
+
+type PoolEvidence = {
+  attempts: LearnerAttempt[];
+  exposures: MasteryExposure[];
+};
+
+/**
+ * The learner's history in a session's learning pool, excluding that session:
+ * saved attempts plus every other pool session's transcript. Transcripts are
+ * the durable record, so grades whose recording failed still count. Called
+ * with commit-time sessions so concurrent quizzes in the pool are seen.
+ */
+function poolFrom(
+  session: QuizSession,
+  sessions: QuizSession[],
+  saved: LearnerAttempt[],
+): PoolEvidence {
+  const pool = learnerScopeKey(session.scope, session.id);
+  const attempts = new Map(
+    saved
+      .filter((attempt) => attempt.sessionId !== session.id)
+      .map((attempt) => [attempt.id, attempt]),
+  );
+  const exposures: MasteryExposure[] = [];
+  for (const other of sessions) {
+    if (
+      other.id === session.id ||
+      learnerScopeKey(other.scope, other.id) !== pool
+    )
+      continue;
+    const evidence = sessionEvidence(other);
+    for (const attempt of evidence.attempts) attempts.set(attempt.id, attempt);
+    exposures.push(...evidence.exposures);
+  }
+  return { attempts: [...attempts.values()], exposures };
+}
+
+/** Whether the learner has been shown this wording anywhere in the pool. */
+const seenInPool = (
+  pool: PoolEvidence,
+  own: QuizSession,
+  fingerprint: string,
+) =>
+  [...sessionEvidence(own).exposures, ...pool.exposures, ...pool.attempts].some(
+    (item) => item.fingerprint === fingerprint,
+  );
+
+/** Result of a metadata-only commit, with Storm's reason when it can give one. */
+function metadataResult(
+  result: QuizSession | string | undefined,
+  reason: string | undefined,
+): QuizResult<QuizSession> {
+  if (result === undefined) return { ok: false, error: 'unauthorized' };
+  if (result === 'invalid-state') return { ok: false, error: result };
+  if (typeof result === 'string')
+    return {
+      ok: false,
+      error: 'invalid-input',
+      ...(reason ? { message: reason } : {}),
+    };
+  return { ok: true, value: result };
+}
+
+/** Deleting would discard grades the learner model has not saved yet. */
+export class QuizDeletionBlocked extends Error {
+  constructor() {
+    super(
+      'Its grades are not saved to the learner model yet, so deleting it would lose them. Try again shortly.',
+    );
+  }
 }
 
 export class QuizService {
@@ -90,6 +266,10 @@ export class QuizService {
       entries: Array<{ session: QuizSession; question: QuizQuestion }>,
     ) => Promise<void>,
     private readonly tutorNotesFile?: TutorNotesFile,
+    /** Persisted attempts in the session's learning pool, for mastery evidence. */
+    private readonly learnerAttempts?: (
+      session: QuizSession,
+    ) => Promise<LearnerAttempt[]>,
   ) {
     // A persisted connected state belongs to a prior process. Recover it once,
     // before any new operation can attach or observe a session.
@@ -119,6 +299,11 @@ export class QuizService {
       question.suppliedSupport,
       question.verdict,
       question.confidence,
+      question.fingerprint,
+      question.testId,
+      !!question.testId &&
+        !!session.practiceTestLog?.completed.includes(question.testId),
+      question.reasoning,
     ]);
   }
 
@@ -178,29 +363,9 @@ export class QuizService {
 
   private async reconcileSessions(sessions: QuizSession[]): Promise<void> {
     const entries: Array<{ session: QuizSession; question: QuizQuestion }> = [];
-    for (const session of sessions) {
-      const questions = new Map<string, QuizQuestion>();
-      for (const message of session.transcript) {
-        const question = message.question;
-        if (!question?.verdict) continue;
-        questions.set(question.id, {
-          ...question,
-          gradedAt: question.gradedAt ?? message.createdAt,
-          status: 'feedback',
-          selectedChoiceId: null,
-          reasoningDraft: '',
-          feedback: message.text,
-        });
-      }
-      const current = session.currentQuestion;
-      if (current?.verdict && !questions.has(current.id))
-        questions.set(current.id, {
-          ...current,
-          gradedAt: current.gradedAt ?? session.updatedAt,
-        });
-      for (const question of questions.values())
+    for (const session of sessions)
+      for (const question of gradedQuestions(session))
         entries.push({ session, question });
-    }
     await this.recordGradedQuestions(entries);
   }
 
@@ -323,6 +488,15 @@ export class QuizService {
   ): Promise<{ id: string; deleted: true }> {
     await this.startupRecovery;
     // Deletion is intentionally idempotent and only affects app-local quiz data.
+    // Record its grades first so mastery evidence outlives the transcript.
+    const session = await this.store.get(sessionId);
+    if (session) {
+      await this.reconcileSessions([session]);
+      // Refuse rather than lose grades (including misses) the learner model
+      // has not saved: the transcript is then their only record.
+      if ([...this.recordingFailures.values()].includes(sessionId))
+        throw new QuizDeletionBlocked();
+    }
     await this.store.deleteSession(sessionId);
     this.imageRegistry.purgeSession(sessionId);
     return { id: sessionId, deleted: true };
@@ -467,33 +641,229 @@ export class QuizService {
     }
   }
 
+  /** Saved learner-model attempts; an unreadable store falls back to transcripts alone. */
+  private async savedAttempts(session: QuizSession): Promise<LearnerAttempt[]> {
+    try {
+      return this.learnerAttempts ? await this.learnerAttempts(session) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * The tutor declares mastery; Storm checks the recorded evidence first.
+   * Returns the shortfall for each newly mastered or retained node, if any.
+   */
+  private masteryGate(
+    session: QuizSession,
+    statuses: Record<string, string> | undefined,
+    pool: PoolEvidence,
+  ): string | undefined {
+    const claimed = Object.entries(statuses ?? {}).filter(
+      ([id, status]) =>
+        (status === 'mastered' || status === 'retained') &&
+        session.lessonMap?.statuses[id] !== status,
+    );
+    if (!claimed.length) return undefined;
+    const own = sessionEvidence(session);
+    const attempts = [...pool.attempts, ...own.attempts];
+    const exposures = [...pool.exposures, ...own.exposures];
+    const short: string[] = [];
+    for (const [id, status] of claimed) {
+      const evidence = masteryEvidence(id, attempts, exposures);
+      if (!evidence.mastered) short.push(masteryShortfall([evidence]));
+      else if (status === 'retained' && !evidence.retained)
+        short.push(
+          `${id}: needs a correct independent answer in a later session than the one where mastery was shown.`,
+        );
+    }
+    return short.length
+      ? `Mastery is not yet supported by the recorded evidence. ${short.join(' ')}`
+      : undefined;
+  }
+
   /** Lesson maps are display metadata: no revision, event, or Continue gate. */
   private async setLessonMap(
     request: Extract<QuizAgentRequest, { type: 'lesson-map' }>,
+    current: QuizSession,
   ): Promise<QuizResult<QuizSession>> {
     if (!isLessonMapUpdate(request.map))
       return { ok: false, error: 'invalid-input' };
+    const claims = Object.values(request.map.statuses ?? {}).some(
+      (status) => status === 'mastered' || status === 'retained',
+    );
+    const deletions = this.store.deletions;
+    const saved = claims ? await this.savedAttempts(current) : undefined;
+    let reason: string | undefined;
     const result = await this.store.setLessonMap(
       request.sessionId,
       request.agentToken,
-      (session) => {
+      (session, sessions) => {
         if (session.status !== 'connected') return 'invalid-state';
+        // Saved attempts were read for the pool at request time.
+        if (
+          saved &&
+          learnerScopeKey(session.scope, session.id) !==
+            learnerScopeKey(current.scope, current.id)
+        ) {
+          reason =
+            'The study scope changed during the request; read status and retry.';
+          return 'invalid-input';
+        }
+        // A quiz deleted meanwhile may have held evidence the earlier read missed.
+        if (saved && this.store.deletions !== deletions) {
+          reason =
+            'A quiz in this learning pool was deleted during the request; retry.';
+          return 'invalid-input';
+        }
+        // Judge the claim against the state being committed, in this and every
+        // other pool session, so a grade that landed meanwhile counts.
+        reason =
+          saved &&
+          this.masteryGate(
+            session,
+            request.map.statuses,
+            poolFrom(session, sessions, saved),
+          );
+        if (reason) return 'invalid-input';
         const map = applyLessonMapUpdate(
           session.lessonMap,
           request.map,
           this.now(),
         );
-        return typeof map === 'string'
-          ? 'invalid-input'
-          : { ...session, lessonMap: map };
+        if (typeof map === 'string') {
+          reason = map;
+          return 'invalid-input';
+        }
+        return { ...session, lessonMap: map };
       },
     );
-    if (result === undefined) return { ok: false, error: 'unauthorized' };
-    if (result === 'invalid-state' || result === 'invalid-input')
-      return { ok: false, error: result };
-    if (typeof result === 'string')
-      return { ok: false, error: 'invalid-input' };
-    return { ok: true, value: result };
+    return metadataResult(result, reason);
+  }
+
+  /**
+   * Practice tests commit outside revisions like the map, but replay safely by
+   * idempotency key. Storm owns the test conditions: while one is open every
+   * item is tagged, independent and new, and the test ends (and its items
+   * become test evidence) only once each listed concept has a graded item.
+   */
+  private async setPracticeTest(
+    request: Extract<QuizAgentRequest, { type: 'practice-test' }>,
+  ): Promise<QuizResult<QuizSession>> {
+    const fingerprint = JSON.stringify([request.action, request.concepts]);
+    let reason: string | undefined;
+    const fail = (message: string) => {
+      reason = message;
+      return 'invalid-input';
+    };
+    let ended = false;
+    const result = await this.store.setLessonMap(
+      request.sessionId,
+      request.agentToken,
+      (session) => {
+        const log = session.practiceTestLog ?? {
+          version: 0,
+          completed: [],
+          receipts: {},
+        };
+        const receipt = log.receipts[request.idempotencyKey];
+        if (receipt === fingerprint) return session;
+        if (receipt !== undefined)
+          return fail(
+            'This operationId already belongs to a different test request; use a new one.',
+          );
+        // Only start is capped, so an open test can always be ended or cancelled.
+        if (
+          request.action === 'start' &&
+          Object.keys(log.receipts).length >= QUIZ_PRACTICE_TEST_MAX_TRANSITIONS
+        )
+          return fail(
+            'This quiz session has reached its practice test limit; continue testing in a new session.',
+          );
+        if (session.status !== 'connected') return 'invalid-state';
+        const pending =
+          session.currentQuestion &&
+          session.currentQuestion.status !== 'feedback';
+        const test = session.practiceTest;
+        const commit = (
+          practiceTest: QuizPracticeTest | undefined,
+          completed = log.completed,
+        ): QuizSession => {
+          const { practiceTest: _previous, ...rest } = session;
+          const receipts = {
+            ...log.receipts,
+            [request.idempotencyKey]: fingerprint,
+          };
+          return {
+            ...rest,
+            ...(practiceTest ? { practiceTest } : {}),
+            practiceTestLog: {
+              version: log.version + 1,
+              completed,
+              receipts,
+            },
+          };
+        };
+        if (request.action === 'start') {
+          if (test)
+            return fail(
+              `Practice test ${test.id} is already open; end or cancel it first.`,
+            );
+          if (pending)
+            return fail(
+              'Give feedback on or skip the current question before starting a practice test.',
+            );
+          const concepts = request.concepts ?? [];
+          if (
+            !Array.isArray(concepts) ||
+            !concepts.length ||
+            concepts.length > QUIZ_PRACTICE_TEST_MAX_CONCEPTS ||
+            new Set(concepts).size !== concepts.length ||
+            !concepts.every(
+              (id) => typeof id === 'string' && QUIZ_CONCEPT_ID.test(id),
+            )
+          )
+            return fail(
+              `start needs 1-${QUIZ_PRACTICE_TEST_MAX_CONCEPTS} unique concept slugs.`,
+            );
+          const mapped = new Set(session.lessonMap?.nodes.map((n) => n.id));
+          const unknown = session.lessonMap
+            ? concepts.filter((id) => !mapped.has(id))
+            : [];
+          if (unknown.length)
+            return fail(`Not lesson map nodes: ${unknown.join(', ')}.`);
+          return commit({ id: randomUUID(), concepts, startedAt: this.now() });
+        }
+        if (!test) return fail('No practice test is open.');
+        // Cancelled test items never count as test evidence.
+        if (request.action === 'cancel') return commit(undefined);
+        if (pending)
+          return fail(
+            'Give feedback on or skip the current test item before ending the test.',
+          );
+        const covered = new Set(
+          gradedQuestions(session)
+            .filter((q) => q.testId === test.id)
+            .flatMap((q) => q.learning?.concepts ?? []),
+        );
+        const uncovered = test.concepts.filter((id) => !covered.has(id));
+        if (uncovered.length)
+          return fail(
+            `The test has no graded item yet for: ${uncovered.join(', ')}. Pose one for each, or cancel the test.`,
+          );
+        ended = true;
+        return commit(undefined, [...log.completed, test.id]);
+      },
+    );
+    // Completing the test turns its graded items into recorded test evidence.
+    if (ended && result && typeof result !== 'string')
+      await this.recordGradedQuestions(
+        gradedQuestions(result).map((question) => ({
+          session: result,
+          question,
+        })),
+      );
+    return metadataResult(result, reason);
   }
 
   /** Tutor notes are handoff metadata, committed like the lesson map. */
@@ -590,7 +960,9 @@ export class QuizService {
     if (!current) return { ok: false, error: 'not-found' };
     if (request.agentToken !== current.agentToken)
       return { ok: false, error: 'unauthorized' };
-    if (request.type === 'lesson-map') return this.setLessonMap(request);
+    if (request.type === 'lesson-map')
+      return this.setLessonMap(request, current);
+    if (request.type === 'practice-test') return this.setPracticeTest(request);
     if (request.type === 'tutor-notes')
       return this.setTutorNotes(request, current);
     const result = await this.applyRequest(current, request);
@@ -692,6 +1064,9 @@ export class QuizService {
       return { ok: false, error: 'stale-revision' };
     const next = structuredClone(current);
     const timestamp = this.now();
+    /** Saved attempts read for a test item's freshness check, reused at commit. */
+    let testSaved: LearnerAttempt[] | undefined;
+    const deletions = this.store.deletions;
     const addMessage = (role: 'learner' | 'agent', text: string) =>
       next.transcript.push({
         id: randomUUID(),
@@ -758,6 +1133,41 @@ export class QuizService {
           return { ok: false, error: 'invalid-input' };
         const learning = quizLearningFromRequest(request);
         if (learning === null) return { ok: false, error: 'invalid-input' };
+        const fingerprint = fingerprintOf({
+          kind,
+          prompt: request.question,
+          choices,
+          leftItems: request.leftItems,
+          rightItems: request.rightItems,
+        });
+        const test = next.practiceTest;
+        if (test) {
+          const testFailure = !learning
+            ? 'Practice test items must be tagged with concepts and level.'
+            : learning.support !== 'independent'
+              ? 'Practice test items must be independent: no hints or worked examples.'
+              : !learning.concepts.some((id) => test.concepts.includes(id))
+                ? `Tag the item with at least one test concept: ${test.concepts.join(', ')}.`
+                : undefined;
+          if (testFailure)
+            return { ok: false, error: 'invalid-input', message: testFailure };
+          // Freshness spans every item the learner has been shown in this
+          // pool, including saved attempts whose quiz has since been deleted.
+          // The commit rechecks against sessions written meanwhile.
+          testSaved = await this.savedAttempts(next);
+          const pool = poolFrom(
+            next,
+            await this.store.list({ includeDrafts: true }),
+            testSaved,
+          );
+          if (seenInPool(pool, next, fingerprint))
+            return {
+              ok: false,
+              error: 'invalid-input',
+              message:
+                'The learner has already seen this item; practice test items must be fresh.',
+            };
+        }
         if (request.studyBasis !== undefined) {
           if (
             typeof request.studyBasis !== 'string' ||
@@ -786,6 +1196,8 @@ export class QuizService {
           ...(request.unmodelledReason
             ? { unmodelledReason: request.unmodelledReason }
             : {}),
+          fingerprint,
+          ...(test ? { testId: test.id } : {}),
           kind,
           prompt: request.question,
           choices:
@@ -818,12 +1230,8 @@ export class QuizService {
           reasoningDraft: '',
           feedback: null,
         };
-        const focused = focusLessonMap(
-          next.lessonMap,
-          learning?.concepts,
-          timestamp,
-        );
-        if (focused) next.lessonMap = focused;
+        // Focus moves at commit time (see atCommit) so a status written
+        // meanwhile, such as a demotion from another quiz, is not overwritten.
         break;
       }
       case 'answer': {
@@ -932,6 +1340,7 @@ export class QuizService {
       case 'agent-message':
         if (next.status !== 'connected' || !request.text.trim())
           return { ok: false, error: 'invalid-state' };
+
         addMessage('agent', request.text);
         break;
       case 'support-update': {
@@ -942,6 +1351,13 @@ export class QuizService {
           question.id !== request.questionId
         )
           return { ok: false, error: 'invalid-state' };
+        if (question.testId && question.testId === next.practiceTest?.id)
+          return {
+            ok: false,
+            error: 'invalid-state',
+            message:
+              'Practice test items take no help. Skip the item (it will not count) if the learner needs support.',
+          };
         if (
           !QUIZ_SUPPORTS.includes(request.support) ||
           typeof request.text !== 'string' ||
@@ -973,13 +1389,28 @@ export class QuizService {
         addMessage('agent', request.text);
         break;
       }
-      case 'feedback':
+      case 'feedback': {
         if (
           next.status !== 'connected' ||
           next.currentQuestion?.status !== 'answered' ||
           !request.text.trim()
         )
           return { ok: false, error: 'invalid-state' };
+        if (request.reasoning !== undefined) {
+          if (!QUIZ_REASONING_ASSESSMENTS.includes(request.reasoning))
+            return { ok: false, error: 'invalid-input' };
+          const stated =
+            next.currentQuestion.reasoningDraft.trim() ||
+            next.currentQuestion.textDraft?.trim();
+          if (request.reasoning !== 'none' && !stated)
+            return {
+              ok: false,
+              error: 'invalid-input',
+              message:
+                'The learner gave no reasoning to assess; use reasoning "none" or omit it.',
+            };
+          next.currentQuestion.reasoning = request.reasoning;
+        }
         next.currentQuestion.feedback = request.text;
         next.currentQuestion.gradedAt = timestamp;
         if (request.verdict !== undefined)
@@ -1006,6 +1437,11 @@ export class QuizService {
             ...(question.confidence !== undefined
               ? { confidence: question.confidence }
               : {}),
+            ...(question.fingerprint
+              ? { fingerprint: question.fingerprint }
+              : {}),
+            ...(question.testId ? { testId: question.testId } : {}),
+            ...(question.reasoning ? { reasoning: question.reasoning } : {}),
             kind: question.kind,
             prompt: question.prompt,
             choices: question.choices,
@@ -1020,6 +1456,7 @@ export class QuizService {
           };
         }
         break;
+      }
       case 'respond-prompt': {
         const prompt = next.currentPrompt;
         const choice = prompt?.choices.find((c) => c.id === request.choiceId);
@@ -1194,6 +1631,7 @@ export class QuizService {
             return {
               text: request.text,
               ...(request.verdict ? { verdict: request.verdict } : {}),
+              ...(request.reasoning ? { reasoning: request.reasoning } : {}),
             };
           case 'message':
             return {
@@ -1216,6 +1654,64 @@ export class QuizService {
         event,
         `${request.sessionId}:${request.idempotencyKey}`,
         fingerprint,
+        (merged, sessions) => {
+          // Test conditions were checked against the test open when the
+          // request started; if a test opened or closed since, or another pool
+          // session showed the same item meanwhile, re-read status.
+          const posed = merged.currentQuestion;
+          if (request.type === 'pose-question') {
+            if (posed?.testId !== merged.practiceTest?.id)
+              throw new Error('Practice test changed during the request');
+            if (
+              testSaved &&
+              learnerScopeKey(merged.scope, merged.id) !==
+                learnerScopeKey(current.scope, current.id)
+            )
+              throw new Error('Study scope changed during the request');
+            if (testSaved && this.store.deletions !== deletions)
+              throw new Error('A pool quiz was deleted during the request');
+            if (
+              posed?.testId &&
+              posed.fingerprint &&
+              seenInPool(
+                poolFrom(merged, sessions, testSaved ?? []),
+                { ...merged, transcript: merged.transcript.slice(0, -1) },
+                posed.fingerprint,
+              )
+            )
+              throw new Error('Practice test item shown elsewhere meanwhile');
+          }
+          if (request.type === 'pose-question') {
+            const focused = focusLessonMap(
+              merged.lessonMap,
+              merged.currentQuestion?.learning?.concepts,
+              timestamp,
+            );
+            return focused ? { ...merged, lessonMap: focused } : merged;
+          }
+          return request.type === 'feedback'
+            ? withLapsedMastery(merged, merged.currentQuestion, timestamp)
+            : merged;
+        },
+        // Mastery is per learning pool, so a miss withdraws the claim on every
+        // quiz map in the pool, not only this one.
+        (merged, sessions) => {
+          if (request.type !== 'feedback') return [];
+          const pool = learnerScopeKey(merged.scope, merged.id);
+          return sessions.flatMap((other) => {
+            if (
+              other.id === merged.id ||
+              learnerScopeKey(other.scope, other.id) !== pool
+            )
+              return [];
+            const lapsed = withLapsedMastery(
+              other,
+              merged.currentQuestion,
+              timestamp,
+            );
+            return lapsed === other ? [] : [lapsed];
+          });
+        },
       );
       if (updated.transcript.length > 0) await this.store.promote(updated.id);
       if (request.type === 'feedback' && updated.currentQuestion)

@@ -521,6 +521,7 @@ describe('QuizService', () => {
       assert.deepEqual(await mapRequest({ focus: ['missing'] }, 'map-2'), {
         ok: false,
         error: 'invalid-input',
+        message: 'Unknown node missing.',
       });
 
       const posed = await f.service.request({
@@ -839,6 +840,7 @@ describe('QuizService', () => {
         },
         {
           id: before.value.currentQuestion?.id,
+          fingerprint: before.value.currentQuestion?.fingerprint,
           kind: 'multiple-choice',
           prompt: 'Why?',
           choices: [

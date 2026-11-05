@@ -571,11 +571,19 @@ export async function runCli(
             'skip-question',
             'support-update',
             'lesson-map',
+            'practice-test',
             'tutor-notes',
           ].includes(quizPayload.type)
         )
           throw new CliUsageError(
-            'quiz request type must be pose-question, pose-prompt, feedback, agent-message, skip-question, support-update, lesson-map, or tutor-notes',
+            'quiz request type must be pose-question, pose-prompt, feedback, agent-message, skip-question, support-update, lesson-map, practice-test, or tutor-notes',
+          );
+        if (
+          quizPayload.type === 'practice-test' &&
+          !['start', 'end', 'cancel'].includes(quizPayload.action)
+        )
+          throw new CliUsageError(
+            'practice-test requires action start (with concepts), end, or cancel',
           );
         if (
           !Number.isSafeInteger(quizPayload.expectedRevision) ||
