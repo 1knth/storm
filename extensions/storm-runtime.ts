@@ -143,13 +143,17 @@ export function attachStateMessage(status: unknown): string {
 
 function responseError(response: any): never {
   const error = response?.error ?? response?.result?.error;
-  throw new Error(
+  const failure = new Error(
     typeof error?.message === 'string'
       ? error.message
       : typeof error === 'string'
         ? error
         : 'Storm quiz request failed.',
   );
+  Object.assign(failure, {
+    code: typeof error === 'string' ? error : error?.code,
+  });
+  throw failure;
 }
 
 /** Decode CLI operations whose successful broker response contains result.value. */

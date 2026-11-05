@@ -1268,6 +1268,17 @@ export default function (pi: ExtensionAPI) {
           'Retrieve the relevant study sources with storm_study and provide their snapshotId as studyBasis, or set externalSource to the path of a file you read with your own tools.',
         );
       if (params.action === 'question') validateTutorQuestionLearning(params);
+      if (
+        params.action === 'prompt' &&
+        params.choices?.some(
+          (choice: { effect?: string }) => choice.effect === 'continue',
+        ) &&
+        (active.snapshot.currentQuestion as { status?: string } | undefined)
+          ?.status !== 'feedback'
+      )
+        throw new Error(
+          'Prompt choice effect "continue" requires a question with graded feedback. Omit effect for initial planning or clarification choices; the learner choice will still be delivered to you.',
+        );
       const operationId = params.operationId ?? _id;
       const serialized = JSON.stringify({ ...params, operationId: undefined });
       let operation = active.operations.get(operationId);
@@ -1367,6 +1378,17 @@ export default function (pi: ExtensionAPI) {
           ),
         );
       } catch (error) {
+        const code = (error as { code?: string })?.code;
+        if (
+          code === 'invalid-input' ||
+          code === 'INVALID_ARGUMENT' ||
+          code === 'invalid-state'
+        ) {
+          active.operations.delete(operationId);
+          throw new Error(
+            `${error instanceof Error ? error.message : 'Quiz request rejected.'} Request was rejected. Read status, correct the request, and submit it with a new operationId and the current contextId.`,
+          );
+        }
         throw new Error(
           `${error instanceof Error ? error.message : 'Quiz request failed.'} Operation ${operationId}; reconcile with status before retrying the identical operationId and contextId.`,
         );

@@ -508,6 +508,23 @@ export function getQuizTurnHint(
   return questionStatus ? undefined : 'reply';
 }
 
+/** Agents often post a message and then pose a prompt or question a moment
+ *  later; showing the hint in that gap flashes a stray Continue button. */
+export const QUIZ_TURN_HINT_SETTLE_MS = 600;
+
+function useSettledQuizTurnHint(hint: 'answer' | 'reply' | undefined) {
+  const [settled, setSettled] = useState(hint);
+  useEffect(() => {
+    if (!hint) {
+      setSettled(undefined);
+      return;
+    }
+    const timer = setTimeout(() => setSettled(hint), QUIZ_TURN_HINT_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [hint]);
+  return hint ? settled : undefined;
+}
+
 export function QuizTurnHint({
   hint,
   disabled,
@@ -1071,7 +1088,7 @@ export default function QuizPane({
   const latestMessageId = session?.transcript.at(-1)?.id;
   const activityState = session?.activity?.state;
   const visibleActivity = getQuizActivityIndicator(session);
-  const turnHint = getQuizTurnHint(session);
+  const turnHint = useSettledQuizTurnHint(getQuizTurnHint(session));
   useEffect(() => {
     const pane = transcriptRef.current;
     if (!pane || showSessionList || !visible) return;

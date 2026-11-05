@@ -65,7 +65,8 @@ else if(op==='image-release') {log('released.log',args[args.indexOf('--image-id'
 else if(op==='request') {
   let input='';process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
     const request=JSON.parse(input);log('requests.log',{targetSessionId:args[2],...request});
-    if(exists('drop-reply')) {fs.unlinkSync(file('drop-reply'));process.stdout.write('incomplete');}
+    if(exists('reject-input')) process.stdout.write(JSON.stringify({ok:true,result:{ok:false,error:'invalid-input'}}));
+    else if(exists('drop-reply')) {fs.unlinkSync(file('drop-reply'));process.stdout.write('incomplete');}
     else ok({revision:request.expectedRevision+1});
   });
 }
@@ -368,6 +369,46 @@ test('real CLI validation returns a safe actionable error to the model', async (
     ).rejects.toThrow('pose-prompt requires');
   } finally {
     process.env.STORM_QUIZ_CLI_ARGS = f.cliArgs;
+    await f.close();
+  }
+});
+
+test('initial planning choices explain invalid Continue effects and accept ordinary choices', async () => {
+  const f = await fixture();
+  try {
+    await f.command('attach diagnostic');
+    const params = {
+      contextId: contextId(f.calls[0].text),
+      action: 'prompt',
+      kind: 'next-steps',
+      text: 'Start with a diagnostic?',
+      choices: [{ id: 'start', text: 'Start', effect: 'continue' }],
+    };
+    await expect(
+      f.tools.get('storm').execute('planning', params),
+    ).rejects.toThrow('Omit effect');
+    await f.tools.get('storm').execute('planning-fixed', {
+      ...params,
+      choices: [{ id: 'start', text: 'Start' }],
+    });
+  } finally {
+    await f.close();
+  }
+});
+
+test('rejected input instructs correction while uncertain delivery retains identical retry guidance', async () => {
+  const f = await fixture();
+  try {
+    await f.command('attach diagnostic');
+    await f.flag('reject-input');
+    await expect(
+      f.tools.get('storm').execute('rejected', {
+        contextId: contextId(f.calls[0].text),
+        action: 'message',
+        text: 'Plan',
+      }),
+    ).rejects.toThrow('correct the request');
+  } finally {
     await f.close();
   }
 });
