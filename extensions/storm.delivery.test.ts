@@ -315,6 +315,11 @@ test('model-facing schemas expose limits, context ownership, and Continue effect
       (fields: any) => fields.action.args[0] === 'prompt',
     );
     expect(prompt.text.args[0].maxLength).toBe(4000);
+    // Oversized notes must reach execute, which names their length and limit.
+    const notes = variants.find(
+      (fields: any) => fields.action.args[0] === 'notes',
+    );
+    expect(notes.text.args[0].maxLength).toBe(10000);
     expect(prompt.contextId).toBeDefined();
     expect(prompt.choices.args[0].args[0]).toHaveProperty('effect');
     const schema = f.tools.get('storm').parameters.args[0];

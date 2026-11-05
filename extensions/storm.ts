@@ -677,7 +677,9 @@ export default function (pi: ExtensionAPI) {
     Type.Object({ action: Type.Literal('learner') }),
     Type.Object({
       action: Type.Literal('notes'),
-      text: text(TUTOR_NOTES_MAX_LENGTH),
+      // Admit oversized notes so execute can report their length; a schema
+      // rejection would describe another union branch instead.
+      text: text(10000),
     }),
     Type.Object({
       action: Type.Literal('map'),
@@ -828,8 +830,7 @@ export default function (pi: ExtensionAPI) {
         Type.String({
           minLength: 1,
           maxLength: 10000,
-          description:
-            'Required on writes. Questions/prompts: at most 4000 characters; feedback/chat: at most 10000.',
+          description: `Required on writes. Questions/prompts: at most 4000 characters; notes: at most ${TUTOR_NOTES_MAX_LENGTH}; feedback/chat: at most 10000.`,
         }),
       ),
       kind: Type.Optional(
@@ -1147,13 +1148,11 @@ export default function (pi: ExtensionAPI) {
       }
       if (params.action === 'notes') {
         const notes = params.text;
-        if (
-          typeof notes !== 'string' ||
-          !notes.trim() ||
-          notes.length > TUTOR_NOTES_MAX_LENGTH
-        )
+        if (typeof notes !== 'string' || !notes.trim())
+          throw new Error('notes requires non-empty text.');
+        if (notes.length > TUTOR_NOTES_MAX_LENGTH)
           throw new Error(
-            `notes requires text of at most ${TUTOR_NOTES_MAX_LENGTH} characters.`,
+            `notes text is ${notes.length} characters; the limit is ${TUTOR_NOTES_MAX_LENGTH}. Condense it and resend the complete notes, which replace the previous notes.`,
           );
         const result = responseValue(
           await runCli(

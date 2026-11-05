@@ -381,7 +381,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
       const tool = pi.tools.get('storm');
       await expect(
         tool.execute('notes-bad', { action: 'notes', text: 'x'.repeat(6001) }),
-      ).rejects.toThrow('at most 6000');
+      ).rejects.toThrow('notes text is 6001 characters; the limit is 6000');
       await tool.execute('notes-1', {
         action: 'notes',
         text: 'Plan: loop condition, then loop body.',
