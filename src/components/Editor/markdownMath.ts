@@ -124,7 +124,10 @@ export function remarkDisplayMathRecovery(this: any) {
         if (start == null || end == null) continue;
         const openerEnd = source.indexOf('\n', start);
         if (openerEnd === -1 || openerEnd >= end) continue;
-        const lastLine = source.slice(source.lastIndexOf('\n', end - 1) + 1, end);
+        const lastLine = source.slice(
+          source.lastIndexOf('\n', end - 1) + 1,
+          end,
+        );
         if (CLOSING_FENCE.test(lastLine)) continue;
 
         const split = findSplit(source, openerEnd, end);
