@@ -21,6 +21,7 @@ import 'katex/dist/katex.min.css';
 import {
   markdownMathRemarkPlugin,
   markdownMathRehypePlugin,
+  remarkDisplayMathRecovery,
 } from './Editor/markdownMath';
 import { remarkSoftBreaks } from './Editor/markdownSoftBreaks';
 import { remarkQuizCurrency } from './quizMarkdownCurrency';
@@ -166,6 +167,7 @@ export function updateQuizRevealHistory(
 const quizMarkdownRemarkPlugins = [
   markdownMathRemarkPlugin,
   remarkQuizLatexDelimiters,
+  remarkDisplayMathRecovery,
   remarkQuizCurrency,
   remarkGfm,
   remarkSoftBreaks,

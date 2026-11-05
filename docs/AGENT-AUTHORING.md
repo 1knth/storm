@@ -30,7 +30,7 @@ Use Storm-supported Markdown selectively:
 
 - A fenced code block with a language label for code or literal input.
 - A fenced `mermaid` block for a real process, dependency, or conceptual relationship. Keep its syntax valid and its labels meaningful; omit a diagram when prose is clearer.
-- `$...$` inline math or `$$...$$` display math when a mathematical relationship matters. Define variables and units in surrounding prose.
+- `$...$` inline math or `$$...$$` display math when a mathematical relationship matters. Put display math in a block with `$$` alone on the lines before and after the expression and a blank line around it; never write `$$` mid-sentence. Define variables and units in surrounding prose.
 - A compact Markdown table when readers need to compare the same few properties across items. Prefer prose or lists when cells would become long or the table would be wide.
 - A blockquote for a real constraint or attributed source wording, clearly identifying its source. Never invent a quotation.
 

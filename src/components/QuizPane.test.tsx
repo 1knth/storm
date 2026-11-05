@@ -727,6 +727,19 @@ describe('quiz Markdown renderer', () => {
     assert.match(html, /<math xmlns=/);
   });
 
+  it('keeps a display block with a mid-line closer from swallowing the reply', () => {
+    const html = render(String.raw`For Q21(a), retain:
+
+$$
+\equiv(p\lor\neg p)\land(p\lor q) \equiv p\lor q.$$ **2. Practise** columns $x$.
+
+## Next steps`);
+    assert.doesNotMatch(html, /katex-error/);
+    assert.match(html, /class="katex-display"/);
+    assert.match(html, /<strong>2\. Practise<\/strong>/);
+    assert.match(html, /Next steps/);
+  });
+
   it('renders LaTeX bracket and parenthesis delimiters in quiz content', () => {
     const html = render(String.raw`Simplify:
 \[

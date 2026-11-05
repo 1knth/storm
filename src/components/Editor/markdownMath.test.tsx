@@ -9,6 +9,7 @@ import { remarkTaskOffsets } from './markdownTasks';
 import {
   markdownMathRemarkPlugin,
   markdownMathRehypePlugin,
+  remarkDisplayMathRecovery,
 } from './markdownMath';
 
 function render(markdown: string, withPreviewSpans = false) {
@@ -18,6 +19,7 @@ function render(markdown: string, withPreviewSpans = false) {
       {
         remarkPlugins: [
           markdownMathRemarkPlugin,
+          remarkDisplayMathRecovery,
           remarkGfm,
           () => remarkTaskOffsets(markdown),
         ],
@@ -96,5 +98,57 @@ $$`,
       html,
       new RegExp(`data-task-offset="${source.indexOf('[ ]') + 1}"`),
     );
+  });
+
+  it('closes a display block whose closer lands mid-line', () => {
+    const html = render(
+      'retain:\n\n$$\n\\equiv p\\lor q.$$ **2. Practise** with $x$\n\n## Next steps',
+    );
+    assert.doesNotMatch(html, /katex-error/);
+    assert.match(html, /class="katex-display"/);
+    assert.match(html, /<strong>2\. Practise<\/strong>/);
+    assert.match(html, /<h2>Next steps<\/h2>/);
+  });
+
+  it('contains an unclosed display block to its paragraph', () => {
+    const html = render('$$\na = b\n\nafter **bold**\n\n- [ ] task');
+    assert.match(html, /class="katex-display"/);
+    assert.match(html, /<p>after <strong>bold<\/strong><\/p>/);
+    assert.match(html, /type="checkbox"/);
+  });
+
+  it('repairs display blocks inside lists and blockquotes', () => {
+    const list = render('- item\n  $$\n  a = b.$$ **tail**\n- next');
+    assert.match(list, /class="katex-display"/);
+    assert.match(list, /<strong>tail<\/strong>/);
+    assert.match(list, /<li>next<\/li>/);
+    const quote = render('> $$\n> a = b\n>\n> after');
+    assert.match(quote, /<blockquote>[\s\S]*katex-display[\s\S]*<p>after<\/p>/);
+  });
+
+  it('keeps source offsets after a repaired display block', () => {
+    const source = '$$\na = b.$$ text\n\n- [ ] task';
+    assert.match(
+      render(source),
+      new RegExp(`data-task-offset="${source.indexOf('[ ]') + 1}"`),
+    );
+  });
+
+  it('leaves well-formed display math and code untouched', () => {
+    const fenced = '$$\na = b\n$$\n\nok';
+    assert.equal(
+      render(fenced),
+      renderToStaticMarkup(
+        React.createElement(
+          ReactMarkdown,
+          {
+            remarkPlugins: [markdownMathRemarkPlugin, remarkGfm],
+            rehypePlugins: [markdownMathRehypePlugin],
+          },
+          fenced,
+        ),
+      ),
+    );
+    assert.doesNotMatch(render('```\n$$\nx\n```'), /katex/);
   });
 });

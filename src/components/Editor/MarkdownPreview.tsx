@@ -14,6 +14,7 @@ import { getHeadingFoldState, setHeadingFoldState } from './headingFoldState';
 import {
   markdownMathRemarkPlugin,
   markdownMathRehypePlugin,
+  remarkDisplayMathRecovery,
 } from './markdownMath';
 import 'katex/dist/katex.min.css';
 import MermaidBlock from './MermaidBlock';
@@ -1444,6 +1445,7 @@ function MarkdownPreview({
                   <ReactMarkdown
                     remarkPlugins={[
                       markdownMathRemarkPlugin,
+                      remarkDisplayMathRecovery,
                       remarkGfm,
                       () => remarkListContinuations(markdown),
                       () => remarkBlankLines(markdown),
