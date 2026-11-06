@@ -1031,6 +1031,11 @@ function App() {
     if (renameInProgressRef.current) return;
     renameInProgressRef.current = true;
     setRenameInProgress(true);
+    // Let an in-flight open land first, then hold the navigation lock so no
+    // open can resolve against the pre-rename path while the rename runs.
+    while (navigationBusy.current)
+      await new Promise((resolve) => setTimeout(resolve, 16));
+    navigationBusy.current = true;
     try {
       await coordinateRename({
         flushAllAffectedNotes: async () => {
@@ -1072,6 +1077,13 @@ function App() {
             );
           for (const [id, session] of sessions.current) {
             const nextTabs = remapTabs(session.tabs);
+            const activeIndex = session.tabs.findIndex(
+              (tab) => getTabId(tab) === session.activeId,
+            );
+            const nextActiveId =
+              activeIndex >= 0
+                ? getTabId(nextTabs[activeIndex])
+                : session.activeId;
             const nextAssignments = remapRenamedTabAssignments(
               session.assignments,
               rename,
@@ -1079,17 +1091,22 @@ function App() {
             sessions.current.set(id, {
               ...session,
               tabs: nextTabs,
+              activeId: nextActiveId,
               assignments: nextAssignments,
             });
             if (id === activeVaultIdRef.current) {
-              tabsRef.current = nextTabs;
-              assignmentsRef.current = nextAssignments;
-              setAssignments(nextAssignments);
-              setTabs(nextTabs);
-              const active = nextTabs.find(
+              const currentIndex = tabsRef.current.findIndex(
                 (tab) => getTabId(tab) === activeIdRef.current,
               );
+              const active =
+                currentIndex >= 0 ? nextTabs[currentIndex] : undefined;
+              tabsRef.current = nextTabs;
+              assignmentsRef.current = nextAssignments;
+              setTabGroupAssignments(nextAssignments);
+              setTabs(nextTabs);
               if (active) {
+                activeIdRef.current = getTabId(active);
+                setActiveId(getTabId(active));
                 if (active.kind === 'note') setActivePath(active.note.path);
                 else if (active.kind === 'image') setActivePath(active.path);
                 else if (active.kind === 'pdf')
@@ -1103,6 +1120,7 @@ function App() {
         },
       });
     } finally {
+      navigationBusy.current = false;
       renameInProgressRef.current = false;
       setRenameInProgress(false);
     }
