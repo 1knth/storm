@@ -1,27 +1,27 @@
-import { isToggleVaultsShortcut } from "./mainShortcuts";
-import React, { useEffect, useRef, useState } from "react";
+import { isToggleVaultsShortcut } from './mainShortcuts';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   TbLayoutSidebarLeftCollapseFilled,
   TbLayoutSidebarRightFilled,
-} from "react-icons/tb";
-import "./index.css";
-import { createRoot } from "react-dom/client";
-import FileExplorer from "./components/fileExplorer";
-import VaultSidebar from "./components/VaultSidebar";
+} from 'react-icons/tb';
+import './index.css';
+import { createRoot } from 'react-dom/client';
+import FileExplorer from './components/fileExplorer';
+import VaultSidebar from './components/VaultSidebar';
 import type {
   RegisteredVault,
   SidebarRootRef,
   VaultEntry,
   VaultGroup,
-} from "./shared/types";
-import { deriveVisibleVaults } from "./shared/vaultGroups";
-import Editor from "./components/Editor/Editor";
-import QuizPane from "./components/QuizPane";
-import { installLatexCopy } from "./components/latexCopy";
-import FilePicker from "./components/FilePicker";
-import { filterPickerEntries } from "./components/filePickerEntries";
-import type { EditorHandle, TabSnapshot } from "./components/Editor/Editor";
-import TabBar from "./components/Editor/TabBar";
+} from './shared/types';
+import { deriveVisibleVaults } from './shared/vaultGroups';
+import Editor from './components/Editor/Editor';
+import QuizPane from './components/QuizPane';
+import { installLatexCopy } from './components/latexCopy';
+import FilePicker from './components/FilePicker';
+import { filterPickerEntries } from './components/filePickerEntries';
+import type { EditorHandle, TabSnapshot } from './components/Editor/Editor';
+import TabBar from './components/Editor/TabBar';
 import {
   cleanTabAssignments,
   normalizeTabGroupState,
@@ -30,39 +30,39 @@ import {
   moveTab,
   moveTabGroupBlock,
   visibleTabOrder,
-} from "./components/Editor/tabGroups";
-import type { TabAssignments, TabGroup } from "./components/Editor/tabGroups";
-import { closeTabTransition } from "./components/Editor/tabTransitions";
+} from './components/Editor/tabGroups';
+import type { TabAssignments, TabGroup } from './components/Editor/tabGroups';
+import { closeTabTransition } from './components/Editor/tabTransitions';
 import {
   captureClosedTab,
   prepareClosedTabForReopen,
   restoreClosedTab,
-} from "./components/Editor/closedTabs";
-import type { ClosedTabRecord } from "./components/Editor/closedTabs";
+} from './components/Editor/closedTabs';
+import type { ClosedTabRecord } from './components/Editor/closedTabs';
 import {
   restoreTabGroupState,
   serializeTabLayout,
-} from "./components/Editor/savedTabLayout";
-import { checkpointErrorMessage } from "./components/Editor/checkpointError";
-import { ToastProvider, useToast } from "./components/Toast";
-import { loadAppearance, saveAppearance } from "./appearance";
-import type { Appearance } from "./appearance";
-import { createAgentDocumentHost } from "./documents/agentDocumentHost";
-import { createAgentContext } from "./documents/agentContext";
+} from './components/Editor/savedTabLayout';
+import { checkpointErrorMessage } from './components/Editor/checkpointError';
+import { ToastProvider, useToast } from './components/Toast';
+import { loadAppearance, saveAppearance } from './appearance';
+import type { Appearance } from './appearance';
+import { createAgentDocumentHost } from './documents/agentDocumentHost';
+import { createAgentContext } from './documents/agentContext';
 import {
   reconcileAgentTargetContent,
   agentTargetDiskRevision,
-} from "./documents/agentTargetReconciliation";
-import { isAgentTabProtected } from "./documents/agentTabProtection";
+} from './documents/agentTargetReconciliation';
+import { isAgentTabProtected } from './documents/agentTabProtection';
 import {
   STARTUP_VAULT_ERROR,
   shouldNotifyVaultError,
-} from "./startupVaultError";
+} from './startupVaultError';
 import {
   coordinateRename,
   remapRenamedTabAssignments,
   remapRenamedTabs,
-} from "./vault/renameCoordinator";
+} from './vault/renameCoordinator';
 
 function ShortcutGroup({ title, items }: { title: string; items: string[] }) {
   return (
@@ -84,11 +84,11 @@ function ShortcutGroup({ title, items }: { title: string; items: string[] }) {
 const isEligibleFocusTarget = (
   element: HTMLElement | null,
 ): element is HTMLElement => {
-  if (!element?.isConnected || element.matches(":disabled")) return false;
+  if (!element?.isConnected || element.matches(':disabled')) return false;
   if (element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
   if (element.getClientRects().length === 0) return false;
   const style = window.getComputedStyle(element);
-  return style.visibility !== "hidden" && style.visibility !== "collapse";
+  return style.visibility !== 'hidden' && style.visibility !== 'collapse';
 };
 
 const hasOpenModal = () =>
@@ -199,11 +199,11 @@ function App() {
       lookupDocument: ({ vaultId, path }) => {
         const tab = tabsRef.current.find(
           (candidate) =>
-            candidate.kind === "note" &&
+            candidate.kind === 'note' &&
             candidate.vaultId === vaultId &&
             candidate.note.path === path,
         );
-        if (!tab || tab.kind !== "note") return undefined;
+        if (!tab || tab.kind !== 'note') return undefined;
         const live = editorRef.current?.snapshot();
         const snapshot =
           live?.vaultId === vaultId && live.note.path === path ? live : tab;
@@ -220,24 +220,24 @@ function App() {
       openDocument: async ({ absolutePath, vaultId, vaultRoot }) => {
         const relativePath = absolutePath
           .slice(vaultRoot.length)
-          .replace(/^[\\/]+/, "")
-          .replace(/\\/g, "/");
-        if (!relativePath || relativePath.startsWith(".."))
-          throw new Error("Agent target is outside its vault");
+          .replace(/^[\\/]+/, '')
+          .replace(/\\/g, '/');
+        if (!relativePath || relativePath.startsWith('..'))
+          throw new Error('Agent target is outside its vault');
         if (vaultId !== activeVaultIdRef.current) {
           const activated = await activateVault(vaultId);
           if (!activated)
-            throw new Error("Could not safely activate the target vault");
+            throw new Error('Could not safely activate the target vault');
         }
         const opened = await window.vault.readNote(relativePath);
         const note = { ...opened, path: relativePath };
         let target = tabsRef.current.find(
           (tab) =>
-            tab.kind === "note" &&
+            tab.kind === 'note' &&
             tab.vaultId === vaultId &&
             tab.note.path === relativePath,
         );
-        if (target?.kind === "note") {
+        if (target?.kind === 'note') {
           // Acknowledged agent writes may move disk beyond the old tab baseline.
           // Compare current text with fresh disk first, while retaining genuine
           // unsaved local text and ignoring a snapshot from another document.
@@ -253,15 +253,15 @@ function App() {
             diskContent: note.content,
             activeContent,
           });
-          if (reconciliation === "unsaved")
-            throw new Error("Agent target has unsaved local changes");
+          if (reconciliation === 'unsaved')
+            throw new Error('Agent target has unsaved local changes');
           target = {
             ...target,
             note,
             state: editorRef.current!.createState(note.content),
           };
           const refreshedTabs = tabsRef.current.map((tab) =>
-            tab.kind === "note" &&
+            tab.kind === 'note' &&
             tab.vaultId === vaultId &&
             tab.note.path === relativePath
               ? target!
@@ -270,22 +270,22 @@ function App() {
           tabsRef.current = refreshedTabs;
           setTabs(refreshedTabs);
         }
-        if (!target || target.kind !== "note") {
+        if (!target || target.kind !== 'note') {
           if (!(await editorRef.current?.flush()))
             throw new Error(
-              "Could not save the active note before opening the agent target",
+              'Could not save the active note before opening the agent target',
             );
           const outgoing = editorRef.current?.snapshot();
           let currentTabs = tabsRef.current;
           if (outgoing)
             currentTabs = currentTabs.map((tab) =>
-              tab.kind === "note" && tab.note.path === outgoing.note.path
+              tab.kind === 'note' && tab.note.path === outgoing.note.path
                 ? outgoing
                 : tab,
             );
           const state = editorRef.current!.createState(note.content);
           target = {
-            kind: "note",
+            kind: 'note',
             note,
             vaultId,
             vaultPath: vaultRoot,
@@ -299,21 +299,21 @@ function App() {
           setActiveId(activeIdRef.current);
           setActivePath(relativePath);
         }
-        if (target.kind !== "note")
-          throw new Error("Agent target is not a note");
+        if (target.kind !== 'note')
+          throw new Error('Agent target is not a note');
         const live = editorRef.current?.snapshot();
-        let snapshot: Extract<TabSnapshot, { kind: "note" }>;
+        let snapshot: Extract<TabSnapshot, { kind: 'note' }>;
         if (live?.note.path === relativePath && live.vaultId === vaultId) {
           snapshot = live;
         } else {
           if (!(await editorRef.current?.flush()))
             throw new Error(
-              "Could not save the active note before opening the agent target",
+              'Could not save the active note before opening the agent target',
             );
           let currentTabs = tabsRef.current;
           if (live)
             currentTabs = currentTabs.map((tab) =>
-              tab.kind === "note" &&
+              tab.kind === 'note' &&
               tab.vaultId === live.vaultId &&
               tab.note.path === live.note.path
                 ? live
@@ -323,12 +323,12 @@ function App() {
           if (live) setTabs(currentTabs);
           const currentTarget = currentTabs.find(
             (tab) =>
-              tab.kind === "note" &&
+              tab.kind === 'note' &&
               tab.vaultId === vaultId &&
               tab.note.path === relativePath,
           );
-          if (!currentTarget || currentTarget.kind !== "note")
-            throw new Error("Agent target is no longer open");
+          if (!currentTarget || currentTarget.kind !== 'note')
+            throw new Error('Agent target is no longer open');
           editorRef.current?.activate(currentTarget);
           snapshot = editorRef.current?.snapshot() ?? currentTarget;
         }
@@ -354,10 +354,10 @@ function App() {
         const adapter = {
           vaultId: document.vaultId,
           path: document.path,
-          writing: document.status === "writing",
+          writing: document.status === 'writing',
           revision: document.revision,
           reveal: document.reveal,
-          onStateChange: (state: import("@codemirror/state").EditorState) =>
+          onStateChange: (state: import('@codemirror/state').EditorState) =>
             host.controller.updateFromEditor(document.key, state),
           flush: () => host.controller.flush(document),
         };
@@ -378,7 +378,7 @@ function App() {
         setTabs((current) => {
           const next = current.map((tab) => {
             if (
-              tab.kind !== "note" ||
+              tab.kind !== 'note' ||
               tab.vaultId !== document.vaultId ||
               tab.note.path !== document.path
             )
@@ -443,11 +443,11 @@ function App() {
   const agentAdaptersRef = useRef(
     new Map<
       string,
-      import("./components/Editor/agentEditorAdapter").AgentEditorAdapter
+      import('./components/Editor/agentEditorAdapter').AgentEditorAdapter
     >(),
   );
   const [agentStatuses, setAgentStatuses] = useState<
-    Record<string, import("./shared/agentProtocol").AgentSessionStatus>
+    Record<string, import('./shared/agentProtocol').AgentSessionStatus>
   >({});
   const [, setAgentDocumentVersion] = useState(0);
   const activeAgentAdapter =
@@ -459,13 +459,13 @@ function App() {
   const matchingAgentStatuses = activeAgentAdapter
     ? Object.values(agentStatuses).filter(
         (status) =>
-          status.absolutePath.replace(/\\/g, "/") ===
-          `${vaultPath}/${activePath}`.replace(/\\/g, "/"),
+          status.absolutePath.replace(/\\/g, '/') ===
+          `${vaultPath}/${activePath}`.replace(/\\/g, '/'),
       )
     : [];
   const activeAgentStatus =
     matchingAgentStatuses.find(
-      (status) => status.state === "writing" || status.state === "connected",
+      (status) => status.state === 'writing' || status.state === 'connected',
     ) ?? matchingAgentStatuses.at(-1);
 
   const scheduleCheckpoint = () => {
@@ -505,7 +505,7 @@ function App() {
     const latest = editorRef.current?.snapshot();
     const currentTabs = latest
       ? tabsRef.current.map((tab) =>
-          tab.kind === "note" && tab.note.path === latest.note.path
+          tab.kind === 'note' && tab.note.path === latest.note.path
             ? latest
             : tab,
         )
@@ -568,8 +568,8 @@ function App() {
     vaultId: string,
     groupId: string,
     before:
-      | { type: "tab"; tabId: string }
-      | { type: "group"; groupId: string }
+      | { type: 'tab'; tabId: string }
+      | { type: 'group'; groupId: string }
       | null,
   ) => {
     if (!vaultId || activeVaultIdRef.current !== vaultId) return;
@@ -601,7 +601,7 @@ function App() {
   const [vaultSidebarCollapsed, setVaultSidebarCollapsed] = useState(() => {
     try {
       return (
-        window.localStorage.getItem("storm.vaultSidebarCollapsed") === "true"
+        window.localStorage.getItem('storm.vaultSidebarCollapsed') === 'true'
       );
     } catch {
       return false;
@@ -610,14 +610,14 @@ function App() {
   useEffect(() => {
     try {
       window.localStorage.setItem(
-        "storm.vaultSidebarCollapsed",
+        'storm.vaultSidebarCollapsed',
         String(vaultSidebarCollapsed),
       );
     } catch {
       /* Optional preference. */
     }
   }, [vaultSidebarCollapsed]);
-  const lastPane = useRef<"vaults" | "explorer" | "editor">("editor");
+  const lastPane = useRef<'vaults' | 'explorer' | 'editor'>('editor');
   const lastPaneElement = useRef<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
@@ -627,9 +627,9 @@ function App() {
   const commandHeldRef = useRef(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerSelectionFocus = useRef(false);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState('');
   const [notes, setNotes] = useState<VaultEntry[]>([]);
-  const openAsset = async (path: string, kind: "pdf" | "image") => {
+  const openAsset = async (path: string, kind: 'pdf' | 'image') => {
     const vaultId = activeVaultIdRef.current;
     if (!vaultId || navigationBusy.current || vaultTransition.current) return;
     const entry = notes.find(
@@ -643,13 +643,13 @@ function App() {
       if (outgoing)
         setTabs((old) =>
           old.map((tab) =>
-            tab.kind === "note" && tab.note.path === outgoing.note.path
+            tab.kind === 'note' && tab.note.path === outgoing.note.path
               ? outgoing
               : tab,
           ),
         );
       const asset: TabSnapshot =
-        kind === "pdf"
+        kind === 'pdf'
           ? { kind, vaultId, relativePath: entry.path, fileName: entry.name }
           : { kind, vaultId, path: entry.path, filename: entry.name };
       const assetId = getTabId(asset);
@@ -662,8 +662,8 @@ function App() {
       navigationBusy.current = false;
     }
   };
-  const openPdf = (path: string) => openAsset(path, "pdf");
-  const openImagePreview = (path: string) => openAsset(path, "image");
+  const openPdf = (path: string) => openAsset(path, 'pdf');
+  const openImagePreview = (path: string) => openAsset(path, 'image');
   const notesRefreshRequest = useRef(0);
   const pendingVaultRefresh = useRef<string | null>(null);
   const refreshNotes = async (vaultId: string) => {
@@ -696,12 +696,12 @@ function App() {
     });
   }, []);
   const [creation, setCreation] = useState<{
-    kind: "note" | "folder";
+    kind: 'note' | 'folder';
     vaultId: string;
     parent: string;
     vaultName: string;
   } | null>(null);
-  const [creationName, setCreationName] = useState("");
+  const [creationName, setCreationName] = useState('');
   const [creationPending, setCreationPending] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [pickerPreview, setPickerPreview] = useState<{
@@ -709,21 +709,21 @@ function App() {
     markdown: string;
   } | null>(null);
   const [pickerPreviewState, setPickerPreviewState] = useState<
-    "loading" | "error" | null
+    'loading' | 'error' | null
   >(null);
   const pickerPreviewRequest = useRef(0);
   const pickerInputRef = useRef<HTMLInputElement>(null);
   const pickerInvokerRef = useRef<HTMLElement | null>(null);
   const [vimMode, setVimMode] = useState(() => {
     try {
-      return window.localStorage.getItem("storm.vimMode") === "true";
+      return window.localStorage.getItem('storm.vimMode') === 'true';
     } catch {
       return false;
     }
   });
   const [openFileShortcut, setOpenFileShortcut] = useState(() => {
     try {
-      return window.localStorage.getItem("storm.shortcut.openFile") !== "false";
+      return window.localStorage.getItem('storm.shortcut.openFile') !== 'false';
     } catch {
       return true;
     }
@@ -731,7 +731,7 @@ function App() {
   const [toggleVaultsShortcut, setToggleVaultsShortcut] = useState(() => {
     try {
       return (
-        window.localStorage.getItem("storm.shortcut.toggleVaults") !== "false"
+        window.localStorage.getItem('storm.shortcut.toggleVaults') !== 'false'
       );
     } catch {
       return true;
@@ -740,7 +740,7 @@ function App() {
   const [toggleExplorerShortcut, setToggleExplorerShortcut] = useState(() => {
     try {
       return (
-        window.localStorage.getItem("storm.shortcut.toggleExplorer") !== "false"
+        window.localStorage.getItem('storm.shortcut.toggleExplorer') !== 'false'
       );
     } catch {
       return true;
@@ -748,7 +748,7 @@ function App() {
   });
   useEffect(() => {
     try {
-      window.localStorage.setItem("storm.vimMode", String(vimMode));
+      window.localStorage.setItem('storm.vimMode', String(vimMode));
     } catch {
       /* Optional preference. */
     }
@@ -756,22 +756,22 @@ function App() {
   useEffect(() => {
     try {
       window.localStorage.setItem(
-        "storm.shortcut.openFile",
+        'storm.shortcut.openFile',
         String(openFileShortcut),
       );
       window.localStorage.setItem(
-        "storm.shortcut.toggleExplorer",
+        'storm.shortcut.toggleExplorer',
         String(toggleExplorerShortcut),
       );
       window.localStorage.setItem(
-        "storm.shortcut.toggleVaults",
+        'storm.shortcut.toggleVaults',
         String(toggleVaultsShortcut),
       );
     } catch {
       /* Optional preference. */
     }
-    window.vault.setShortcutEnabled("openFile", openFileShortcut);
-    window.vault.setShortcutEnabled("toggleExplorer", toggleExplorerShortcut);
+    window.vault.setShortcutEnabled('openFile', openFileShortcut);
+    window.vault.setShortcutEnabled('toggleExplorer', toggleExplorerShortcut);
   }, [openFileShortcut, toggleExplorerShortcut, toggleVaultsShortcut]);
   useEffect(() => {
     let showTimer: ReturnType<typeof setTimeout> | null = null;
@@ -780,7 +780,7 @@ function App() {
       setCommandHeld(held);
     };
     const updateModifier = (event: KeyboardEvent) => {
-      const held = navigator.platform.toLowerCase().includes("mac")
+      const held = navigator.platform.toLowerCase().includes('mac')
         ? event.metaKey
         : event.ctrlKey;
       if (held) {
@@ -801,16 +801,16 @@ function App() {
       showTimer = null;
       setHeld(false);
     };
-    window.addEventListener("keydown", updateModifier);
-    window.addEventListener("keyup", updateModifier);
-    window.addEventListener("blur", clearModifier);
-    document.addEventListener("visibilitychange", clearModifier);
+    window.addEventListener('keydown', updateModifier);
+    window.addEventListener('keyup', updateModifier);
+    window.addEventListener('blur', clearModifier);
+    document.addEventListener('visibilitychange', clearModifier);
     return () => {
       clearModifier();
-      window.removeEventListener("keydown", updateModifier);
-      window.removeEventListener("keyup", updateModifier);
-      window.removeEventListener("blur", clearModifier);
-      document.removeEventListener("visibilitychange", clearModifier);
+      window.removeEventListener('keydown', updateModifier);
+      window.removeEventListener('keyup', updateModifier);
+      window.removeEventListener('blur', clearModifier);
+      document.removeEventListener('visibilitychange', clearModifier);
     };
   }, []);
   useEffect(() => {
@@ -818,7 +818,7 @@ function App() {
       if (
         !isToggleVaultsShortcut(
           event,
-          navigator.platform.toLowerCase().includes("mac"),
+          navigator.platform.toLowerCase().includes('mac'),
           toggleVaultsShortcut,
         )
       )
@@ -826,8 +826,8 @@ function App() {
       event.preventDefault();
       setVaultSidebarCollapsed((collapsed) => !collapsed);
     };
-    window.addEventListener("keydown", onToggleVaultSidebar);
-    return () => window.removeEventListener("keydown", onToggleVaultSidebar);
+    window.addEventListener('keydown', onToggleVaultSidebar);
+    return () => window.removeEventListener('keydown', onToggleVaultSidebar);
   }, [toggleVaultsShortcut]);
   useEffect(() => {
     const unsubscribeOpen = window.vault.onOpenFile(() => {
@@ -841,7 +841,7 @@ function App() {
       const target = document.activeElement;
       if (
         !(target instanceof HTMLElement) ||
-        !target.closest(".cm-content") ||
+        !target.closest('.cm-content') ||
         target.closest('input, textarea, [role="dialog"], .cm-vim-panel')
       )
         return;
@@ -857,28 +857,28 @@ function App() {
     };
     const unsubscribeCloseTab = window.vault.onCloseActiveTab(closeActiveTab);
     const onCloseShortcut = (event: KeyboardEvent) => {
-      const primary = navigator.platform.toLowerCase().includes("mac")
+      const primary = navigator.platform.toLowerCase().includes('mac')
         ? event.metaKey
         : event.ctrlKey;
       if (
         !primary ||
         event.altKey ||
         event.shiftKey ||
-        event.key.toLowerCase() !== "w"
+        event.key.toLowerCase() !== 'w'
       )
         return;
       event.preventDefault();
       event.stopImmediatePropagation();
       closeActiveTab();
     };
-    window.addEventListener("keydown", onCloseShortcut, true);
+    window.addEventListener('keydown', onCloseShortcut, true);
     return () => {
       unsubscribeOpen();
       unsubscribeToggle();
       unsubscribeFormat();
       unsubscribeNewTab();
       unsubscribeCloseTab();
-      window.removeEventListener("keydown", onCloseShortcut, true);
+      window.removeEventListener('keydown', onCloseShortcut, true);
     };
   }, [pickerOpen, tabs, activeId, agentStatuses]);
 
@@ -892,7 +892,7 @@ function App() {
       }
       return;
     }
-    setQuery("");
+    setQuery('');
     setHighlightedIndex(0);
     requestAnimationFrame(() => pickerInputRef.current?.focus());
   }, [pickerOpen]);
@@ -901,7 +901,7 @@ function App() {
 
   const highlightedNote = matchingNotes[highlightedIndex];
   const openPickerEntry = (entry: VaultEntry) => {
-    if (entry.kind === "image") return openImagePreview(entry.path);
+    if (entry.kind === 'image') return openImagePreview(entry.path);
     pickerSelectionFocus.current = true;
     return selectNote(entry.path);
   };
@@ -914,11 +914,11 @@ function App() {
       return;
     }
     setPickerPreview(null);
-    if (highlightedNote.kind === "image") {
+    if (highlightedNote.kind === 'image') {
       setPickerPreviewState(null);
       return;
     }
-    setPickerPreviewState("loading");
+    setPickerPreviewState('loading');
     void window.vault.readNote(highlightedNote.path).then(
       (note) => {
         if (pickerPreviewRequest.current !== requestId) return;
@@ -931,7 +931,7 @@ function App() {
       () => {
         if (pickerPreviewRequest.current !== requestId) return;
         setPickerPreview(null);
-        setPickerPreviewState("error");
+        setPickerPreviewState('error');
       },
     );
     return () => {
@@ -943,7 +943,7 @@ function App() {
   useEffect(() => {
     if (!pickerOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== 'Escape') return;
       // Only take Escape when this palette is the topmost modal. Capture phase
       // lets it win over editor/Vim handlers and already-prevented events.
       const otherModal = Array.from(
@@ -952,7 +952,7 @@ function App() {
         ),
       ).some(
         (dialog) =>
-          dialog.getAttribute("aria-labelledby") !== "open-file-title" &&
+          dialog.getAttribute('aria-labelledby') !== 'open-file-title' &&
           isEligibleFocusTarget(dialog),
       );
       if (otherModal) return;
@@ -960,31 +960,31 @@ function App() {
       event.stopImmediatePropagation();
       setPickerOpen(false);
     };
-    window.addEventListener("keydown", closeOnEscape, true);
-    return () => window.removeEventListener("keydown", closeOnEscape, true);
+    window.addEventListener('keydown', closeOnEscape, true);
+    return () => window.removeEventListener('keydown', closeOnEscape, true);
   }, [pickerOpen]);
 
   useEffect(() => {
     if (!pickerOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") return;
-      if (event.key === "ArrowDown") {
+      if (event.key === 'Escape') return;
+      if (event.key === 'ArrowDown') {
         event.preventDefault();
         setHighlightedIndex((index) =>
           Math.min(index + 1, matchingNotes.length - 1),
         );
-      } else if (event.key === "ArrowUp") {
+      } else if (event.key === 'ArrowUp') {
         event.preventDefault();
         setHighlightedIndex((index) => Math.max(index - 1, 0));
-      } else if (event.key === "Enter" && matchingNotes[highlightedIndex]) {
+      } else if (event.key === 'Enter' && matchingNotes[highlightedIndex]) {
         event.preventDefault();
         void openPickerEntry(matchingNotes[highlightedIndex]).then(() =>
           setPickerOpen(false),
         );
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [pickerOpen, matchingNotes, highlightedIndex]);
 
   useEffect(
@@ -1043,8 +1043,8 @@ function App() {
           const vaultId = activeVaultIdRef.current;
           if (!vaultId) return true;
           const openNotes = tabsRef.current.filter(
-            (tab): tab is Extract<TabSnapshot, { kind: "note" }> =>
-              tab.kind === "note" && tab.vaultId === vaultId,
+            (tab): tab is Extract<TabSnapshot, { kind: 'note' }> =>
+              tab.kind === 'note' && tab.vaultId === vaultId,
           );
           const active = editorRef.current?.snapshot();
           for (const tab of openNotes) {
@@ -1107,9 +1107,9 @@ function App() {
               if (active) {
                 activeIdRef.current = getTabId(active);
                 setActiveId(getTabId(active));
-                if (active.kind === "note") setActivePath(active.note.path);
-                else if (active.kind === "image") setActivePath(active.path);
-                else if (active.kind === "pdf")
+                if (active.kind === 'note') setActivePath(active.note.path);
+                else if (active.kind === 'image') setActivePath(active.path);
+                else if (active.kind === 'pdf')
                   setActivePath(active.relativePath);
                 editorRef.current?.activate(active);
               }
@@ -1126,9 +1126,9 @@ function App() {
     }
   };
 
-  const beginCreate = (kind: "note" | "folder", parent: string) => {
+  const beginCreate = (kind: 'note' | 'folder', parent: string) => {
     if (!activeVaultId || !vaultPath) {
-      setVaultError("Open a vault before creating a file.");
+      setVaultError('Open a vault before creating a file.');
       return;
     }
     const vault = vaults.find((item) => item.id === activeVaultId);
@@ -1139,9 +1139,9 @@ function App() {
       vaultName:
         vault?.name ??
         vaultPath.split(/[\\/]/).filter(Boolean).at(-1) ??
-        "Vault",
+        'Vault',
     });
-    setCreationName("");
+    setCreationName('');
   };
 
   const submitCreation = async (event: React.FormEvent) => {
@@ -1151,21 +1151,21 @@ function App() {
     let created = false;
     try {
       if (!(await editorRef.current?.flush()))
-        throw new Error("Save the current note before creating an entry.");
+        throw new Error('Save the current note before creating an entry.');
       const request = {
         vaultId: creation.vaultId,
         parentRelativePath: creation.parent,
         name: creationName.trim(),
       };
       const entry =
-        creation.kind === "note"
+        creation.kind === 'note'
           ? await window.vault.createNote(request)
           : await window.vault.createFolder(request);
       created = true;
       setCreation(null);
       if (activeVaultIdRef.current === creation.vaultId) {
         await refreshNotes(creation.vaultId);
-        if (creation.kind === "note") void selectNote(entry.path);
+        if (creation.kind === 'note') void selectNote(entry.path);
       }
     } catch (error) {
       if (created) {
@@ -1174,7 +1174,7 @@ function App() {
         );
       } else {
         const message =
-          error instanceof Error ? error.message : "Unable to create entry.";
+          error instanceof Error ? error.message : 'Unable to create entry.';
         notifyError(message);
       }
     } finally {
@@ -1188,12 +1188,12 @@ function App() {
     const rememberFocus = (event: FocusEvent) => {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
-      const pane = target.closest<HTMLElement>("[data-pane]");
-      if (pane && (pane.dataset.pane !== "explorer" || !explorerCollapsed)) {
+      const pane = target.closest<HTMLElement>('[data-pane]');
+      if (pane && (pane.dataset.pane !== 'explorer' || !explorerCollapsed)) {
         lastPane.current = pane.dataset.pane as
-          | "vaults"
-          | "explorer"
-          | "editor";
+          | 'vaults'
+          | 'explorer'
+          | 'editor';
         lastPaneElement.current = target;
       }
     };
@@ -1208,45 +1208,45 @@ function App() {
         )
           return;
         const remembered = lastPaneElement.current;
-        const rememberedPane = remembered?.closest<HTMLElement>("[data-pane]");
+        const rememberedPane = remembered?.closest<HTMLElement>('[data-pane]');
         if (
           isEligibleFocusTarget(remembered) &&
-          !(rememberedPane?.dataset.pane === "explorer" && explorerCollapsed)
+          !(rememberedPane?.dataset.pane === 'explorer' && explorerCollapsed)
         ) {
           remembered.focus();
-        } else if (lastPane.current === "explorer" && !explorerCollapsed) {
+        } else if (lastPane.current === 'explorer' && !explorerCollapsed) {
           focusExplorerRow();
         } else {
           editorRef.current?.focus();
         }
       });
     };
-    document.addEventListener("focusin", rememberFocus);
-    window.addEventListener("focus", restoreOnWindowFocus);
+    document.addEventListener('focusin', rememberFocus);
+    window.addEventListener('focus', restoreOnWindowFocus);
     return () => {
-      document.removeEventListener("focusin", rememberFocus);
-      window.removeEventListener("focus", restoreOnWindowFocus);
+      document.removeEventListener('focusin', rememberFocus);
+      window.removeEventListener('focus', restoreOnWindowFocus);
     };
   }, [explorerCollapsed]);
   useEffect(() => {
-    if (explorerCollapsed && lastPane.current === "explorer")
+    if (explorerCollapsed && lastPane.current === 'explorer')
       editorRef.current?.focus();
   }, [explorerCollapsed]);
   useEffect(() => {
-    if (vaultSidebarCollapsed && lastPane.current === "vaults")
+    if (vaultSidebarCollapsed && lastPane.current === 'vaults')
       editorRef.current?.focus();
   }, [vaultSidebarCollapsed]);
   const focusExplorerRow = (firstRow = false) => {
     const pane = document.querySelector<HTMLElement>('[data-pane="explorer"]');
     const rows = Array.from(
-      pane?.querySelectorAll<HTMLElement>("[data-entry-path]") ?? [],
+      pane?.querySelectorAll<HTMLElement>('[data-entry-path]') ?? [],
     );
     const row =
       (firstRow
         ? undefined
         : rows.find((item) => item.dataset.entryPath === activePath)) ??
       rows[0];
-    const rowButton = row?.querySelector<HTMLElement>("button");
+    const rowButton = row?.querySelector<HTMLElement>('button');
     (rowButton ?? pane)?.focus();
   };
 
@@ -1259,24 +1259,24 @@ function App() {
   }, [explorerCollapsed, activePath, activeVaultId]);
 
   useEffect(() => {
-    const focusPane = (paneName: "vaults" | "explorer" | "editor") => {
-      if (paneName === "editor") {
+    const focusPane = (paneName: 'vaults' | 'explorer' | 'editor') => {
+      if (paneName === 'editor') {
         editorRef.current?.focus();
         return;
       }
-      if (paneName === "explorer" && explorerCollapsed) {
+      if (paneName === 'explorer' && explorerCollapsed) {
         pendingExplorerFocus.current = true;
         pendingExplorerFocusFirst.current = true;
         setExplorerCollapsed(false);
         return;
       }
-      if (paneName === "vaults" && vaultSidebarCollapsed) {
+      if (paneName === 'vaults' && vaultSidebarCollapsed) {
         setVaultSidebarCollapsed(false);
         requestAnimationFrame(() => {
           const pane = document.querySelector<HTMLElement>(
             '[data-pane="vaults"]',
           );
-          const vaultRow = pane?.querySelector<HTMLElement>("[data-vault-row]");
+          const vaultRow = pane?.querySelector<HTMLElement>('[data-vault-row]');
           (vaultRow ?? pane)?.focus();
         });
         return;
@@ -1284,8 +1284,8 @@ function App() {
       const pane = document.querySelector<HTMLElement>(
         `[data-pane="${paneName}"]`,
       );
-      if (paneName === "vaults") {
-        const vaultRow = pane?.querySelector<HTMLElement>("[data-vault-row]");
+      if (paneName === 'vaults') {
+        const vaultRow = pane?.querySelector<HTMLElement>('[data-vault-row]');
         (vaultRow ?? pane)?.focus();
         return;
       }
@@ -1302,7 +1302,7 @@ function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
-        event.key !== "?" ||
+        event.key !== '?' ||
         event.metaKey ||
         event.ctrlKey ||
         event.altKey ||
@@ -1322,9 +1322,9 @@ function App() {
       )
         return;
       const activeTab = tabs.find((tab) => getTabId(tab) === activeId);
-      const emptyEditor = !activeTab || activeTab.kind === "empty";
-      const pane = target.closest<HTMLElement>("[data-pane]");
-      if (pane?.dataset.pane === "editor") {
+      const emptyEditor = !activeTab || activeTab.kind === 'empty';
+      const pane = target.closest<HTMLElement>('[data-pane]');
+      if (pane?.dataset.pane === 'editor') {
         if (!vimMode || !editorRef.current?.isNormalMode()) return;
       } else if (!pane || (vimMode ? false : !emptyEditor)) return;
       shortcutHelpInvoker.current = target;
@@ -1332,8 +1332,8 @@ function App() {
       event.stopPropagation();
       setShortcutHelpOpen(true);
     };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [
     shortcutHelpOpen,
     settingsOpen,
@@ -1349,14 +1349,14 @@ function App() {
       shortcutHelpInvoker.current?.focus();
       return;
     }
-    shortcutHelpDialog.current?.querySelector<HTMLElement>("button")?.focus();
+    shortcutHelpDialog.current?.querySelector<HTMLElement>('button')?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === 'Escape') {
         event.preventDefault();
         setShortcutHelpOpen(false);
         return;
       }
-      if (event.key !== "Tab") return;
+      if (event.key !== 'Tab') return;
       const controls =
         shortcutHelpDialog.current?.querySelectorAll<HTMLElement>(
           'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -1376,14 +1376,14 @@ function App() {
         first.focus();
       }
     };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [shortcutHelpOpen]);
 
   useEffect(() => {
     const parentForActiveNote = () => {
-      const path = activePath?.replace(/\\/g, "/") ?? "";
-      return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+      const path = activePath?.replace(/\\/g, '/') ?? '';
+      return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
     };
     const unsubscribe = window.vault.onCreateEntry((kind) => {
       if (!pickerOpen && !creation) beginCreate(kind, parentForActiveNote());
@@ -1392,19 +1392,19 @@ function App() {
       if (
         (event.metaKey || event.ctrlKey) &&
         !event.shiftKey &&
-        event.key.toLowerCase() === "n"
+        event.key.toLowerCase() === 'n'
       ) {
         if (pickerOpen || creation) return;
         event.preventDefault();
-        beginCreate("note", parentForActiveNote());
+        beginCreate('note', parentForActiveNote());
       }
-      if (event.key === "Escape" && creation && !creationPending)
+      if (event.key === 'Escape' && creation && !creationPending)
         setCreation(null);
     };
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       unsubscribe();
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener('keydown', onKeyDown);
     };
   }, [
     activePath,
@@ -1432,7 +1432,7 @@ function App() {
       return;
     if (
       tabsRef.current.length &&
-      !window.confirm("Replace the current tabs with the saved layout?")
+      !window.confirm('Replace the current tabs with the saved layout?')
     )
       return;
     navigationBusy.current = true;
@@ -1448,22 +1448,22 @@ function App() {
       if (!layout) return;
       const restored: TabSnapshot[] = [];
       for (const item of layout.tabs) {
-        if (item.kind === "empty") {
-          restored.push({ kind: "empty", id: item.id });
+        if (item.kind === 'empty') {
+          restored.push({ kind: 'empty', id: item.id });
           continue;
         }
-        if (item.kind === "image") {
+        if (item.kind === 'image') {
           restored.push({
-            kind: "image",
+            kind: 'image',
             vaultId,
             path: item.path,
             filename: item.path.split(/[\\/]/).at(-1) || item.path,
           });
           continue;
         }
-        if (item.kind === "pdf") {
+        if (item.kind === 'pdf') {
           restored.push({
-            kind: "pdf",
+            kind: 'pdf',
             vaultId,
             relativePath: item.relativePath,
             fileName:
@@ -1486,7 +1486,7 @@ function App() {
             selection: { anchor: safe(item.anchor), head: safe(item.head) },
           }).state;
           restored.push({
-            kind: "note",
+            kind: 'note',
             note,
             vaultPath: root,
             vaultId,
@@ -1501,9 +1501,9 @@ function App() {
         !restored.length &&
         layout.tabs.some(
           (item) =>
-            item.kind === "note" ||
-            item.kind === "image" ||
-            item.kind === "pdf",
+            item.kind === 'note' ||
+            item.kind === 'image' ||
+            item.kind === 'pdf',
         )
       ) {
         setVaultError(STARTUP_VAULT_ERROR);
@@ -1534,11 +1534,11 @@ function App() {
         editorRef.current?.activate(selected);
         setActiveId(getTabId(selected));
         setActivePath(
-          selected.kind === "note"
+          selected.kind === 'note'
             ? selected.note.path
-            : selected.kind === "image"
+            : selected.kind === 'image'
               ? selected.path
-              : selected.kind === "pdf"
+              : selected.kind === 'pdf'
                 ? selected.relativePath
                 : null,
         );
@@ -1569,7 +1569,7 @@ function App() {
       setVaultError(null);
     } catch (error) {
       setVaultError(
-        error instanceof Error ? error.message : "Unable to restore saved tabs",
+        error instanceof Error ? error.message : 'Unable to restore saved tabs',
       );
     } finally {
       navigationBusy.current = false;
@@ -1638,7 +1638,7 @@ function App() {
               notifyError(
                 error instanceof Error
                   ? error.message
-                  : "Unable to reopen closed tab",
+                  : 'Unable to reopen closed tab',
               );
           }
         })();
@@ -1681,7 +1681,7 @@ function App() {
       const outgoing = editorRef.current?.snapshot();
       const freshTabs = outgoing
         ? currentTabs.map((tab) =>
-            tab.kind === "note" && tab.note.path === outgoing.note.path
+            tab.kind === 'note' && tab.note.path === outgoing.note.path
               ? outgoing
               : tab,
           )
@@ -1689,20 +1689,20 @@ function App() {
       const result = await window.vault.deleteEntry({ vaultId, path });
       if (!result.deleted) return;
       const normalize = (value: string) =>
-        value.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+        value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
       const deletedPath = normalize(result.path);
       const matchesDeleted = (tab: TabSnapshot) => {
-        if (tab.kind === "empty" || tab.vaultId !== vaultId) return false;
+        if (tab.kind === 'empty' || tab.vaultId !== vaultId) return false;
         const tabPath = normalize(
-          tab.kind === "note"
+          tab.kind === 'note'
             ? tab.note.path
-            : tab.kind === "pdf"
+            : tab.kind === 'pdf'
               ? tab.relativePath
               : tab.path,
         );
         return (
           tabPath === deletedPath ||
-          (result.kind === "folder" && tabPath.startsWith(`${deletedPath}/`))
+          (result.kind === 'folder' && tabPath.startsWith(`${deletedPath}/`))
         );
       };
       const removedActive = freshTabs.find(
@@ -1734,9 +1734,9 @@ function App() {
       }
       if (removedActive) {
         editorRef.current?.clear();
-        if (nextActive?.kind === "note")
+        if (nextActive?.kind === 'note')
           editorRef.current?.activate(nextActive);
-        else if (nextActive?.kind === "empty")
+        else if (nextActive?.kind === 'empty')
           editorRef.current?.activate(nextActive);
       }
       tabsRef.current = remaining;
@@ -1746,11 +1746,11 @@ function App() {
       setTabs(remaining);
       setActiveId(activeIdRef.current);
       setActivePath(
-        nextActive?.kind === "note"
+        nextActive?.kind === 'note'
           ? nextActive.note.path
-          : nextActive?.kind === "image"
+          : nextActive?.kind === 'image'
             ? nextActive.path
-            : nextActive?.kind === "pdf"
+            : nextActive?.kind === 'pdf'
               ? nextActive.relativePath
               : null,
       );
@@ -1792,7 +1792,7 @@ function App() {
       if (activeVaultIdRef.current === vaultId) await refreshNotes(vaultId);
     } catch (error) {
       notifyError(
-        error instanceof Error ? error.message : "Unable to delete entry.",
+        error instanceof Error ? error.message : 'Unable to delete entry.',
       );
     } finally {
       navigationBusy.current = false;
@@ -1814,13 +1814,13 @@ function App() {
       if (outgoing)
         setTabs((old) =>
           old.map((tab) =>
-            tab.kind === "note" && tab.note.path === outgoing.note.path
+            tab.kind === 'note' && tab.note.path === outgoing.note.path
               ? outgoing
               : tab,
           ),
         );
       const existing = tabs.find(
-        (tab) => tab.kind === "note" && tab.note.path === path,
+        (tab) => tab.kind === 'note' && tab.note.path === path,
       );
       if (existing) {
         activateTab(existing);
@@ -1828,10 +1828,10 @@ function App() {
         return;
       }
       const replacedEmpty = tabs.find(
-        (tab) => tab.kind === "empty" && getTabId(tab) === activeId,
+        (tab) => tab.kind === 'empty' && getTabId(tab) === activeId,
       );
       const removedEmptyIds = tabs
-        .filter((tab) => tab.kind === "empty")
+        .filter((tab) => tab.kind === 'empty')
         .map(getTabId);
       const inheritedGroup = replacedEmpty
         ? tabGroupAssignments[getTabId(replacedEmpty)]
@@ -1847,8 +1847,8 @@ function App() {
         setTabs((old) => [
           ...old.filter(
             (tab) =>
-              tab.kind !== "empty" &&
-              (tab.kind !== "note" || tab.note.path !== path),
+              tab.kind !== 'empty' &&
+              (tab.kind !== 'note' || tab.note.path !== path),
           ),
           fresh,
         ]);
@@ -1870,7 +1870,7 @@ function App() {
       setActivePath(path);
       setActiveId(path);
     } catch (error) {
-      console.error("Unable to open note", error);
+      console.error('Unable to open note', error);
     } finally {
       navigationBusy.current = false;
     }
@@ -1894,17 +1894,17 @@ function App() {
         return;
       if (!result.ok) {
         notifyError(
-          result.reason === "ambiguous"
-            ? "Note link is ambiguous."
-            : result.reason === "missing"
-              ? "Note not found."
-              : "Invalid note link.",
+          result.reason === 'ambiguous'
+            ? 'Note link is ambiguous.'
+            : result.reason === 'missing'
+              ? 'Note not found.'
+              : 'Invalid note link.',
         );
         return;
       }
       await selectNote(result.path);
     } catch {
-      notifyError("Note could not be opened.");
+      notifyError('Note could not be opened.');
     }
   };
 
@@ -1919,11 +1919,11 @@ function App() {
     editorRef.current?.activate(tab);
     setActiveId(getTabId(tab));
     setActivePath(
-      tab.kind === "note"
+      tab.kind === 'note'
         ? tab.note.path
-        : tab.kind === "image"
+        : tab.kind === 'image'
           ? tab.path
-          : tab.kind === "pdf"
+          : tab.kind === 'pdf'
             ? tab.relativePath
             : null,
     );
@@ -1937,13 +1937,13 @@ function App() {
       if (outgoing)
         setTabs((old) =>
           old.map((tab) =>
-            tab.kind === "note" && tab.note.path === outgoing.note.path
+            tab.kind === 'note' && tab.note.path === outgoing.note.path
               ? outgoing
               : tab,
           ),
         );
       if (activeVaultId) visitedVaults.current.add(activeVaultId);
-      const empty: TabSnapshot = { kind: "empty", id: crypto.randomUUID() };
+      const empty: TabSnapshot = { kind: 'empty', id: crypto.randomUUID() };
       const inheritedGroup = activeId
         ? tabGroupAssignments[activeId]
         : undefined;
@@ -1961,8 +1961,8 @@ function App() {
   const closeTab = async (target: TabSnapshot) => {
     if (navigationBusy.current) return;
     const targetId = getTabId(target);
-    const targetPath = target.kind === "note" ? target.note.path : null;
-    if (target.kind === "note" && isAgentTabProtected(target, agentStatuses))
+    const targetPath = target.kind === 'note' ? target.note.path : null;
+    if (target.kind === 'note' && isAgentTabProtected(target, agentStatuses))
       return;
     if (targetPath) {
       const adapter =
@@ -1971,7 +1971,7 @@ function App() {
           : undefined;
       if (adapter && !(await adapter.flush())) {
         setVaultError(
-          "Could not save accepted agent updates before closing the note.",
+          'Could not save accepted agent updates before closing the note.',
         );
         return;
       }
@@ -2085,7 +2085,7 @@ function App() {
         if (
           activePath &&
           tabs.some(
-            (tab) => tab.kind === "note" && tab.note.path === activePath,
+            (tab) => tab.kind === 'note' && tab.note.path === activePath,
           )
         ) {
           editorRef.current?.focus();
@@ -2116,7 +2116,7 @@ function App() {
           visitedVaults.current.add(activeVaultId);
         const outgoingTabs = outgoing
           ? tabs.map((tab) =>
-              tab.kind === "note" && tab.note.path === outgoing.note.path
+              tab.kind === 'note' && tab.note.path === outgoing.note.path
                 ? outgoing
                 : tab,
             )
@@ -2132,7 +2132,7 @@ function App() {
       const activated = await window.vault.registryActivate(id);
       if (!activated.path)
         throw new Error(
-          "Vault folder is unavailable. Choose or move the folder to recover.",
+          'Vault folder is unavailable. Choose or move the folder to recover.',
         );
       ++notesRefreshRequest.current;
       const listed = await window.vault.listNotes();
@@ -2140,7 +2140,7 @@ function App() {
       let restoredTabs: TabSnapshot[] = [];
       if (session) {
         for (const tab of session.tabs) {
-          if (tab.kind === "empty" || tab.kind === "image") {
+          if (tab.kind === 'empty' || tab.kind === 'image') {
             restoredTabs.push(tab);
             continue;
           }
@@ -2193,11 +2193,11 @@ function App() {
       setTabGroupAssignments(normalizedSession.assignments);
       setActiveId(restoredId);
       setActivePath(
-        activeTab?.kind === "note"
+        activeTab?.kind === 'note'
           ? activeTab.note.path
-          : activeTab?.kind === "image"
+          : activeTab?.kind === 'image'
             ? activeTab.path
-            : activeTab?.kind === "pdf"
+            : activeTab?.kind === 'pdf'
               ? activeTab.relativePath
               : null,
       );
@@ -2222,7 +2222,7 @@ function App() {
           activeIdRef.current !== restoredActiveId
         )
           return;
-        if (focusDestination && activeTab?.kind !== "note") {
+        if (focusDestination && activeTab?.kind !== 'note') {
           if (explorerCollapsed) {
             pendingExplorerFocus.current = true;
             setExplorerCollapsed(false);
@@ -2242,7 +2242,7 @@ function App() {
       }
       cancelVaultChange();
       setVaultError(
-        error instanceof Error ? error.message : "Unable to activate vault",
+        error instanceof Error ? error.message : 'Unable to activate vault',
       );
       return false;
     } finally {
@@ -2263,7 +2263,7 @@ function App() {
       if (pickerOpen) return;
       const tab = visibleTabOrder(tabs, tabGroups, tabGroupAssignments)[index];
       if (tab) {
-        if (tab.kind === "note") void selectNote(tab.note.path);
+        if (tab.kind === 'note') void selectNote(tab.note.path);
         else if (!navigationBusy.current) {
           void (async () => {
             if (!(await editorRef.current?.flush())) return;
@@ -2271,7 +2271,7 @@ function App() {
             if (outgoing)
               setTabs((old) =>
                 old.map((item) =>
-                  item.kind === "note" && item.note.path === outgoing.note.path
+                  item.kind === 'note' && item.note.path === outgoing.note.path
                     ? outgoing
                     : item,
                 ),
@@ -2305,16 +2305,16 @@ function App() {
     const vault = vaults.find((item) => item.id === id);
     if (!vault || navigationBusy.current || vaultTransition.current) return;
     const liveAgent = Object.values(agentStatuses).some((status) => {
-      const path = status.absolutePath.replace(/\\/g, "/");
-      const root = vault.path.replace(/\\/g, "/").replace(/\/$/, "");
+      const path = status.absolutePath.replace(/\\/g, '/');
+      const root = vault.path.replace(/\\/g, '/').replace(/\/$/, '');
       return (
-        (status.state === "connected" || status.state === "writing") &&
+        (status.state === 'connected' || status.state === 'writing') &&
         (path === root || path.startsWith(`${root}/`))
       );
     });
     if (liveAgent) {
       setVaultError(
-        "Stop the connected agent session before unloading this vault.",
+        'Stop the connected agent session before unloading this vault.',
       );
       return;
     }
@@ -2326,9 +2326,9 @@ function App() {
       return;
     navigationBusy.current = true;
     try {
-      const root = vault.path.replace(/\\/g, "/").replace(/\/$/, "");
+      const root = vault.path.replace(/\\/g, '/').replace(/\/$/, '');
       for (const status of Object.values(agentStatuses)) {
-        const absolutePath = status.absolutePath.replace(/\\/g, "/");
+        const absolutePath = status.absolutePath.replace(/\\/g, '/');
         if (!absolutePath.startsWith(`${root}/`)) continue;
         const relativePath = absolutePath.slice(root.length + 1);
         const adapter = agentAdaptersRef.current.get(
@@ -2336,13 +2336,13 @@ function App() {
         );
         if (adapter && !(await adapter.flush()))
           throw new Error(
-            "Could not save agent updates; vault was not unloaded.",
+            'Could not save agent updates; vault was not unloaded.',
           );
       }
       if (id === activeVaultIdRef.current) {
         if (!(await editorRef.current?.flush()))
           throw new Error(
-            "Could not save the current note; vault was not unloaded.",
+            'Could not save the current note; vault was not unloaded.',
           );
         if (checkpointTimer.current) {
           clearTimeout(checkpointTimer.current);
@@ -2355,7 +2355,7 @@ function App() {
           const switched = await activateVault(fallback.id);
           navigationBusy.current = true;
           if (!switched)
-            throw new Error("Could not switch vault; nothing was unloaded.");
+            throw new Error('Could not switch vault; nothing was unloaded.');
         }
       }
       await window.vault.registryUnloadVault(id);
@@ -2379,10 +2379,10 @@ function App() {
         assignmentsRef.current = {};
       }
       setVaultError(null);
-      notifySuccess("Vault unloaded. Its files were not changed.");
+      notifySuccess('Vault unloaded. Its files were not changed.');
     } catch (error) {
       setVaultError(
-        error instanceof Error ? error.message : "Unable to unload vault",
+        error instanceof Error ? error.message : 'Unable to unload vault',
       );
     } finally {
       navigationBusy.current = false;
@@ -2395,7 +2395,7 @@ function App() {
     try {
       if (!(await editorRef.current?.flush()))
         throw new Error(
-          "Could not save the current note; vaults were not unloaded.",
+          'Could not save the current note; vaults were not unloaded.',
         );
       const currentVault = activeVaultIdRef.current;
       if (currentVault && visitedVaults.current.has(currentVault))
@@ -2441,18 +2441,18 @@ function App() {
       setNotes([]);
       setEntriesLoading(false);
       setReadingModes({});
-      setCreationName("");
+      setCreationName('');
       setPickerOpen(false);
-      setQuery("");
+      setQuery('');
       setPickerPreview(null);
       setPickerPreviewState(null);
       setCreation(null);
       setVaultError(null);
-      notifySuccess("All vaults unloaded. Your files were not changed.");
+      notifySuccess('All vaults unloaded. Your files were not changed.');
       return true;
     } catch (error) {
       setVaultError(
-        error instanceof Error ? error.message : "Unable to unload vaults.",
+        error instanceof Error ? error.message : 'Unable to unload vaults.',
       );
       return false;
     } finally {
@@ -2477,7 +2477,7 @@ function App() {
       const { vaults: registered } = await window.vault.registryList();
       const vault = registered.find((item) => item.path === selection.path);
       if (!vault)
-        throw new Error(selection.warning ?? "Unable to register vault");
+        throw new Error(selection.warning ?? 'Unable to register vault');
       setVaults(registered);
       navigationBusy.current = false;
       cancelVaultChange();
@@ -2485,7 +2485,7 @@ function App() {
     } catch (error) {
       cancelVaultChange();
       setVaultError(
-        error instanceof Error ? error.message : "Unable to add vault",
+        error instanceof Error ? error.message : 'Unable to add vault',
       );
     } finally {
       navigationBusy.current = false;
@@ -2514,7 +2514,7 @@ function App() {
             if (!current) return;
             if (!result.path)
               throw new Error(
-                "Vault folder is unavailable. Choose or move the folder to recover.",
+                'Vault folder is unavailable. Choose or move the folder to recover.',
               );
             setActiveVaultId(active);
             activeVaultIdRef.current = active;
@@ -2570,22 +2570,22 @@ function App() {
       className="app-shell relative flex h-screen min-h-0 w-full min-w-0 flex-col"
       data-window-controls-host={
         quizFullscreen
-          ? "quiz"
+          ? 'quiz'
           : !vaultSidebarCollapsed
-            ? "vaults"
+            ? 'vaults'
             : !explorerCollapsed
-              ? "explorer"
-              : "editor"
+              ? 'explorer'
+              : 'editor'
       }
     >
       <div className="window-pane-controls flex items-center gap-1 pl-20">
         <button
           type="button"
           className="app-icon-button relative"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-          aria-label={vaultSidebarCollapsed ? "Show vaults" : "Hide vaults"}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          aria-label={vaultSidebarCollapsed ? 'Show vaults' : 'Hide vaults'}
           aria-expanded={!vaultSidebarCollapsed}
-          title={`Toggle vaults (${navigator.platform.toLowerCase().includes("mac") ? "⌘⇧S" : "Ctrl+Shift+S"})`}
+          title={`Toggle vaults (${navigator.platform.toLowerCase().includes('mac') ? '⌘⇧S' : 'Ctrl+Shift+S'})`}
           onClick={() => setVaultSidebarCollapsed((value) => !value)}
         >
           <TbLayoutSidebarLeftCollapseFilled
@@ -2597,21 +2597,21 @@ function App() {
               aria-hidden="true"
               className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white"
             >
-              {navigator.platform.toLowerCase().includes("mac")
-                ? "⌘⇧S"
-                : "Ctrl+Shift+S"}
+              {navigator.platform.toLowerCase().includes('mac')
+                ? '⌘⇧S'
+                : 'Ctrl+Shift+S'}
             </span>
           )}
         </button>
         <button
           type="button"
           className="app-icon-button relative"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           aria-label={
-            explorerCollapsed ? "Show file explorer" : "Hide file explorer"
+            explorerCollapsed ? 'Show file explorer' : 'Hide file explorer'
           }
           aria-expanded={!explorerCollapsed}
-          title={`Toggle file explorer (${navigator.platform.toLowerCase().includes("mac") ? "⌘S" : "Ctrl+S"})`}
+          title={`Toggle file explorer (${navigator.platform.toLowerCase().includes('mac') ? '⌘S' : 'Ctrl+S'})`}
           onClick={() => setExplorerCollapsed((value) => !value)}
         >
           <TbLayoutSidebarRightFilled
@@ -2623,9 +2623,9 @@ function App() {
               aria-hidden="true"
               className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-white"
             >
-              {navigator.platform.toLowerCase().includes("mac")
-                ? "⌘S"
-                : "Ctrl+S"}
+              {navigator.platform.toLowerCase().includes('mac')
+                ? '⌘S'
+                : 'Ctrl+S'}
             </span>
           )}
         </button>
@@ -2662,65 +2662,65 @@ function App() {
               <ShortcutGroup
                 title="Navigation"
                 items={[
-                  navigator.platform.toLowerCase().includes("mac")
-                    ? "Ctrl+1 / Ctrl+2 / Ctrl+3 — Focus Vaults / Explorer / Editor"
-                    : "Alt+1 / Alt+2 / Alt+3 — Focus Vaults / Explorer / Editor",
+                  navigator.platform.toLowerCase().includes('mac')
+                    ? 'Ctrl+1 / Ctrl+2 / Ctrl+3 — Focus Vaults / Explorer / Editor'
+                    : 'Alt+1 / Alt+2 / Alt+3 — Focus Vaults / Explorer / Editor',
                   ...(vimMode
-                    ? ["h / j / k / l — Navigate panes and files"]
+                    ? ['h / j / k / l — Navigate panes and files']
                     : []),
-                  "Enter / l — Open focused item",
-                  "⌘⇧T / Ctrl+Shift+T — Reopen closed tab",
+                  'Enter / l — Open focused item',
+                  '⌘⇧T / Ctrl+Shift+T — Reopen closed tab',
                   ...(vimMode
-                    ? ["i — Enter insert mode", "Esc — Return to normal mode"]
+                    ? ['i — Enter insert mode', 'Esc — Return to normal mode']
                     : []),
                 ]}
               />
               <ShortcutGroup
                 title="App"
                 items={[
-                  "Ctrl+W — Close current tab",
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘"
-                    : "Ctrl") + "T — New empty tab",
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘"
-                    : "Ctrl") + "N — New note",
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘⇧"
-                    : "Ctrl+Shift+") + "N — New folder",
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘"
-                    : "Ctrl") +
-                    "P — Search notes" +
-                    (openFileShortcut ? "" : " (disabled)"),
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘"
-                    : "Ctrl") +
-                    "S — Toggle file explorer" +
-                    (toggleExplorerShortcut ? "" : " (disabled)"),
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘⇧"
-                    : "Ctrl+Shift+") +
-                    "S — Toggle vault sidebar" +
-                    (toggleVaultsShortcut ? "" : " (disabled)"),
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘"
-                    : "Ctrl") + ", — Settings",
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘⇧"
-                    : "Ctrl+Shift+") + "M — Toggle preview",
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘"
-                    : "Ctrl") + "E — Toggle reading mode",
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘"
-                    : "Ctrl") + "B / I — Bold / italic in the editor",
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌘"
-                    : "Ctrl") + "1–9 — Select tab",
-                  (navigator.platform.toLowerCase().includes("mac")
-                    ? "⌃⇧"
-                    : "Ctrl+Shift+") + "1–9 — Select vault",
+                  'Ctrl+W — Close current tab',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + 'T — New empty tab',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + 'N — New note',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘⇧'
+                    : 'Ctrl+Shift+') + 'N — New folder',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') +
+                    'P — Search notes' +
+                    (openFileShortcut ? '' : ' (disabled)'),
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') +
+                    'S — Toggle file explorer' +
+                    (toggleExplorerShortcut ? '' : ' (disabled)'),
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘⇧'
+                    : 'Ctrl+Shift+') +
+                    'S — Toggle vault sidebar' +
+                    (toggleVaultsShortcut ? '' : ' (disabled)'),
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + ', — Settings',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘⇧'
+                    : 'Ctrl+Shift+') + 'M — Toggle preview',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + 'E — Toggle reading mode',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + 'B / I — Bold / italic in the editor',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌘'
+                    : 'Ctrl') + '1–9 — Select tab',
+                  (navigator.platform.toLowerCase().includes('mac')
+                    ? '⌃⇧'
+                    : 'Ctrl+Shift+') + '1–9 — Select vault',
                 ]}
               />
             </div>
@@ -2736,7 +2736,7 @@ function App() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-row">
         <div
           className="contents"
-          style={quizFullscreen ? { display: "none" } : undefined}
+          style={quizFullscreen ? { display: 'none' } : undefined}
         >
           {!vaultSidebarCollapsed && (
             <VaultSidebar
@@ -2784,10 +2784,10 @@ function App() {
             onRenameEntry={renameEntry}
             onCreate={beginCreate}
             onCreateNote={() => {
-              const path = activePath?.replace(/\\/g, "/") ?? "";
+              const path = activePath?.replace(/\\/g, '/') ?? '';
               beginCreate(
-                "note",
-                path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "",
+                'note',
+                path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '',
               );
             }}
             creationPending={creationPending}
@@ -2810,19 +2810,19 @@ function App() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-row">
           <div
             className="flex min-h-0 min-w-0 flex-1 flex-col"
-            style={quizFullscreen ? { display: "none" } : undefined}
+            style={quizFullscreen ? { display: 'none' } : undefined}
           >
             <Editor
               ref={editorRef}
               pdfAsset={(() => {
                 const tab = tabs.find((item) => getTabId(item) === activeId);
-                return tab?.kind === "pdf" && tab.vaultId === activeVaultId
+                return tab?.kind === 'pdf' && tab.vaultId === activeVaultId
                   ? tab
                   : null;
               })()}
               imageAsset={(() => {
                 const tab = tabs.find((item) => getTabId(item) === activeId);
-                return tab?.kind === "image" && tab.vaultId === activeVaultId
+                return tab?.kind === 'image' && tab.vaultId === activeVaultId
                   ? {
                       vaultId: tab.vaultId,
                       path: tab.path,
@@ -2842,19 +2842,19 @@ function App() {
               agentDocument={activeAgentAdapter}
               agentStatus={activeAgentStatus}
               agentWriting={matchingAgentStatuses.some(
-                (status) => status.state === "writing",
+                (status) => status.state === 'writing',
               )}
               agentGenerationFinished={
                 matchingAgentStatuses.length > 0 &&
                 matchingAgentStatuses.every(
-                  (status) => status.state === "finished",
+                  (status) => status.state === 'finished',
                 )
               }
               onStopAgent={(sessionId) => {
-                window.stormAgent.cancel(sessionId, "Stopped from editor");
+                window.stormAgent.cancel(sessionId, 'Stopped from editor');
                 setAgentStatuses((current) => ({
                   ...current,
-                  [sessionId]: { ...current[sessionId], state: "cancelled" },
+                  [sessionId]: { ...current[sessionId], state: 'cancelled' },
                 }));
               }}
               onLayoutChange={() => {
@@ -2863,7 +2863,7 @@ function App() {
                 if (!vaultId || !latest) return;
                 visitedVaults.current.add(vaultId);
                 const currentTabs = tabsRef.current.map((tab) =>
-                  tab.kind === "note" && tab.note.path === latest.note.path
+                  tab.kind === 'note' && tab.note.path === latest.note.path
                     ? latest
                     : tab,
                 );
@@ -2881,7 +2881,7 @@ function App() {
                   tabs={tabs}
                   activeId={activeId}
                   onSelect={(tab) =>
-                    tab.kind === "note"
+                    tab.kind === 'note'
                       ? void selectNote(tab.note.path)
                       : void (async () => {
                           if (!(await editorRef.current?.flush())) return;
@@ -2889,7 +2889,7 @@ function App() {
                           if (outgoing)
                             setTabs((old) =>
                               old.map((item) =>
-                                item.kind === "note" &&
+                                item.kind === 'note' &&
                                 item.note.path === outgoing.note.path
                                   ? outgoing
                                   : item,
@@ -2899,7 +2899,7 @@ function App() {
                         })()
                   }
                   canCloseTab={(tab) =>
-                    tab.kind !== "note" ||
+                    tab.kind !== 'note' ||
                     !isAgentTabProtected(tab, agentStatuses)
                   }
                   onClose={(tab) => {
@@ -2937,12 +2937,12 @@ function App() {
             <div
               aria-hidden={!quizOpen}
               className="flex min-h-0 min-w-0 flex-1"
-              style={{ display: quizOpen ? "flex" : "none" }}
+              style={{ display: quizOpen ? 'flex' : 'none' }}
             >
               <QuizPane
                 vaultId={activeVaultId}
                 vaultName={
-                  vaults.find((vault) => vault.id === activeVaultId)?.name ?? ""
+                  vaults.find((vault) => vault.id === activeVaultId)?.name ?? ''
                 }
                 notePath={activePath}
                 appearance={appearance}
@@ -2996,11 +2996,11 @@ function App() {
             className="app-popup-surface command-palette-surface w-full max-w-sm p-5"
           >
             <h2 id="create-title" className="mb-3 text-lg font-semibold">
-              New {creation.kind === "note" ? "Markdown note" : "folder"}
+              New {creation.kind === 'note' ? 'Markdown note' : 'folder'}
             </h2>
             <p className="mb-4 truncate text-xs text-white/55">
               In {creation.vaultName}
-              {creation.parent ? ` / ${creation.parent}` : ""}
+              {creation.parent ? ` / ${creation.parent}` : ''}
             </p>
             <label className="block text-sm">
               Name
@@ -3024,7 +3024,7 @@ function App() {
                 disabled={creationPending || !creationName.trim()}
                 className="app-button bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50"
               >
-                {creationPending ? "Creating…" : "Create"}
+                {creationPending ? 'Creating…' : 'Create'}
               </button>
             </div>
           </form>
@@ -3034,7 +3034,7 @@ function App() {
   );
 }
 installLatexCopy();
-createRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById('root')!).render(
   <ToastProvider>
     <App />
   </ToastProvider>,
