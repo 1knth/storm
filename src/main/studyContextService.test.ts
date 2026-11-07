@@ -452,3 +452,36 @@ test('question basis is committed with the question, survives source changes, an
     await f.cleanup();
   }
 });
+
+test('ranked continuation delivers interleaved source passages exactly once', async () => {
+  const f = await fixture();
+  try {
+    for (let i = 0; i < 6; i++)
+      await writeFile(
+        join(f.root, 'Course', `rank-${i}.md`),
+        '# First\nuniqueterm\n## Second\nuniqueterm\n## Third\nuniqueterm\n',
+      );
+    const seen = new Set<string>();
+    let offset = 0;
+    for (let page = 0; page < 20; page++) {
+      const packet = (await f.service.execute({
+        action: 'retrieve',
+        studyId: f.opened.studyId,
+        query: 'uniqueterm',
+        offset,
+      })) as StudyPacket;
+      for (const chunk of packet.chunks) {
+        assert.ok(
+          !seen.has(chunk.id),
+          'ranked continuation repeated a passage',
+        );
+        seen.add(chunk.id);
+      }
+      if (packet.nextScanOffset === null) break;
+      offset = packet.nextScanOffset!;
+    }
+    assert.equal(seen.size, 18);
+  } finally {
+    await f.cleanup();
+  }
+});

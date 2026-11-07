@@ -416,6 +416,10 @@ export class StudyContextService {
       0,
       4,
     );
+    const boundary = remaining.findIndex(
+      (c) => !selectedIds.includes(c.source.id),
+    );
+    const rankedPage = boundary < 0 ? remaining : remaining.slice(0, boundary);
     const selected = notes.filter((s) => selectedIds.includes(s.id));
     const reads = await this.captured(info.scope, info.root, selected);
     const captured: StudyCapturedSource[] = [];
@@ -474,7 +478,7 @@ export class StudyContextService {
       });
     }
     const capturedIds = new Set(captured.map((s) => s.id));
-    const ranked = remaining
+    const ranked = rankedPage
       .filter((c) => capturedIds.has(c.source.id))
       .map((c) => c.chunk);
     const sourceIds = selectedIds;
