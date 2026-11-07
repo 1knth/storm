@@ -2,8 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 test('real tool schema admits oversized notes for actionable execution validation', () => {
-  // Other extension tests mock TypeBox process-wide. A fresh process exercises
-  // the actual validator Pi uses without inheriting those mocks.
+  // Exercise schema validation through a fresh host import.
   const result = Bun.spawnSync(
     [
       process.execPath,

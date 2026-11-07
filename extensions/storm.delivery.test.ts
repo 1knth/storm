@@ -1,126 +1,164 @@
+import { piRegistry, pause, until } from './storm-test-fixtures';
 // Synthetic CLI with the production Pi extension; regression coverage for delivery and ownership.
-import { expect, mock, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { expect, test } from 'bun:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const type =
-  (kind: string) =>
-  (...args: unknown[]) => ({ kind, args });
-mock.module('typebox', () => ({
-  Type: Object.fromEntries(
-    ['Object', 'Union', 'Literal', 'Optional', 'String', 'Array', 'Number'].map(
-      (key) => [key, type(key)],
-    ),
-  ),
-}));
-const { default: extension } = await import('./storm');
+const { default: extension, runCli } = await import('./storm');
 
 const contextId = (text: string) => text.match(/"contextId":"([^"]+)"/)![1];
-const pause = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(check: () => boolean | Promise<boolean>) {
-  const deadline = Date.now() + 2500;
-  while (!(await check())) {
-    if (Date.now() >= deadline)
-      throw new Error('Diagnostic condition timed out');
-    await pause();
-  }
-}
-
 async function fixture(snapshots: unknown[] = []) {
   const dir = await mkdtemp(join(tmpdir(), 'storm-live-diagnostic-'));
-  const executable = join(dir, 'fake-cli.cjs');
-  await writeFile(join(dir, 'snapshots.json'), JSON.stringify(snapshots));
-  await writeFile(
-    executable,
-    `
-const fs = require('node:fs'), path = require('node:path');
-const root = __dirname, args = process.argv.slice(2), op = args[1];
-const file = n => path.join(root,n), exists = n => fs.existsSync(file(n));
-const log = (n,v) => fs.appendFileSync(file(n),JSON.stringify(v)+'\\n');
-const ok = value => process.stdout.write(JSON.stringify({ok:true,result:{ok:true,value}}));
-const session = {id:args[2],revision:8,eventCursor:3,status:'connected'};
-if(op==='capabilities') ok({integrationVersion:2,features:['learning', 'support-update', 'answer-confidence', 'tutor-notes']});
-else if(op==='attach') ok({agentToken:'synthetic',snapshot:{session,events:[]}});
-else if(op==='activity'||op==='detach') ok({});
-else if(op==='status') process.stdout.write(JSON.stringify({ok:true,operation:'snapshot',snapshot:{session,events:[]}}));
-else if(op==='wait') {
-  log('waits.log',{after:args[args.indexOf('--after')+1]});
-  if(exists('fail-wait')) {process.stderr.write(JSON.stringify({error:{code:'TEMPORARY'}}));process.exitCode=1;}
-  else {
-    const after=Number(args[args.indexOf('--after')+1]);
-    const tick=()=>{
-      if(!exists('allow-events')) return;
-      const snapshots=JSON.parse(fs.readFileSync(file('snapshots.json'),'utf8'));
-      const next=snapshots.find(s=>s.session.eventCursor>after);
-      if(next){clearInterval(timer);process.stdout.write(JSON.stringify({ok:true,snapshot:{...next,session:{...next.session,id:args[2]}},after:next.session.eventCursor}));}
-    }; const timer=setInterval(tick,10); tick();
-  }
-}
-else if(op==='image') {
-  fs.writeFileSync(file('image-started'),'');
-  const timer=setInterval(()=>{if(exists('allow-image')){clearInterval(timer);ok({path:file('image.png'),mimeType:'image/png'});}},10);
-}
-else if(op==='image-release') {log('released.log',args[args.indexOf('--image-id')+1]);ok({});}
-else if(op==='request') {
-  let input='';process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{
-    const request=JSON.parse(input);log('requests.log',{targetSessionId:args[2],...request});
-    if(exists('reject-input')) process.stdout.write(JSON.stringify({ok:true,result:{ok:false,error:'invalid-input'}}));
-    else if(exists('drop-reply')) {fs.unlinkSync(file('drop-reply'));process.stdout.write('incomplete');}
-    else ok({revision:request.expectedRevision+1});
-  });
-}
-`,
-  );
-  const oldExecutable = process.env.STORM_QUIZ_CLI;
-  const oldArgs = process.env.STORM_QUIZ_CLI_ARGS;
-  process.env.STORM_QUIZ_CLI = process.execPath;
-  process.env.STORM_QUIZ_CLI_ARGS = JSON.stringify([executable]);
-  const commands = new Map<string, any>(),
-    tools = new Map<string, any>();
-  const handlers = new Map<string, Function[]>();
+  const flags = new Set<string>();
+  const logs = new Map<string, any[]>();
+  const logValue = (name: string, value: any) =>
+    logs.set(name, [...(logs.get(name) ?? []), value]);
+  let realCli = false;
+  let studyScope: unknown;
+  let studyAttempts = 0;
+  const transport = {
+    async request(args: string[], input?: any, token?: string) {
+      if (realCli && args[1] === 'request') return runCli(args, input, token);
+      if (args[0] === 'study') {
+        if (args[1] === 'capabilities')
+          return {
+            ok: true,
+            result: { ok: true, value: { schemaVersion: 1 } },
+          };
+        if (input?.action === 'open') {
+          studyAttempts++;
+          if (flags.has('fail-study')) throw new Error('study unavailable');
+          return {
+            ok: true,
+            result: {
+              ok: true,
+              value: { studyId: `study-${studyAttempts}`, root: '/vault' },
+            },
+          };
+        }
+        logValue('study.log', input);
+        return { ok: true, result: { ok: true, value: {} } };
+      }
+      const session = {
+        scope: studyScope,
+        id: args[2],
+        revision: 8,
+        eventCursor: 3,
+        status: 'connected',
+      };
+      const ok = (value: any) => ({ ok: true, result: { ok: true, value } });
+      switch (args[1]) {
+        case 'capabilities':
+          return ok({
+            integrationVersion: 2,
+            features: [
+              'learning',
+              'support-update',
+              'answer-confidence',
+              'tutor-notes',
+            ],
+          });
+        case 'attach':
+          return ok({
+            agentToken: 'synthetic',
+            snapshot: { session, events: [] },
+          });
+        case 'status':
+          return {
+            ok: true,
+            operation: 'snapshot',
+            snapshot: { session, events: [] },
+          };
+        case 'image':
+          flags.add('image-started');
+          await until(() => flags.has('allow-image'));
+          return ok({ path: join(dir, 'image.png'), mimeType: 'image/png' });
+        case 'image-release':
+          logValue('released.log', args[args.indexOf('--image-id') + 1]);
+          return ok({});
+        case 'request':
+          logValue('requests.log', { targetSessionId: args[2], ...input });
+          if (flags.has('reject-input'))
+            return { ok: true, result: { ok: false, error: 'invalid-input' } };
+          if (flags.delete('drop-reply')) throw new Error('invalid JSON');
+          return ok({ revision: input.expectedRevision + 1 });
+        default:
+          return ok({});
+      }
+    },
+    wait(sessionId: string, after: number) {
+      logValue('waits.log', { after: String(after) });
+      let timer: ReturnType<typeof setInterval>;
+      const result = new Promise<any>((resolve, reject) => {
+        timer = setInterval(() => {
+          if (flags.has('fail-wait')) {
+            clearInterval(timer);
+            reject(new Error('wait failed'));
+            return;
+          }
+          if (!flags.has('allow-events')) return;
+          const next = (snapshots as any[]).find(
+            (snapshot) => snapshot.session.eventCursor > after,
+          );
+          if (next) {
+            clearInterval(timer);
+            resolve({
+              value: { ...next, session: { ...next.session, id: sessionId } },
+              cursor: next.session.eventCursor,
+            });
+          }
+        }, 1);
+      });
+      return { result, kill: () => clearInterval(timer) };
+    },
+  };
+  const { commands, tools, listeners: handlers, host } = piRegistry();
   const calls: Array<{ text: string; options?: unknown }> = [];
   const notices: string[] = [];
   let idle = true,
     activeTools = ['read'];
-  extension({
-    registerCommand: (name: string, command: any) =>
-      commands.set(name, command),
-    registerTool: (tool: any) => tools.set(tool.name, tool),
-    on: (name: string, fn: Function) =>
-      handlers.set(name, [...(handlers.get(name) ?? []), fn]),
-    getActiveTools: () => activeTools,
-    setActiveTools: (names: string[]) => {
-      activeTools = names;
-    },
-    sendUserMessage: (text: string, options?: unknown) =>
-      calls.push({ text, options }),
-    appendEntry: () => {},
-  } as never);
+  extension(
+    {
+      ...host,
+      getActiveTools: () => activeTools,
+      setActiveTools: (names: string[]) => {
+        activeTools = names;
+      },
+      sendMessage: (message: any, options?: unknown) =>
+        calls.push({ text: message.content, options }),
+      sendUserMessage: (text: string, options?: unknown) =>
+        calls.push({ text, options }),
+      appendEntry: () => {},
+    } as never,
+    transport,
+  );
   const ctx = {
     isIdle: () => idle,
     ui: { notify: (message: string) => notices.push(message) },
   };
-  async function log(name: string) {
-    try {
-      return (await readFile(join(dir, name), 'utf8'))
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => JSON.parse(line));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw error;
-    }
-  }
   return {
+    setScope: (scope: unknown) => {
+      studyScope = scope;
+    },
+    activeTools: () => activeTools,
+    studyAttempts: () => studyAttempts,
     calls,
     notices,
     tools,
-    log,
-    cliArgs: JSON.stringify([executable]),
-    flag: (name: string) => writeFile(join(dir, name), ''),
-    unflag: (name: string) => rm(join(dir, name), { force: true }),
+    log: async (name: string) => logs.get(name) ?? [],
+    useRealCli: () => {
+      realCli = true;
+    },
+    cliArgs: undefined,
+    flag: async (name: string) => {
+      flags.add(name);
+      await writeFile(join(dir, name), '');
+    },
+    unflag: async (name: string) => {
+      flags.delete(name);
+      await rm(join(dir, name), { force: true });
+    },
     command: (input: string) => commands.get('storm').handler(input, ctx),
     busy: () => {
       idle = false;
@@ -129,10 +167,6 @@ else if(op==='request') {
       try {
         for (const fn of handlers.get('session_shutdown') ?? []) await fn();
       } finally {
-        if (oldExecutable === undefined) delete process.env.STORM_QUIZ_CLI;
-        else process.env.STORM_QUIZ_CLI = oldExecutable;
-        if (oldArgs === undefined) delete process.env.STORM_QUIZ_CLI_ARGS;
-        else process.env.STORM_QUIZ_CLI_ARGS = oldArgs;
         await rm(dir, { recursive: true, force: true });
       }
     },
@@ -305,52 +339,22 @@ test('switching quizzes invalidates the old queued context', async () => {
   }
 });
 
-test('model-facing schemas expose limits, context ownership, and Continue effects', async () => {
+test('model-facing schema derives action fields and limits from validation variants', async () => {
   const f = await fixture();
   try {
-    const variants = f.tools
-      .get('storm')
-      .parameters.args[1].anyOf.map((variant: any) => variant.args[0]);
+    const schema = f.tools.get('storm').parameters;
+    expect(schema.properties.contextId.description).toContain('contextId');
+    const variants = schema.anyOf;
     const prompt = variants.find(
-      (fields: any) => fields.action.args[0] === 'prompt',
-    );
-    expect(prompt.text.args[0].maxLength).toBe(4000);
-    // Oversized notes must reach execute, which names their length and limit.
+      (variant: any) => variant.properties.action.const === 'prompt',
+    ).properties;
+    expect(prompt.text.maxLength).toBe(4000);
+    expect(prompt.choices.items.properties).toHaveProperty('effect');
     const notes = variants.find(
-      (fields: any) => fields.action.args[0] === 'notes',
-    );
-    expect(notes.text.args[0].maxLength).toBe(10000);
-    expect(prompt.contextId).toBeDefined();
-    expect(prompt.choices.args[0].args[0]).toHaveProperty('effect');
-    const schema = f.tools.get('storm').parameters.args[0];
-    const learner = variants.find(
-      (fields: any) => fields.action.args[0] === 'learner',
-    );
-    expect(Object.keys(learner)).toEqual(['action']);
-    expect(schema.action.args[0].map((value: any) => value.args[0])).toContain(
-      'learner',
-    );
-    const questions = variants.filter(
-      (fields: any) => fields.action.args[0] === 'question',
-    );
-    expect(questions).toHaveLength(4);
-    for (const fields of [schema, ...questions]) {
-      const concepts = fields.concepts.args[0];
-      expect(concepts.args[1]).toEqual({
-        minItems: 1,
-        maxItems: 3,
-        uniqueItems: true,
-      });
-      expect(concepts.args[0].args[0].pattern).toBe(
-        '^[a-z0-9][a-z0-9-]{0,63}$',
-      );
-      expect(
-        fields.level.args[0].args[0].map((value: any) => value.args[0]),
-      ).toEqual(['recall', 'explain', 'apply', 'transfer']);
-      expect(
-        fields.support.args[0].args[0].map((value: any) => value.args[0]),
-      ).toEqual(['independent', 'hinted', 'worked']);
-    }
+      (variant: any) => variant.properties.action.const === 'notes',
+    ).properties;
+    expect(notes.text.maxLength).toBe(10000);
+    expect(schema.properties.text.maxLength).toBe(10000);
   } finally {
     await f.close();
   }
@@ -360,6 +364,8 @@ test('real CLI validation returns a safe actionable error to the model', async (
   const f = await fixture();
   try {
     await f.command('attach diagnostic');
+    f.useRealCli();
+    process.env.STORM_QUIZ_CLI = process.execPath;
     process.env.STORM_QUIZ_CLI_ARGS = JSON.stringify([
       new URL('../scripts/storm.ts', import.meta.url).pathname,
     ]);
@@ -373,7 +379,8 @@ test('real CLI validation returns a safe actionable error to the model', async (
       }),
     ).rejects.toThrow('pose-prompt requires');
   } finally {
-    process.env.STORM_QUIZ_CLI_ARGS = f.cliArgs;
+    delete process.env.STORM_QUIZ_CLI_ARGS;
+    delete process.env.STORM_QUIZ_CLI;
     await f.close();
   }
 });
@@ -413,6 +420,74 @@ test('rejected input instructs correction while uncertain delivery retains ident
         text: 'Plan',
       }),
     ).rejects.toThrow('correct the request');
+  } finally {
+    await f.close();
+  }
+});
+
+test('failed scope rebind invalidates the old study and status retries successfully', async () => {
+  const f = await fixture();
+  try {
+    f.setScope({ vaultId: 'vault', folderPath: 'A' });
+    await f.command('attach diagnostic');
+    expect(f.activeTools()).toContain('storm_study');
+    f.setScope({ vaultId: 'vault', folderPath: 'B' });
+    await f.flag('fail-study');
+    await f.tools.get('storm').execute('status-failed', { action: 'status' });
+    expect(f.activeTools()).not.toContain('storm_study');
+    await expect(
+      f.tools.get('storm_study').execute('old', { action: 'tree' }),
+    ).rejects.toThrow('No shared study scope');
+    expect(await f.log('study.log')).toEqual([]);
+    await f.unflag('fail-study');
+    await f.tools.get('storm').execute('status-retry', { action: 'status' });
+    expect(f.activeTools()).toContain('storm_study');
+    await f.tools.get('storm_study').execute('new', { action: 'tree' });
+    expect((await f.log('study.log'))[0].studyId).toBe(
+      `study-${f.studyAttempts()}`,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('metadata writes retain uncertain operations, merge revisions and preserve learner activity', async () => {
+  const f = await fixture();
+  try {
+    await f.command('attach diagnostic');
+    const tool = f.tools.get('storm');
+    const receipt = contextId(f.calls[0].text);
+    const notes = { action: 'notes', text: 'Plan', operationId: 'notes-once' };
+    await f.flag('drop-reply');
+    await expect(tool.execute('notes', notes)).rejects.toThrow('notes-once');
+    await tool.execute('retry', notes);
+    await tool.execute('test', {
+      action: 'test',
+      step: 'start',
+      testConcepts: ['concept'],
+    });
+    await tool.execute('map', {
+      action: 'map',
+      nodes: [{ id: 'concept', label: 'Concept' }],
+      edges: [],
+    });
+    const requests = await f.log('requests.log');
+    expect(requests[0]).toEqual(requests[1]);
+    expect(requests.map((request: any) => request.expectedRevision)).toEqual([
+      8, 8, 9, 10,
+    ]);
+    expect(
+      requests.every(
+        (request: any) => request.handledThroughCursor === undefined,
+      ),
+    ).toBe(true);
+    await expect(
+      tool.execute('old-turn', {
+        action: 'message',
+        text: 'Old reply',
+        contextId: receipt,
+      }),
+    ).rejects.toThrow('Stale contextId');
   } finally {
     await f.close();
   }

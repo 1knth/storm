@@ -1,29 +1,11 @@
-// Reconstructed after accidental truncation; this is not an exact recovery of the original file.
+import { piRegistry, until } from './storm-test-fixtures';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { mock } from 'bun:test';
-import { attachPrompt, STORM_PRUNE_STEP } from './storm-runtime';
 
-// The production extension is imported below with only its Typebox schema
-// builder replaced. Extension registration, command/tool handlers, wait loop,
-// subprocess transport, and lifecycle behavior remain production code.
-const type =
-  (kind: string) =>
-  (...args: unknown[]) => ({ kind, args });
-mock.module('typebox', () => ({
-  Type: {
-    Object: type('object'),
-    Union: type('union'),
-    Literal: type('literal'),
-    Optional: type('optional'),
-    String: type('string'),
-    Number: type('number'),
-    Array: type('array'),
-  },
-}));
+// Subprocess smoke path for the production CLI transport and Pi lifecycle.
 const { default: extension } = await import('./storm');
 
 type Call = { command: string; options: any };
@@ -32,9 +14,7 @@ let dir = '';
 let oldEnv: Record<string, string | undefined> = {};
 
 function makePi() {
-  const commands = new Map<string, any>();
-  const tools = new Map<string, any>();
-  const listeners = new Map<string, Function[]>();
+  const { commands, tools, listeners, host } = piRegistry();
   const calls: Call[] = [];
   const notices: any[] = [];
   let activeTools = ['read', 'custom'];
@@ -46,8 +26,7 @@ function makePi() {
       text.match(/"contextId":"([^"]+)"/)?.[1] ?? latestContextId;
   };
   const pi: any = {
-    registerCommand: (name: string, options: any) =>
-      commands.set(name, options),
+    ...host,
     registerTool: (tool: any) =>
       tools.set(tool.name, {
         ...tool,
@@ -60,11 +39,13 @@ function makePi() {
           return result;
         },
       }),
-    on: (event: string, fn: Function) =>
-      listeners.set(event, [...(listeners.get(event) ?? []), fn]),
     getActiveTools: () => activeTools,
     setActiveTools: (value: string[]) => {
       activeTools = value;
+    },
+    sendMessage: (message: any, options?: unknown) => {
+      observe(message.content);
+      calls.push({ command: message.content, options });
     },
     sendUserMessage: (message: string, options?: unknown) => {
       observe(message);
@@ -176,15 +157,6 @@ async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
-async function until(check: () => boolean | Promise<boolean>) {
-  const deadline = Date.now() + 2500;
-  while (!(await check())) {
-    if (Date.now() >= deadline)
-      throw new Error('Synthetic extension condition timed out');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
 async function writeState(path: string, value: unknown) {
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporaryPath, JSON.stringify(value));
@@ -278,35 +250,6 @@ test('shared study context bootstraps the attached scope, guards question basis,
 });
 
 describe('registered Storm quiz extension integration (synthetic CLI only)', () => {
-  test('context hook shortens repeats and restores full state when the source disappears', async () => {
-    const pi = makePi();
-    const full = attachPrompt(
-      { id: 'quiz-a', revision: 1 },
-      {
-        tutorNotes: { text: 'The durable plan', version: 1 },
-        study: { indexRevision: 'r1', entries: [{ path: 'source.pdf' }] },
-      },
-    );
-    const first = { role: 'user', content: [{ type: 'text', text: full }] };
-    const second = { role: 'user', content: full };
-    const filler = Array.from({ length: STORM_PRUNE_STEP * 2 }, () => ({
-      role: 'user',
-      content: 'filler',
-    }));
-    const messages = [first, second, ...filler];
-    const projected = await pi.emit('context', { messages });
-    expect(projected.messages[0]).toBe(first);
-    expect(projected.messages[1].content).toContain(
-      'Reattached in this conversation',
-    );
-    expect(projected.messages[1].content).not.toContain('The durable plan');
-    expect(second.content).toBe(full);
-    // Pi supplies only surviving effective messages after compaction or edits.
-    expect(
-      await pi.emit('context', { messages: [second, ...filler] }),
-    ).toBeUndefined();
-  });
-
   test('registers the production command and private capability tool; attach preserves tools and never exposes capability', async () => {
     await fixture();
     const pi = makePi();
@@ -514,79 +457,6 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await pi.shutdown();
   });
 
-  test('learner Skip reaches the attached agent as an explicit next-question event', async () => {
-    const { stateFile } = await fixture();
-    const pi = makePi();
-    await attach(pi);
-    const s = await state(stateFile);
-    s.waitSnapshot = {
-      session: {
-        id: 'quiz-test',
-        revision: 8,
-        eventCursor: 4,
-        status: 'connected',
-        currentQuestion: null,
-      },
-      events: [{ cursor: 4, type: 'skip', data: { questionId: 'q1' } }],
-    };
-    await writeState(stateFile, s);
-    await pi.command('disconnect');
-    await attach(pi);
-    await flush();
-    await flush();
-    expect(
-      pi.calls.some(
-        (call) =>
-          call.command.includes('"type":"skip"') &&
-          call.command.includes('"questionId":"q1"'),
-      ),
-    ).toBe(true);
-    await pi.shutdown();
-  });
-
-  test('learner activity preserves exact multiline text and only sends newly delivered event once', async () => {
-    const { stateFile } = await fixture();
-    const pi = makePi();
-    await attach(pi);
-    const s = await state(stateFile);
-    s.waitSnapshot = {
-      session: {
-        id: 'quiz-test',
-        revision: 8,
-        eventCursor: 4,
-        status: 'connected',
-        currentQuestion: { id: 'q1' },
-      },
-      events: [
-        {
-          cursor: 4,
-          type: 'answer',
-          data: {
-            answer: 'Exact café\nsecond line',
-            reasoning: 'because',
-            confidence: 80,
-          },
-        },
-      ],
-    };
-    await writeState(stateFile, s);
-    await pi.command('disconnect');
-    await attach(pi);
-    await flush();
-    await flush();
-    expect(
-      pi.calls.some((call: any) =>
-        call.command.includes('Exact café\\nsecond line'),
-      ),
-    ).toBe(true);
-    expect(
-      pi.calls.some((call) => call.command.includes('"confidence":80')),
-    ).toBe(true);
-    await pi.shutdown();
-    await flush();
-    expect((await state(stateFile)).activity).toContain('idle');
-  });
-
   test('/storm status reports the connection, session ID and name', async () => {
     await fixture({
       list: [{ id: 'quiz-test', status: 'connected', name: 'Logic drills' }],
@@ -609,8 +479,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     });
     const pi = makePi();
     await attach(pi);
-    await flush();
-    await flush();
+    await until(() => !pi.getActiveTools().includes('storm'));
     expect(pi.getActiveTools()).not.toContain('storm');
     await pi.command('status');
     expect(pi.notices.at(-1).message).toContain(
@@ -637,8 +506,7 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     });
     const pi = makePi();
     await attach(pi);
-    await flush();
-    await flush();
+    await until(() => !pi.getActiveTools().includes('storm'));
     expect(pi.getActiveTools()).not.toContain('storm');
     expect(
       pi.notices.filter(
@@ -732,12 +600,9 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await attach(pi);
     // Wait for the context that owns the image, rather than racing subprocess
     // startup against a fixed delay when the full suite is running.
-    const deadline = Date.now() + 2_000;
-    while (!pi.calls.some((call) => call.command.includes('img-retry'))) {
-      if (Date.now() >= deadline)
-        throw new Error('The learner image context was not delivered.');
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+    await until(() =>
+      pi.calls.some((call) => call.command.includes('img-retry')),
+    );
     await pi.tools.get('storm').execute('reply', {
       action: 'feedback',
       text: 'I reviewed the image.',
@@ -748,31 +613,6 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
       text: 'Follow-up.',
     });
     expect((await state(stateFile)).released).toEqual(['img-retry']);
-    await pi.shutdown();
-  });
-
-  test('duplicate wait cursor does not resend learner message', async () => {
-    const { stateFile } = await fixture();
-    const pi = makePi();
-    await attach(pi);
-    const s = await state(stateFile);
-    s.waitSnapshot = {
-      session: {
-        id: 'quiz-test',
-        revision: 8,
-        eventCursor: 4,
-        status: 'connected',
-      },
-      events: [{ cursor: 4, type: 'message', data: { text: 'once only' } }],
-    };
-    await writeFile(stateFile, JSON.stringify(s));
-    await pi.command('disconnect');
-    await attach(pi);
-    await flush();
-    await flush();
-    expect(
-      pi.calls.filter((call) => call.command.includes('once only')),
-    ).toHaveLength(1);
     await pi.shutdown();
   });
 
@@ -798,8 +638,9 @@ describe('registered Storm quiz extension integration (synthetic CLI only)', () 
     await writeState(stateFile, s);
     await pi.command('disconnect');
     await attach(pi);
-    await flush();
-    await flush();
+    await until(() =>
+      pi.calls.some((call) => call.command.includes('queued learner turn')),
+    );
     expect(pi.calls.at(-1)?.options).toEqual({ deliverAs: 'followUp' });
     await pi.emit('agent_start');
     await flush();

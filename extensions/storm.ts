@@ -37,8 +37,7 @@ import {
   learnerNotification,
   modelSession,
   compactLearnerState,
-  pruneStormContext,
-  compactAttachPrompts,
+  projectStormContext,
   externalSourceAllowed,
   withReaderFallback,
   writeAck,
@@ -67,16 +66,19 @@ type QuizSnapshot = {
 };
 type QuizEvent = { cursor: number; type: string; [key: string]: unknown };
 type QuizState = {
-  studyId?: string;
-  /** Absolute vault folder of the study scope, for files Storm cannot read. */
-  studyRoot?: string;
-  /** Serialized scope the current studyId was opened for. */
-  studyScopeKey?: string;
-  studyPackets?: Map<string, StudyPacket>;
+  study:
+    | { kind: 'unavailable' }
+    | { kind: 'binding'; scopeKey: string }
+    | {
+        kind: 'ready';
+        scopeKey: string;
+        id: string;
+        root?: string;
+        packets: Map<string, StudyPacket>;
+      };
   maskedTools?: string[];
   sessionId: string;
   token: string;
-  revision: number;
   cursor: number;
   snapshot: QuizSnapshot['session'];
   stopped: boolean;
@@ -84,7 +86,6 @@ type QuizState = {
   deliveredImages: Map<string, string>;
   contexts: Map<string, ResponseContext>;
   operations: Map<string, PendingOperation>;
-  recovery?: Record<string, unknown>;
   isIdle: () => boolean;
 };
 
@@ -130,7 +131,7 @@ function cliArgs(operation: string, id: string, after?: number): string[] {
   ];
 }
 
-async function runCli(
+export async function runCli(
   args: string[],
   input?: unknown,
   token?: string,
@@ -204,7 +205,29 @@ function isLearnerActivity(event: QuizEvent): boolean {
   );
 }
 
-export default function (pi: ExtensionAPI) {
+export type StormTransport = {
+  request: typeof runCli;
+  wait?: (
+    sessionId: string,
+    after: number,
+    token: string,
+  ) => {
+    kill: () => void;
+    result: Promise<{
+      value?: QuizSnapshot;
+      cursor?: number;
+      timedOut?: boolean;
+      disconnected?: boolean;
+    }>;
+  };
+};
+
+export default function (
+  pi: ExtensionAPI,
+  transport: StormTransport = { request: runCli },
+) {
+  const runCli = transport.request;
+
   let state: QuizState | undefined;
   let lastWaitError: string | undefined;
   let waitOwner: QuizState | undefined;
@@ -227,7 +250,10 @@ export default function (pi: ExtensionAPI) {
     imageIds: string[] = [],
   ) => {
     const contextId = randomUUID();
-    owner.contexts.set(contextId, { revision, cursor, imageIds });
+    owner.contexts.set(
+      contextId,
+      Object.freeze({ revision, cursor, imageIds: [...imageIds] }),
+    );
     if (owner.contexts.size > 32)
       owner.contexts.delete(owner.contexts.keys().next().value!);
     return {
@@ -260,6 +286,7 @@ export default function (pi: ExtensionAPI) {
 
   const waitRuntime = createWaitRuntime<QuizSnapshot>({
     spawnWait(after, token) {
+      if (transport.wait) return transport.wait(state!.sessionId, after, token);
       const config = cliConfig();
       const child = spawn(
         config.executable,
@@ -342,8 +369,8 @@ export default function (pi: ExtensionAPI) {
       );
       let studyChange: Record<string, unknown> | undefined;
       if (
-        active.studyScopeKey !== undefined &&
-        scopeKey(snapshot.session.scope) !== active.studyScopeKey
+        active.study.kind !== 'ready' ||
+        scopeKey(snapshot.session.scope) !== active.study.scopeKey
       ) {
         const study = await bindStudy(active, snapshot.session.scope);
         if (state !== active || active.stopped) return;
@@ -486,16 +513,14 @@ export default function (pi: ExtensionAPI) {
     scope: unknown,
   ): Promise<Record<string, unknown>> => {
     const key = scopeKey(scope);
-    if (!key) {
-      owner.studyId = undefined;
-      owner.studyRoot = undefined;
-      owner.studyScopeKey = '';
-      owner.studyPackets = undefined;
-      pi.setActiveTools(
-        pi.getActiveTools().filter((name) => name !== 'storm_study'),
-      );
-      return { available: false, reason: 'unscoped-or-unsupported' };
-    }
+    owner.study = key
+      ? { kind: 'binding', scopeKey: key }
+      : { kind: 'unavailable' };
+    pi.setActiveTools(
+      pi.getActiveTools().filter((name) => name !== 'storm_study'),
+    );
+    if (!key) return { available: false, reason: 'unscoped-or-unsupported' };
+    const binding = owner.study;
     try {
       const capabilities = responseValue(
         await runCli(['study', 'capabilities']),
@@ -507,19 +532,25 @@ export default function (pi: ExtensionAPI) {
       );
       if (typeof bootstrap.studyId !== 'string')
         throw new Error('Missing study context');
-      if (state !== owner) throw new Error('Attachment changed');
-      if (owner.studyId !== bootstrap.studyId) owner.studyPackets = undefined;
-      owner.studyId = bootstrap.studyId;
-      owner.studyRoot =
-        typeof bootstrap.root === 'string' ? bootstrap.root : undefined;
-      owner.studyScopeKey = key;
+      if (state !== owner || owner.study !== binding)
+        throw new Error('Attachment changed');
+      owner.study = {
+        kind: 'ready',
+        scopeKey: key,
+        id: bootstrap.studyId,
+        root: typeof bootstrap.root === 'string' ? bootstrap.root : undefined,
+        packets: new Map(),
+      };
       pi.setActiveTools([...new Set([...pi.getActiveTools(), 'storm_study'])]);
       return {
         available: true,
-        ...withReaderFallback(bootstrap, owner.studyRoot),
+        ...withReaderFallback(
+          bootstrap,
+          owner.study.kind === 'ready' ? owner.study.root : undefined,
+        ),
       };
     } catch {
-      owner.studyScopeKey = key;
+      if (owner.study === binding) owner.study = { kind: 'unavailable' };
       notifyUi?.(
         'Shared study context is unavailable in the configured app/CLI. Conversation recovery remains available.',
         'warning',
@@ -677,12 +708,14 @@ export default function (pi: ExtensionAPI) {
     Type.Object({ action: Type.Literal('learner') }),
     Type.Object({
       action: Type.Literal('notes'),
+      operationId: Type.Optional(id()),
       // Admit oversized notes so execute can report their length; a schema
       // rejection would describe another union branch instead.
       text: text(10000),
     }),
     Type.Object({
       action: Type.Literal('map'),
+      operationId: Type.Optional(id()),
       nodes: Type.Optional(
         Type.Array(
           Type.Object({
@@ -789,129 +822,129 @@ export default function (pi: ExtensionAPI) {
   ];
   // Some provider adapters retain only root properties/required. Keep a useful
   // object schema there and enforce the action variants during local validation.
-  const toolSchema = Type.Object(
-    {
-      action: stringEnum([
-        'status',
-        'learner',
-        'context',
-        'image',
-        'question',
-        'feedback',
-        'skip-question',
-        'support-update',
-        'message',
-        'prompt',
-        'map',
-        'test',
-        'notes',
-      ]),
-      contextId: Type.Optional(
-        Type.String({
+  const variants = new Map<string, any[]>();
+  for (const schema of actionSchemas) {
+    for (const [name, field] of Object.entries(schema.properties)) {
+      const values = variants.get(name) ?? [];
+      if (
+        !values.some((value) => JSON.stringify(value) === JSON.stringify(field))
+      )
+        values.push(field);
+      variants.set(name, values);
+    }
+  }
+  const providerFields = Object.fromEntries(
+    [...variants].map(([name, values]) => {
+      let field = values.length === 1 ? values[0] : Type.Union(values);
+      if (
+        values.every(
+          (value) => value.type === 'string' && value.const === undefined,
+        )
+      )
+        field = Type.String({
+          minLength: 1,
+          maxLength: Math.max(
+            ...values.map((value) => value.maxLength ?? 10000),
+          ),
+        });
+      if (name === 'contextId')
+        field = Type.String({
           minLength: 1,
           maxLength: 128,
           description:
-            'Required on writes and image reads. Echo the contextId of the update being answered.',
-        }),
-      ),
-      operationId: Type.Optional(id()),
-      questionId: Type.Optional(id()),
-      studyBasis: Type.Optional(id()),
-      externalSource: Type.Optional(
-        Type.String({
-          minLength: 1,
-          maxLength: 1000,
-          description:
-            'question: path of a file read with your own tools (PDF, DOCX, slides) when it, not a storm_study snapshot, grounds the question.',
-        }),
-      ),
-      ...learning,
-      text: Type.Optional(
-        Type.String({
-          minLength: 1,
-          maxLength: 10000,
-          description: `Required on writes. Questions/prompts: at most 4000 characters; notes: at most ${TUTOR_NOTES_MAX_LENGTH}; feedback/chat: at most 10000.`,
-        }),
-      ),
-      kind: Type.Optional(
-        stringEnum([
-          'multiple-choice',
-          'matching',
-          'short-answer',
-          'long-answer',
-          'next-steps',
-          'clarification',
-        ]),
-      ),
-      choices: Type.Optional(choices()),
-      verdict: Type.Optional(stringEnum(['correct', 'partial', 'incorrect'])),
-      reasoning: Type.Optional(stringEnum(QUIZ_REASONING_ASSESSMENTS)),
-      step: Type.Optional(stringEnum(['start', 'end', 'cancel'])),
-      testConcepts: Type.Optional(
-        Type.Array(Type.String({ pattern: QUIZ_CONCEPT_ID.source }), {
-          minItems: 1,
-          maxItems: QUIZ_PRACTICE_TEST_MAX_CONCEPTS,
-          uniqueItems: true,
-          description: 'test start: concept slugs the practice test covers.',
-        }),
-      ),
-      leftItems: Type.Optional(
-        Type.Array(Type.Object({ id: id(), text: text(4000) }), {
-          minItems: 2,
-          maxItems: 12,
-        }),
-      ),
-      rightItems: Type.Optional(
-        Type.Array(Type.Object({ id: id(), text: text(4000) }), {
-          minItems: 2,
-          maxItems: 12,
-        }),
-      ),
-      promptId: Type.Optional(id()),
-      imageId: Type.Optional(id()),
-      section: Type.Optional(
-        stringEnum(['history', 'question', 'prompt', 'scope', 'event']),
-      ),
-      before: Type.Optional(Type.Number({ minimum: 0, multipleOf: 1 })),
-      offset: Type.Optional(Type.Number({ minimum: 0, multipleOf: 1 })),
-      nodes: Type.Optional(
-        Type.Array(
-          Type.Object({
-            id: Type.String({ pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }),
-            label: text(LESSON_MAP_LIMITS.label),
-          }),
-          {
-            minItems: 1,
-            maxItems: LESSON_MAP_LIMITS.nodes,
-            description: 'map: graph nodes; id is the concept slug.',
-          },
-        ),
-      ),
-      edges: Type.Optional(
-        Type.Array(Type.Array(Type.String(), { minItems: 2, maxItems: 2 }), {
-          maxItems: LESSON_MAP_LIMITS.edges,
-          description: 'map: [prerequisite, dependent] slug pairs.',
-        }),
-      ),
-      goal: Type.Optional(Type.String()),
-      statuses: Type.Optional(
-        Type.Array(
-          Type.Object({
-            id: Type.String(),
-            status: stringEnum(LESSON_NODE_STATUSES),
-          }),
-          {
-            maxItems: LESSON_MAP_LIMITS.nodes,
-            description: 'map: [{id, status}] changes for mapped nodes.',
-          },
-        ),
-      ),
-      focus: Type.Optional(
-        Type.Array(Type.String(), { maxItems: LESSON_MAP_LIMITS.focus }),
-      ),
-    },
-    { anyOf: actionSchemas },
+            'Required on learner-facing writes and image reads. Echo the contextId of the update being answered.',
+        });
+      return [name, name === 'action' ? field : Type.Optional(field)];
+    }),
   );
+  const toolSchema = Type.Object(providerFields, { anyOf: actionSchemas });
+
+  // The receipt belongs to the model observation, never to mutable live state.
+  const executeMutation = async (
+    active: QuizState,
+    operationId: string,
+    serialized: string,
+    observed: ResponseContext,
+    fields: Record<string, unknown>,
+    consumesActivity: boolean,
+  ) => {
+    let operation = active.operations.get(operationId);
+    if (operation && operation.serialized !== serialized)
+      throw new Error('Operation ID already belongs to a different request.');
+    if (!operation) {
+      operation = {
+        serialized,
+        context: Object.freeze({
+          ...observed,
+          imageIds: [...observed.imageIds],
+        }),
+        request: {
+          expectedRevision: observed.revision,
+          idempotencyKey: operationId,
+          ...(consumesActivity
+            ? { handledThroughCursor: observed.cursor }
+            : {}),
+          ...fields,
+        },
+      };
+      active.operations.set(operationId, operation);
+      if (active.operations.size > 128)
+        active.operations.delete(active.operations.keys().next().value!);
+    }
+    let result: any;
+    try {
+      result = responseValue(
+        await runCli(
+          cliArgs('request', active.sessionId),
+          operation.request,
+          active.token,
+        ),
+      );
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (
+        code === 'invalid-input' ||
+        code === 'INVALID_ARGUMENT' ||
+        code === 'invalid-state'
+      ) {
+        active.operations.delete(operationId);
+        throw new Error(
+          `${error instanceof Error ? error.message : 'Quiz request rejected.'} Request was rejected. Read status, correct the request, and submit it with a new operationId and the current contextId.`,
+        );
+      }
+      throw new Error(
+        `${error instanceof Error ? error.message : 'Quiz request failed.'} Operation ${operationId}; reconcile with status before retrying the identical operationId and contextId.`,
+      );
+    }
+    if (state !== active)
+      throw new Error('Storm quiz was detached during the request.');
+    if (result.revision >= active.snapshot.revision)
+      active.snapshot = { ...active.snapshot, ...result };
+    if (consumesActivity)
+      await releaseImages(active, operation.context.imageIds);
+    return result;
+  };
+  const metadataMutation = async (
+    active: QuizState,
+    id: string,
+    params: any,
+    fields: Record<string, unknown>,
+  ) => {
+    const operationId = params.operationId ?? id;
+    const result = await executeMutation(
+      active,
+      operationId,
+      JSON.stringify({ ...params, operationId: undefined }),
+      {
+        revision: active.snapshot.revision,
+        cursor: active.cursor,
+        imageIds: [],
+      },
+      fields,
+      false,
+    );
+    return result;
+  };
 
   pi.registerTool({
     name: 'storm_study',
@@ -947,10 +980,11 @@ export default function (pi: ExtensionAPI) {
       if (
         active &&
         !active.stopped &&
-        scopeKey(active.snapshot.scope) !== active.studyScopeKey
+        (active.study.kind !== 'ready' ||
+          scopeKey(active.snapshot.scope) !== active.study.scopeKey)
       )
         await bindStudy(active, active.snapshot.scope);
-      if (!active?.studyId || active.stopped)
+      if (!active || active.study.kind !== 'ready' || active.stopped)
         throw new Error(
           'No shared study scope is available; ask the learner to attach a folder with the quiz context button, or check app/CLI compatibility.',
         );
@@ -968,7 +1002,10 @@ export default function (pi: ExtensionAPI) {
       if (params.action === 'verify') {
         if (!params.snapshotId || !params.references?.length)
           throw new Error('verify requires a snapshotId and references.');
-        const packet = active.studyPackets?.get(params.snapshotId);
+        const packet =
+          active.study.kind === 'ready'
+            ? active.study.packets.get(params.snapshotId)
+            : undefined;
         if (!packet)
           throw new Error(
             'Read the pinned snapshot before verifying worker references.',
@@ -988,17 +1025,17 @@ export default function (pi: ExtensionAPI) {
           details: undefined,
         };
       }
+      const binding = active.study;
       const value = responseValue(
         await runCli(['study', '--stdin'], {
           ...params,
-          studyId: active.studyId,
+          studyId: active.study.kind === 'ready' ? active.study.id : undefined,
         }),
       );
-      if (state !== active)
+      if (state !== active || active.study !== binding)
         throw new Error('Study context changed during retrieval.');
       if (value.snapshotId && Array.isArray(value.chunks)) {
-        active.studyPackets ??= new Map();
-        const previous = active.studyPackets.get(value.snapshotId);
+        const previous = active.study.packets.get(value.snapshotId);
         const chunks = [
           ...new Map(
             [...(previous?.chunks ?? []), ...value.chunks].map((c) => [
@@ -1007,15 +1044,22 @@ export default function (pi: ExtensionAPI) {
             ]),
           ).values(),
         ].slice(-256);
-        active.studyPackets.set(value.snapshotId, { ...value, chunks });
-        if (active.studyPackets.size > 4)
-          active.studyPackets.delete(active.studyPackets.keys().next().value!);
+        active.study.packets.set(value.snapshotId, { ...value, chunks });
+        if (active.study.packets.size > 4)
+          active.study.packets.delete(
+            active.study.packets.keys().next().value!,
+          );
       }
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(withReaderFallback(value, active.studyRoot)),
+            text: JSON.stringify(
+              withReaderFallback(
+                value,
+                active.study.kind === 'ready' ? active.study.root : undefined,
+              ),
+            ),
           },
         ],
         details: undefined,
@@ -1027,12 +1071,12 @@ export default function (pi: ExtensionAPI) {
     name: 'storm',
     label: 'Storm',
     description:
-      'Every write requires contextId from the update it answers. Read status to reconcile stale contexts; context reads earlier or omitted source sections; image retrieves a historical attachment by ID when still available. Reuse operationId for an identical uncertain retry. Operate the explicitly attached Storm quiz. After Continue and before posing a question, read learner (read-only; no contextId). Every new substantive question requires complete concepts/level/support tags or an explicit unmodelledReason without tags. Reuse concept IDs from learner state; propose a new slug only for a genuinely new concept. Record help actually supplied, including relevant help supplied before posing. For help supplied after posing and before the answer, use support-update with questionId, support, contextId, and the actual help in text; it displays the help and preserves the strongest supplied support. A worked example or supplied solution means worked, a supplied hint means hinted, otherwise independent. Never report planned help as supplied. High-confidence incorrect or partial answers are correction candidates; address the actual misconception or missing part. Discuss calibration only when calibration.guidanceEligible is true; this requires at least 20 ratings and an absolute bias of at least 15 points (tunable). Make at most one brief, supportive comment per session and tie it to useful practice. Recheck diagnosed misconceptions later with a fresh independent item. Read learner recording diagnostics before relying on complete evidence. Answer events include learner confidence (data.confidence, 0–100). After /storm attach, use question after Continue, feedback for an answer, message for tutoring chat, prompt with kind next-steps or clarification and 1–6 choices for genuine learner choices, and status to inspect state. Feedback must set its explicit verdict field (correct, partial, or incorrect); Storm displays the verdict and selected option, so do not repeat a verdict heading or selected option in feedback text. Explain why and address supplied reasoning without duplicating Continue instructions. Continue only through explicit Continue or learner Skip. When a response leaves the learner without an open question or prompt, end it with a short line on what was just covered and what you expect next (for example, try a similar problem, ask about anything unclear, or Continue to the next question); offer a next-steps prompt when there are genuine choices. A learner chat message of just "Continue." means proceed with your planned next step, usually the next question. When the learner explicitly asks to skip, clear, or replace an ungraded question, use skip-question with its questionId and explanation text, then honor their requested next step. Never fabricate a verdict for a chat command submitted as an answer. Do not use em dashes in original learner-facing prose; preserve exact source quotations. Write answer choices, matching items, and next-step labels as ordinary text with inline Markdown only (emphasis, code, or math when useful). Never use Markdown headings (# through ###### or setext underlines) or wrap an entire option in bold. For example, send "Check each employee’s hours to identify overtime payments.", not "### Check each employee’s hours to identify overtime payments." Reserve headings for sections in substantial explanations; short questions and feedback usually need paragraphs only. Format question stems with readable Markdown paragraphs and real newlines, and use structured choices instead of duplicating options in the stem. Storm fixes the learner-facing display order when a question is posed: multiple-choice options are reordered (pure quantities ascending, summary options such as “all of the above” last) and the matching option column is reordered away from the authored pair order. Track the correct answer by choice ID, never by position, letter or authored index, and do not refer to “the first option” in a stem or in feedback; read the stored order from status, history or the question action response when you need it. Question quality matters more than quantity. Ask for reasoning, application or discrimination, not for a label the stem already supplies or an answer available without the material. Keep one clear question per stem, state the setup before the question, and avoid double negatives and except/not stacking. Pitch difficulty through the recommended level and support rather than trick wording. Every multiple-choice distractor must be a mistake a learner plausibly makes: a common misconception, a neighbouring concept, or a predictable procedural slip. Three obviously wrong options waste the item. Keep options parallel in grammatical form, length and specificity; do not let the correct option be the longest, the most hedged or the only one echoing a stem keyword, and do not reserve absolutes such as always or never for distractors. Use all/none of the above only when the content genuinely calls for it. For matching, give each left item exactly one defensible partner and make each option plausible for more than one item. Richer learner-facing formatting is available in question stems, feedback and chat: callout blockquotes with the first line “> [!NOTE] optional title”, and the labels note, info, tip, hint, example, important, warning and caution. Hints render as a collapsed disclosure the learner opens on purpose; append - to collapse any callout or + to open it. A hint shipped with a question is help offered, so tag that question support hinted. GFM tables, task lists, footnotes, fenced code with a language, inline and display math, and mermaid fences also render. Use $...$ for inline math. For display math, put $$ alone on its own line before and after the expression, with a blank line around the block; never write $$ mid-sentence. Raw HTML does not render. Keep answer choices, matching items and next-step labels free of callouts, which stay plain text there. Use map (no contextId) to maintain the live lesson map pinned above the quiz: send nodes (id = concept slug, short label) and edges ([prerequisite, dependent]) once after the plan is approved, plus optional goal. Later send only statuses as [{id, status}] (not-started, introduced, guided, independent, mastered, needs-review) or focus (slugs being taught now). Posing a question tagged with mapped concepts moves focus automatically; set focus yourself when teaching a node before questioning it. Map updates never advance the quiz. You grade; Storm checks the record. A status of mastered or retained is accepted only when the recorded evidence meets the mastery criteria, and a rejection lists what is still missing; an independent miss on a mastered node moves it to needs-review automatically. Record evidence as you go: in feedback, set reasoning to sound or flawed when the learner stated reasoning or wrote an answer, otherwise none. Use test (no contextId) for the final practice test: step start with testConcepts (the nodes it covers), then pose items; while it is open every question must be tagged, independent and new to the learner, and support-update is rejected; you may clarify wording in chat but must not teach until the test ends. step end succeeds once every test concept has a graded item, and only then do its items count as test evidence; step cancel abandons the test and its items never count. Write results include lessonMapChanges when Storm changed a status itself. Use notes (no contextId) to replace your handoff notes, at most 6000 characters: the approved plan, progress ledger, learner constraints and preferences, suspected misconceptions, sources already consulted, and your intended next step. Storm saves them as a Markdown file in a storm folder inside the attached study folder (the response gives its vault-relative path) and returns them to any later Pi session on attach and status, so a new session can continue without this conversation. The learner may edit that file; attach and status return its current text. Rewrite them when the plan, ledger, or next step changes, not after every exchange. Notes never advance the quiz and the learner does not see them as chat. This tool is available only in the Pi session where the Storm quiz extension is loaded; attaching activates it in that session without changing other active tools.',
+      'Read quiz status, bounded context, images or learner state; write questions, prompts, messages, feedback, support, map, test and handoff notes. Learner-facing writes require the contextId of the observed update. Reuse operationId and identical arguments after uncertain failures; reconcile through status after rejection. Map/test/notes do not consume learner activity. Questions/prompts allow 4000 characters; notes allow 6000; chat/feedback allow 10000. Only explicit learner Continue advances feedback. See TUTOR.md for teaching policy.',
     parameters: toolSchema,
     executionMode: 'sequential',
     async execute(
       _id,
-      params,
+      params: any,
     ): Promise<AgentToolResult<Record<string, unknown> | undefined>> {
       const active = state;
       if (!active || active.stopped)
@@ -1056,7 +1100,15 @@ export default function (pi: ExtensionAPI) {
               text: JSON.stringify(compactLearnerState(content)),
             },
           ],
-          details: undefined,
+          details: {
+            storm: {
+              kind: 'learner',
+              sessionId: active.sessionId,
+              scopeKey: String(content.scopeKey ?? ''),
+              complete: !(Number(content.omittedConcepts) > 0),
+              value: content,
+            },
+          },
         };
       }
       if (params.action === 'map') {
@@ -1069,7 +1121,10 @@ export default function (pi: ExtensionAPI) {
           ...(params.statuses
             ? {
                 statuses: Object.fromEntries(
-                  params.statuses.map((entry) => [entry.id, entry.status]),
+                  params.statuses.map((entry: { id: string; status: any }) => [
+                    entry.id,
+                    entry.status,
+                  ]),
                 ),
               }
             : {}),
@@ -1082,26 +1137,19 @@ export default function (pi: ExtensionAPI) {
           new Date().toISOString(),
         );
         if (typeof preview === 'string') throw new Error(preview);
-        const result = responseValue(
-          await runCli(
-            cliArgs('request', active.sessionId),
-            {
-              type: 'lesson-map',
-              expectedRevision: active.snapshot.revision,
-              idempotencyKey: randomUUID(),
-              map: update,
-            },
-            active.token,
-          ),
-        );
-        if (state !== active)
-          throw new Error('Storm quiz was detached during the map update.');
-        active.snapshot = { ...active.snapshot, lessonMap: result.lessonMap };
+        const result = await metadataMutation(active, _id, params, {
+          type: 'lesson-map',
+          map: update,
+        });
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({ lessonMap: result.lessonMap }),
+              text: JSON.stringify({
+                ...writeAck(result),
+                requiresStatus: true,
+                lessonMap: result.lessonMap,
+              }),
             },
           ],
           details: undefined,
@@ -1114,31 +1162,18 @@ export default function (pi: ExtensionAPI) {
           throw new Error(
             'test start requires testConcepts: the concept slugs the test covers.',
           );
-        const result = responseValue(
-          await runCli(
-            cliArgs('request', active.sessionId),
-            {
-              type: 'practice-test',
-              expectedRevision: active.snapshot.revision,
-              // Reusing operationId makes an uncertain retry safe to replay.
-              idempotencyKey: params.operationId ?? randomUUID(),
-              action: params.step,
-              ...(params.testConcepts ? { concepts: params.testConcepts } : {}),
-            },
-            active.token,
-          ),
-        );
-        if (state !== active)
-          throw new Error('Storm quiz was detached during the test update.');
-        active.snapshot = {
-          ...active.snapshot,
-          practiceTest: result.practiceTest,
-        };
+        const result = await metadataMutation(active, _id, params, {
+          type: 'practice-test',
+          action: params.step,
+          ...(params.testConcepts ? { concepts: params.testConcepts } : {}),
+        });
         return {
           content: [
             {
               type: 'text',
               text: JSON.stringify({
+                ...writeAck(result),
+                requiresStatus: true,
                 practiceTest: result.practiceTest ?? null,
               }),
             },
@@ -1154,28 +1189,17 @@ export default function (pi: ExtensionAPI) {
           throw new Error(
             `notes text is ${notes.length} characters; the limit is ${TUTOR_NOTES_MAX_LENGTH}. Condense it and resend the complete notes, which replace the previous notes.`,
           );
-        const result = responseValue(
-          await runCli(
-            cliArgs('request', active.sessionId),
-            {
-              type: 'tutor-notes',
-              expectedRevision: active.snapshot.revision,
-              idempotencyKey: randomUUID(),
-              text: notes,
-            },
-            active.token,
-          ),
-        );
-        if (state !== active)
-          throw new Error(
-            'Storm session was detached during the notes update.',
-          );
-        active.snapshot = { ...active.snapshot, tutorNotes: result.tutorNotes };
+        const result = await metadataMutation(active, _id, params, {
+          type: 'tutor-notes',
+          text: notes,
+        });
         return {
           content: [
             {
               type: 'text',
               text: JSON.stringify({
+                ...writeAck(result),
+                requiresStatus: true,
                 tutorNotes: {
                   version: result.tutorNotes?.version,
                   updatedAt: result.tutorNotes?.updatedAt,
@@ -1273,10 +1297,9 @@ export default function (pi: ExtensionAPI) {
           throw new Error('Quiz status session mismatch.');
         if (snapshot.session.revision >= active.snapshot.revision)
           active.snapshot = snapshot.session;
-        active.revision = active.snapshot.revision;
-        active.recovery = snapshot.recovery;
         const study =
-          scopeKey(active.snapshot.scope) !== active.studyScopeKey
+          active.study.kind !== 'ready' ||
+          scopeKey(active.snapshot.scope) !== active.study.scopeKey
             ? await bindStudy(active, active.snapshot.scope)
             : undefined;
         if (state !== active)
@@ -1305,11 +1328,23 @@ export default function (pi: ExtensionAPI) {
                 })),
                 listener: waitRuntime.health,
                 ...(study ? { studyContextChanged: study } : {}),
-                studyAvailable: !!active.studyId,
+                studyAvailable: !!(active.study.kind === 'ready'
+                  ? active.study.id
+                  : undefined),
               }),
             },
           ],
-          details: undefined,
+          details: {
+            storm: {
+              kind: 'status',
+              sessionId: active.sessionId,
+              complete: true,
+              value: {
+                ...refreshed,
+                ...(study ? { studyContextChanged: true } : {}),
+              },
+            },
+          },
         };
       }
       if (typeof params.text !== 'string' || !params.text.trim())
@@ -1317,14 +1352,17 @@ export default function (pi: ExtensionAPI) {
       if (
         params.action === 'question' &&
         params.externalSource !== undefined &&
-        !externalSourceAllowed(params.externalSource, active.studyRoot)
+        !externalSourceAllowed(
+          params.externalSource,
+          active.study.kind === 'ready' ? active.study.root : undefined,
+        )
       )
         throw new Error(
           'externalSource must be the absolute path of a non-Markdown file inside the attached vault; retrieve Markdown notes with storm_study and use studyBasis instead.',
         );
       if (
         params.action === 'question' &&
-        active.studyId &&
+        (active.study.kind === 'ready' ? active.study.id : undefined) &&
         !params.studyBasis &&
         params.externalSource === undefined
       )
@@ -1345,7 +1383,7 @@ export default function (pi: ExtensionAPI) {
         );
       const operationId = params.operationId ?? _id;
       const serialized = JSON.stringify({ ...params, operationId: undefined });
-      let operation = active.operations.get(operationId);
+      const operation = active.operations.get(operationId);
       if (operation && operation.serialized !== serialized)
         throw new Error('Operation ID already belongs to a different request.');
       const observed =
@@ -1419,59 +1457,21 @@ export default function (pi: ExtensionAPI) {
                   ? { reasoning: params.reasoning }
                   : {}),
               };
-      if (!operation) {
-        operation = {
-          serialized,
-          context: observed,
-          request: {
-            type,
-            expectedRevision: observed.revision,
-            handledThroughCursor: observed.cursor,
-            idempotencyKey: operationId,
-            ...fields,
-          },
-        };
-        active.operations.set(operationId, operation);
-        if (active.operations.size > 128)
-          active.operations.delete(active.operations.keys().next().value!);
-      }
-      let result: any;
-      try {
-        result = responseValue(
-          await runCli(
-            cliArgs('request', active.sessionId),
-            operation.request,
-            active.token,
-          ),
-        );
-      } catch (error) {
-        const code = (error as { code?: string })?.code;
-        if (
-          code === 'invalid-input' ||
-          code === 'INVALID_ARGUMENT' ||
-          code === 'invalid-state'
-        ) {
-          active.operations.delete(operationId);
-          throw new Error(
-            `${error instanceof Error ? error.message : 'Quiz request rejected.'} Request was rejected. Read status, correct the request, and submit it with a new operationId and the current contextId.`,
-          );
-        }
-        throw new Error(
-          `${error instanceof Error ? error.message : 'Quiz request failed.'} Operation ${operationId}; reconcile with status before retrying the identical operationId and contextId.`,
-        );
-      }
-      if (state !== active)
-        throw new Error('Storm quiz was detached during the request.');
-      if (typeof result.revision === 'number')
-        active.revision = Math.max(active.revision, result.revision);
-      await releaseImages(active, consumedImageIds);
+      const before = ((active.snapshot.lessonMap as QuizLessonMap | undefined)
+        ?.statuses ?? {}) as Record<string, string>;
+      const result = await executeMutation(
+        active,
+        operationId,
+        serialized,
+        observed,
+        { type, ...fields },
+        true,
+      );
       // The drafting report races this write. Queue idle behind it so the
       // learner never sees a stale phase once the response is posted; a
       // further tool call reports drafting again.
       if (!result.awaitingAgent) publishActivity(active, 'idle');
       // Acks omit the map, so report status changes Storm made on its own.
-      const before = ((active.snapshot.lessonMap as QuizLessonMap | undefined)
-        ?.statuses ?? {}) as Record<string, string>;
       const lessonMapChanges = Object.entries(
         (result.lessonMap?.statuses ?? {}) as Record<string, string>,
       )
@@ -1479,7 +1479,7 @@ export default function (pi: ExtensionAPI) {
           ([id, status]) => before[id] !== undefined && before[id] !== status,
         )
         .map(([id, status]) => ({ id, from: before[id], to: status }));
-      if (result.revision >= active.snapshot.revision) active.snapshot = result;
+
       const context =
         result.revision >= active.snapshot.revision &&
         Number(result.pendingLearnerCursor ?? 0) <= observed.cursor
@@ -1593,7 +1593,7 @@ export default function (pi: ExtensionAPI) {
               reachable
                 ? `Storm reports ${row ? row.status : 'no such session'}.`
                 : 'Storm app is not running.',
-              `Revision ${state.revision}, cursor ${state.cursor}; listener ${lastWaitError ?? waitRuntime.health}; tool ${toolActive ? 'active' : 'inactive'}.`,
+              `Revision ${state.snapshot.revision}, cursor ${state.cursor}; listener ${lastWaitError ?? waitRuntime.health}; tool ${toolActive ? 'active' : 'inactive'}.`,
               ...(connected ? [] : ['Run /storm resume to reconnect.']),
             ].join(' '),
             connected && toolActive ? 'info' : 'warning',
@@ -1659,7 +1659,7 @@ export default function (pi: ExtensionAPI) {
         state = {
           sessionId: id,
           token: attached.agentToken,
-          revision: snapshot.session.revision,
+          study: { kind: 'unavailable' },
           cursor: snapshot.session.eventCursor,
           snapshot: snapshot.session,
           stopped: false,
@@ -1667,7 +1667,6 @@ export default function (pi: ExtensionAPI) {
           deliveredImages: new Map(),
           contexts: new Map(),
           operations: new Map(),
-          recovery: snapshot.recovery,
           isIdle: ctx.isIdle,
         };
         const active = state;
@@ -1693,14 +1692,33 @@ export default function (pi: ExtensionAPI) {
         );
         const study: unknown = await bindStudy(active, snapshot.session.scope);
         if (state !== active || active.stopped) return;
-        const prompt = attachPrompt(snapshot.session, {
+        const attachment = {
+          ...modelSession(snapshot.session),
           ...context,
           recovery: snapshot.recovery,
           study,
-        });
-        pi.sendUserMessage(
-          prompt,
-          ctx.isIdle() ? undefined : { deliverAs: 'followUp' },
+        };
+        pi.sendMessage(
+          {
+            customType: 'storm-attachment',
+            display: true,
+            content: attachPrompt(snapshot.session, {
+              ...context,
+              recovery: snapshot.recovery,
+              study,
+            }),
+            details: {
+              storm: {
+                kind: 'attach',
+                sessionId: active.sessionId,
+                value: attachment,
+              },
+            },
+          },
+          {
+            triggerTurn: true,
+            ...(ctx.isIdle() ? {} : { deliverAs: 'followUp' as const }),
+          },
         );
         waitOwner = active;
         waitRuntime.start(active.cursor, active.token);
@@ -1718,9 +1736,7 @@ export default function (pi: ExtensionAPI) {
 
   // Keep superseded Storm material out of later model calls (see pruneStormContext).
   pi.on('context', (event) => {
-    const messages = pruneStormContext(
-      compactAttachPrompts(event.messages as any[]),
-    );
+    const messages = projectStormContext(event.messages as any[]);
     return messages === event.messages ? undefined : { messages };
   });
   pi.on('agent_start', () => {
