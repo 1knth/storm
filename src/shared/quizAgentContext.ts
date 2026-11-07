@@ -442,3 +442,11 @@ export function submittedQuizQuestion(
       : {}),
   };
 }
+
+/** Learner activity that wakes an attached agent, including legacy event names. */
+export function isQuizLearnerEvent(event: { type: string }): boolean {
+  return (
+    /^(answer|message|continue|respond-prompt|skip)$/.test(event.type) ||
+    event.type.startsWith('learner-')
+  );
+}

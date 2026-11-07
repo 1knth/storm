@@ -218,3 +218,33 @@ describe('agent bridge validators', () => {
     );
   });
 });
+
+test('shared wire constraints reject malformed IDs, integer bounds, and preview receipts', async () => {
+  const {
+    isAgentId,
+    isAgentNonnegativeInt,
+    isAgentDiscoveryLimit,
+    isAgentActivity,
+  } = await import('./agentProtocol');
+  for (const value of ['', 'x'.repeat(129), null, 1])
+    assert.equal(isAgentId(value), false);
+  for (const value of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, '1'])
+    assert.equal(isAgentNonnegativeInt(value), false);
+  for (const value of [0, 1001, Infinity, '100'])
+    assert.equal(isAgentDiscoveryLimit(value), false);
+  for (const value of [1, 100, 1000])
+    assert.equal(isAgentDiscoveryLimit(value), true);
+  assert.equal(isAgentActivity('idle'), false);
+  for (const previewReceipt of ['', 1, 'x'.repeat(129)])
+    assert.equal(
+      isAgentRequest({
+        type: 'edit-apply',
+        requestId: 'r',
+        sessionId: 's',
+        expectedVersion: 0,
+        plan: { type: 'replace', content: '' },
+        previewReceipt,
+      }),
+      false,
+    );
+});

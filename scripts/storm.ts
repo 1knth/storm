@@ -1,12 +1,18 @@
 #!/usr/bin/env bun
+import { isQuizLearnerEvent } from '../src/shared/quizAgentContext';
+import { isAgentEditPlan } from '../src/shared/agentEditValidation';
+import {
+  isAgentDiscoveryLimit,
+  AGENT_DISCOVERY_LIMIT,
+} from '../src/shared/agentProtocol';
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
-import { lstat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  inspectAgentEndpointMetadata,
   readAgentEndpoint,
-  sendAgentRequest,
+  createAgentConnection,
   type AgentEndpointInfo,
 } from '../src/main/agentEndpoint';
 import type { AgentRequest } from '../src/shared/agentProtocol';
@@ -129,15 +135,7 @@ export async function discoverEndpoint(
   const fileIdentities = new Set<string>();
   for (const candidate of candidates) {
     try {
-      const info = await lstat(candidate);
-      if (
-        !info.isFile() ||
-        (process.getuid && info.uid !== process.getuid()) ||
-        (process.platform !== 'win32' && (info.mode & 0o077) !== 0)
-      )
-        throw new Error(
-          'Storm endpoint metadata has unsafe ownership or permissions',
-        );
+      const info = await inspectAgentEndpointMetadata(candidate);
       const identity = `${info.dev}:${info.ino}`;
       if (!fileIdentities.has(identity)) {
         fileIdentities.add(identity);
@@ -207,6 +205,7 @@ export async function runCli(
 ): Promise<number> {
   const out = io.stdout ?? ((text) => process.stdout.write(text));
   const err = io.stderr ?? ((text) => process.stderr.write(text));
+  let connection: ReturnType<typeof createAgentConnection> | undefined;
   try {
     const helpIndex = args.findIndex((arg) => arg === '-h' || arg === '--help');
     if (helpIndex >= 0) {
@@ -341,7 +340,7 @@ export async function runCli(
           if (
             !value ||
             !/^(0|[1-9]\d*)$/.test(value) ||
-            !Number.isSafeInteger(Number(value))
+            !isAgentDiscoveryLimit(Number(value))
           )
             throw new CliUsageError(
               '--expected-version requires a nonnegative safe integer',
@@ -806,9 +805,11 @@ export async function runCli(
           if (
             !value ||
             !/^[1-9]\d*$/.test(value) ||
-            !Number.isSafeInteger(Number(value))
+            !isAgentDiscoveryLimit(Number(value))
           )
-            throw new CliUsageError('--limit requires a positive safe integer');
+            throw new CliUsageError(
+              `--limit requires an integer from 1 to ${AGENT_DISCOVERY_LIMIT.max}`,
+            );
           discoveryLimit = Number(value);
         } else if (flag === '--source') {
           if (discoverySourcePath)
@@ -891,9 +892,10 @@ export async function runCli(
         'Cannot read Storm endpoint metadata; start Storm or check --endpoint/--profile',
       );
     }
+    connection = createAgentConnection(info);
     const request = async (value: RequestPayload<AgentRequest>) => {
       try {
-        return await sendAgentRequest(info, {
+        return await connection!.request({
           ...value,
           protocol: 1 as const,
           requestId: randomUUID(),
@@ -912,7 +914,11 @@ export async function runCli(
       while (true) {
         latest = await request({
           type: 'quiz',
-          operation: 'snapshot',
+          operation: 'wait',
+          waitMs:
+            deadline === undefined
+              ? 20000
+              : Math.max(0, Math.min(20000, deadline - Date.now())),
           sessionId: quizSession!,
           agentToken: quizToken ?? process.env.STORM_QUIZ_TOKEN!,
           after: cursor,
@@ -929,14 +935,7 @@ export async function runCli(
           Number(value.after) || 0,
           ...events.map((event: any) => Number(event.cursor) || 0),
         );
-        const learnerEvents = events.filter(
-          (event: any) =>
-            typeof event.type === 'string' &&
-            (/^(answer|message|continue|respond-prompt|skip)$/.test(
-              event.type,
-            ) ||
-              event.type.startsWith('learner-')),
-        );
+        const learnerEvents = events.filter(isQuizLearnerEvent);
         if (learnerEvents.length) {
           out(
             `${JSON.stringify({ ...latest, timedOut: false, after: cursor })}\n`,
@@ -962,9 +961,6 @@ export async function runCli(
           );
           return 0;
         }
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.min(1000, remaining)),
-        );
       }
     }
     let result: any;
@@ -1065,21 +1061,7 @@ export async function runCli(
           command === 'replace'
             ? { type: 'replace', content: source }
             : { type: 'replaceText', replacements: JSON.parse(source) };
-        if (
-          command === 'patch' &&
-          (!Array.isArray((plan as any).replacements) ||
-            (plan as any).replacements.some(
-              (item: any) =>
-                !item ||
-                typeof item !== 'object' ||
-                Array.isArray(item) ||
-                Object.keys(item).length !== 2 ||
-                typeof item.find !== 'string' ||
-                !item.find ||
-                typeof item.replace !== 'string',
-            ))
-        )
-          throw new Error('invalid patch');
+        if (!isAgentEditPlan(plan)) throw new Error('invalid patch');
       } catch {
         throw new CliUsageError(
           'patch stdin must be a JSON array of {"find":"non-empty string","replace":"string"} edits',
@@ -1135,9 +1117,9 @@ export async function runCli(
         // Each available stdin chunk is forwarded immediately; awaiting each
         // request also applies socket backpressure without accumulating input.
         while (buffered) {
-          let text = '';
+          let text = Buffer.byteLength(buffered) <= 262144 ? buffered : '';
           let bytes = 0;
-          for (const character of buffered) {
+          for (const character of text ? '' : buffered) {
             const size = Buffer.byteLength(character);
             if (bytes + size > 262144) break;
             text += character;
@@ -1239,6 +1221,8 @@ export async function runCli(
     }
     err(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
+  } finally {
+    connection?.close();
   }
 }
 if (import.meta.main) process.exitCode = await runCli(process.argv.slice(2));

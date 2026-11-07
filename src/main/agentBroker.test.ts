@@ -404,7 +404,7 @@ describe('discovery request validation', () => {
         sourcePath: 'a.md',
         depth: 0,
         includeSource: false,
-        limit: 100,
+        limit: 1000,
       }),
     );
     assert.equal(good.ok, true);
@@ -418,7 +418,7 @@ describe('discovery request validation', () => {
       { includeSource: 'yes', sourcePath: 'a.md' },
       { sourcePath: '' },
       { limit: 0 },
-      { limit: 101 },
+      { limit: 1001 },
       { limit: 1.2 },
     ];
     for (const fields of badInputs) {

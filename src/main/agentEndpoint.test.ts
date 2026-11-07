@@ -332,3 +332,48 @@ describe('agent endpoint', () => {
     }
   });
 });
+
+test('authenticated connection correlates status while a document request is blocked', async () => {
+  const { createAgentConnection } = await import('./agentEndpoint');
+  const dir = await mkdtemp(join(tmpdir(), 'storm-multiplex-'));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const endpoint = await startAgentEndpoint({
+    userDataPath: dir,
+    broker: {
+      async handle(request: any) {
+        if (request.requestId === 'blocked') await gate;
+        return {
+          protocol: 1,
+          requestId: request.requestId,
+          ok: true,
+          type: 'status',
+          sessions: [],
+        };
+      },
+    },
+  });
+  const connection = createAgentConnection(endpoint);
+  try {
+    const blocked = connection.request({
+      protocol: 1,
+      requestId: 'blocked',
+      type: 'status',
+    });
+    const status: any = await connection.request({
+      protocol: 1,
+      requestId: 'status',
+      type: 'status',
+    });
+    assert.equal(status.requestId, 'status');
+    release();
+    assert.equal(((await blocked) as any).requestId, 'blocked');
+  } finally {
+    release();
+    connection.close();
+    await endpoint.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
