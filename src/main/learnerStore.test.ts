@@ -8,6 +8,8 @@ import { QuizStore } from './quizStore';
 import { LearnerStore, learnerScopeKey } from './learnerStore';
 import {
   quizFixture,
+  QuizSessionDriver,
+  quizValue,
   FailingQuizStore,
   quizScope as scope,
 } from './quizTestFixtures';
@@ -630,6 +632,54 @@ test('legacy learner facts import once, retain deleted-session evidence, and ign
     assert.deepEqual(await reopened.attempts(learnerScopeKey(scope)), [
       attempt,
     ]);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('learner diagnostics cover the learning pool and isolate unscoped quizzes', async () => {
+  const f = await fixture();
+  try {
+    const first = new QuizSessionDriver(
+      f.service,
+      (await f.store.get(f.sessionId))!,
+    );
+    const second = new QuizSessionDriver(
+      f.service,
+      quizValue(await f.service.createSession(scope)),
+    );
+    const unscoped = new QuizSessionDriver(
+      f.service,
+      quizValue(await f.service.createSession()),
+    );
+    for (const driver of [second, unscoped])
+      quizValue(await driver.agent({ type: 'attach' }));
+    for (const driver of [first, second, unscoped]) {
+      quizValue(
+        await driver.agent({
+          type: 'pose-question',
+          kind: 'short-answer',
+          question: 'Recall the rule',
+        }),
+      );
+      quizValue(
+        await driver.learner({
+          type: 'answer',
+          answer: 'A rule',
+          confidence: 80,
+        }),
+      );
+      quizValue(
+        await driver.agent({
+          type: 'feedback',
+          text: 'Discussed.',
+          verdict: 'correct',
+        }),
+      );
+    }
+    assert.equal((await f.service.reconcileLearner(first.id)).unmodelled, 2);
+    assert.equal((await f.service.reconcileLearner(unscoped.id)).unmodelled, 1);
+    assert.equal(f.service.learnerRecordingDiagnostics().unmodelled, 3);
   } finally {
     await f.cleanup();
   }

@@ -476,6 +476,22 @@ export class QuizStore {
     };
   }
 
+  async learnerDiagnostics(sessionId: string) {
+    await this.queue;
+    const sessions = this.sessionsIn(await this.read());
+    const current = sessions.find((session) => session.id === sessionId);
+    const scope = current && learnerScopeKey(current.scope, current.id);
+    const ids = new Set(
+      sessions
+        .filter(
+          (session) =>
+            scope && learnerScopeKey(session.scope, session.id) === scope,
+        )
+        .map((session) => session.id),
+    );
+    return this.recordingDiagnostics(ids);
+  }
+
   async hasLearnerImport(): Promise<boolean> {
     await this.queue;
     return !!(await this.read()).learning?.imported;

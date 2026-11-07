@@ -111,7 +111,7 @@ function metadataResult(
   return { ok: true, value: result };
 }
 
-/** Deleting would discard grades the learner model has not saved yet. */
+/** Compatibility error export for older IPC registration; atomic facts make it unnecessary. */
 export class QuizDeletionBlocked extends Error {
   constructor() {
     super(
@@ -156,9 +156,9 @@ export class QuizService {
   }
 
   /** Compatibility diagnostic surface; facts commit atomically with feedback. */
-  async reconcileLearner(_sessionId: string) {
+  async reconcileLearner(sessionId: string) {
     await this.startupRecovery;
-    return this.learnerRecordingDiagnostics(new Set([_sessionId]));
+    return this.store.learnerDiagnostics(sessionId);
   }
 
   learnerRecordingDiagnostics(_sessionIds?: ReadonlySet<string>) {
