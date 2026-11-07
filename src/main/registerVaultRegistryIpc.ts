@@ -3,7 +3,7 @@ import path from 'node:path';
 import { resolveVaultEntry } from '../vault/vaultPaths';
 import type { VaultRegistry } from '../vault/vaultRegistry';
 import type { VaultService } from '../vault/vaultService';
-import type { VaultWriteBarrier } from '../vault/writeBarrier';
+import type { VaultMutationCoordinator } from '../vault/mutationCoordinator';
 import { runVaultsLifecycleExclusive } from './vaultLifecycle';
 
 export interface IpcHandlerRegistrar {
@@ -15,7 +15,7 @@ export function registerVaultRegistryIpc(
   dependencies: {
     registry: VaultRegistry;
     service: VaultService;
-    writeBarrier: VaultWriteBarrier;
+    writeBarrier: VaultMutationCoordinator;
     watchSelectedVault: () => Promise<string | null>;
     stopWatcher: () => void;
     clearWatchedVaultId: () => void;

@@ -32,7 +32,7 @@ app.setName('Storm');
 if (!app.commandLine.hasSwitch('user-data-dir')) {
   app.setPath('userData', path.join(app.getPath('appData'), 'storm'));
 }
-import { VaultWriteBarrier } from './vault/writeBarrier';
+import { VaultMutationCoordinator } from './vault/mutationCoordinator';
 import { discoverVaultNotes, resolveVaultLink } from './main/vaultDiscovery';
 import { confirmQuitAndFlush } from './quitConfirmation';
 import { VaultWatcher } from './vault/vaultWatcher';
@@ -139,7 +139,7 @@ const quizService = new QuizService(
 );
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;
-const vaultWriteBarrier = new VaultWriteBarrier();
+const vaultWriteBarrier = new VaultMutationCoordinator();
 let activeWatchedVaultId: string | null = null;
 const agentVaults = new Map<
   string,

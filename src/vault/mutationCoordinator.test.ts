@@ -1,7 +1,7 @@
 import { runVaultLifecycleExclusive } from './vaultLifecycle';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { VaultWriteBarrier } from './writeBarrier';
+import { VaultMutationCoordinator } from './mutationCoordinator';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -10,7 +10,7 @@ function deferred<T>() {
 }
 
 test('unload waits for authorized writes and rejects writes until reset completes', async () => {
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   const write = deferred<void>();
   const writeStarted = deferred<void>();
   const resetStarted = deferred<void>();
@@ -36,7 +36,7 @@ test('unload waits for authorized writes and rejects writes until reset complete
 });
 
 test('failed reset preserves ability to write and retry', async () => {
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   await assert.rejects(
     barrier.close(async () => {
       throw new Error('persist failed');
@@ -51,7 +51,7 @@ test('failed reset preserves ability to write and retry', async () => {
 });
 
 test('serializes operations and recovers after an operation rejects', async () => {
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   const first = deferred<void>();
   const started = deferred<void>();
   const order: string[] = [];
@@ -76,7 +76,7 @@ test('serializes operations and recovers after an operation rejects', async () =
 });
 
 test('rejects new operations and simultaneous close while closing', async () => {
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   const reset = deferred<void>();
   const started = deferred<void>();
   const closing = barrier.close(async () => {
@@ -95,7 +95,7 @@ test('rejects new operations and simultaneous close while closing', async () => 
 });
 
 test('an in-flight write failure prevents reset', async () => {
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   const write = deferred<void>();
   const started = deferred<void>();
   const operation = barrier.run(async () => {
@@ -115,7 +115,7 @@ test('an in-flight write failure prevents reset', async () => {
 });
 
 test('independent vault scopes progress concurrently and unload drains both', async () => {
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   const release = deferred<void>();
   const started = deferred<void>();
   const first = barrier.mutate('/vault/one', async () => {
@@ -141,7 +141,7 @@ test('independent vault scopes progress concurrently and unload drains both', as
 });
 
 test('unload drains admitted work waiting on a lifecycle lock before reset', async () => {
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   const entered = deferred<void>();
   const release = deferred<void>();
   const holder = runVaultLifecycleExclusive('/queued-vault', async () => {
@@ -164,7 +164,7 @@ test('unload drains admitted work waiting on a lifecycle lock before reset', asy
 });
 
 test('maintenance lease releases when unload rejects mutation admission', async () => {
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   const releaseReset = deferred<void>();
   const closing = barrier.close(() => releaseReset.promise);
   let released = false;
@@ -184,7 +184,7 @@ test('maintenance lease releases when unload rejects mutation admission', async 
 });
 
 test('registry mutations fence earlier and later vault mutations without serializing independent roots', async () => {
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   const release = deferred<void>();
   const entered = deferred<void>();
   const order: string[] = [];

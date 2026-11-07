@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { StudyContextService } from './studyContextService';
 import { StudyContextStore } from './studyContextStore';
 import { VaultService } from '../vault/vaultService';
-import { VaultWriteBarrier } from '../vault/writeBarrier';
+import { VaultMutationCoordinator } from '../vault/mutationCoordinator';
 import { readStudySource } from '../vault/studySourceReader';
 import { runVaultLifecycleExclusive } from './vaultLifecycle';
 import {
@@ -52,7 +52,7 @@ async function fixture() {
     selectedNotePaths: [],
   };
   const live = new Map<string, string>();
-  const barrier = new VaultWriteBarrier();
+  const barrier = new VaultMutationCoordinator();
   let available = true;
   const ports = {
     vaults: async () => (available ? [{ id: 'vault', path: root }] : []),

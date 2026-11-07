@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { VaultService } from '../vault/vaultService';
 import type { VaultRegistry } from '../vault/vaultRegistry';
-import type { VaultWriteBarrier } from '../vault/writeBarrier';
+import type { VaultMutationCoordinator } from '../vault/mutationCoordinator';
 import type { AgentBroker } from './agentBroker';
 import { resolveVaultNote } from '../vault/vaultNoteResolver';
 import {
@@ -27,7 +27,7 @@ export function registerVaultIpc(
   dependencies: {
     vaultService: VaultService;
     vaultRegistry: VaultRegistry;
-    vaultWriteBarrier: VaultWriteBarrier;
+    vaultWriteBarrier: VaultMutationCoordinator;
     agentBroker: AgentBroker;
     watchSelectedVault: () => Promise<string | null>;
     invalidateSelectedVault: (id: string) => void;

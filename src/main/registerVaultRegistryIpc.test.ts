@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { VaultRegistry } from '../vault/vaultRegistry';
-import { VaultWriteBarrier } from '../vault/writeBarrier';
+import { VaultMutationCoordinator } from '../vault/mutationCoordinator';
 import { registerVaultRegistryIpc } from './registerVaultRegistryIpc';
 import type { VaultService } from '../vault/vaultService';
 
@@ -100,7 +100,7 @@ function setup() {
   const dependencies = {
     registry: registry as unknown as VaultRegistry,
     service: service as unknown as VaultService,
-    writeBarrier: new VaultWriteBarrier(),
+    writeBarrier: new VaultMutationCoordinator(),
     watchSelectedVault: async () => {
       calls.push(['watchSelectedVault']);
       return 'vault-1';
@@ -291,7 +291,7 @@ test('persists one renderer-serialized layout through the tab-layout IPC handler
         service: {
           getSelectedVaultPath: () => vaultPath,
         } as unknown as VaultService,
-        writeBarrier: new VaultWriteBarrier(),
+        writeBarrier: new VaultMutationCoordinator(),
         watchSelectedVault: async () => vault.id,
         stopWatcher: () => {},
         clearWatchedVaultId: () => {},
@@ -434,7 +434,7 @@ test('does not persist active state or watch if selecting fails', async () => {
     {
       registry: registry as unknown as VaultRegistry,
       service: service as unknown as VaultService,
-      writeBarrier: new VaultWriteBarrier(),
+      writeBarrier: new VaultMutationCoordinator(),
       watchSelectedVault: async () => {
         throw new Error('should not watch');
       },
