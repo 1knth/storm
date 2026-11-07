@@ -1,10 +1,13 @@
+import { registerSettingsIpc } from './main/registerSettingsIpc';
+import { registerShutdownTracking } from './main/shutdownTracking';
+import { registerVaultIpc } from './main/registerVaultIpc';
+import { configureWindowSecurity } from './main/windowSecurity';
 import {
   app,
   BrowserWindow,
   dialog,
   ipcMain as electronIpcMain,
   Menu,
-  MenuItem,
   shell,
 } from 'electron';
 import path from 'node:path';
@@ -13,7 +16,6 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import started from 'electron-squirrel-startup';
 import { VaultService } from './vault/vaultService';
-import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
 import { QuizStore } from './main/quizStore';
 import { QuizDeletionBlocked, QuizService } from './main/quizService';
@@ -23,30 +25,14 @@ import { StudyContextService } from './main/studyContextService';
 import { StudyContextStore } from './main/studyContextStore';
 import { readStudySource } from './vault/studySourceReader';
 import { STUDY_LIMITS } from './shared/studyContext';
-import {
-  classifyVaultListError,
-  formatVaultListError,
-} from './main/vaultListLogging';
 
 app.setName('Storm');
 // Keep the pre-branding lowercase data directory so existing vault settings survive.
 if (!app.commandLine.hasSwitch('user-data-dir')) {
   app.setPath('userData', path.join(app.getPath('appData'), 'storm'));
 }
-import {
-  readVaultAsset,
-  readVaultImage,
-  readVaultPdf,
-} from './vault/vaultAssets';
-import { savePastedImage } from './vault/pasteImage';
 import { VaultWriteBarrier } from './vault/writeBarrier';
 import { discoverVaultNotes, resolveVaultLink } from './main/vaultDiscovery';
-import { resolveVaultNote } from './vault/vaultNoteResolver';
-import { createFolder, createMarkdownNote } from './vault/vaultCreation';
-import {
-  assertDeletionTargetUnchanged,
-  resolveDeletionTarget,
-} from './vault/vaultDeletion';
 import { confirmQuitAndFlush } from './quitConfirmation';
 import { VaultWatcher } from './vault/vaultWatcher';
 import { registerVaultRegistryIpc } from './main/registerVaultRegistryIpc';
@@ -55,11 +41,7 @@ import { createQuizAgentHandler } from './main/quizAgentHandler';
 import { runVaultLifecycleExclusive } from './main/vaultLifecycle';
 import { createTutorNotesFile } from './main/tutorNotesFile';
 import { bindAgentBrokerIpc, registerAgentIpc } from './main/registerAgentIpc';
-import {
-  isAcceptedUrl,
-  rendererAuthorizer,
-  trustedIpc,
-} from './main/rendererSecurity';
+import { rendererAuthorizer, trustedIpc } from './main/rendererSecurity';
 import {
   resolveAgentNoteTarget,
   resolveExistingAgentNoteTarget,
@@ -68,13 +50,6 @@ import {
   startAgentEndpoint,
   type StartedAgentEndpoint,
 } from './main/agentEndpoint';
-import {
-  installCliShortcut,
-  isCliShortcutInstalled,
-  removeCliShortcut,
-  readCliSetupState,
-  recordCliChoice,
-} from './main/cliSetup';
 
 const vaultService = new VaultService();
 const vaultRegistry = new VaultRegistry(app.getPath('userData'));
@@ -164,7 +139,6 @@ const quizService = new QuizService(
 );
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;
-let shutdownInFlight: Promise<boolean> | null = null;
 const vaultWriteBarrier = new VaultWriteBarrier();
 let activeWatchedVaultId: string | null = null;
 const agentVaults = new Map<
@@ -185,8 +159,9 @@ async function watchSelectedVault(): Promise<string | null> {
     activeWatchedVaultId = null;
     return null;
   }
-  const { vault } = await vaultRegistry.add(selectedPath);
-  await vaultRegistry.setActive(vault.id);
+  const { vaults } = await vaultRegistry.list();
+  const vault = vaults.find((entry) => entry.path === selectedPath);
+  if (!vault) throw new Error('Selected vault is not registered');
   if (activeWatchedVaultId !== vault.id) {
     activeWatchedVaultId = vault.id;
     vaultWatcher.start(selectedPath, vault.id);
@@ -612,7 +587,6 @@ ipcMain.handle('agent:save-note', async (_event, request: unknown) => {
 });
 
 const closeAllowed = new WeakSet<BrowserWindow>();
-const shutdownAcks = new Map<string, (succeeded: boolean) => void>();
 let openFileMenuItem: Electron.MenuItem | null = null;
 let toggleExplorerMenuItem: Electron.MenuItem | null = null;
 const sendIndexedShortcut = (
@@ -633,53 +607,7 @@ ipcMain.on(
   },
 );
 
-ipcMain.handle(
-  'shutdown:ack',
-  (_event, requestId: unknown, succeeded: unknown) => {
-    if (typeof requestId === 'string')
-      shutdownAcks.get(requestId)?.(succeeded === true);
-  },
-);
-
-async function flushBeforeQuit(): Promise<boolean> {
-  if (shutdownInFlight) return shutdownInFlight;
-  shutdownInFlight = (async () => {
-    const windows = BrowserWindow.getAllWindows();
-    const outcomes = await Promise.all(
-      windows.map(
-        (window) =>
-          new Promise<boolean>((resolve) => {
-            const requestId = `${Date.now()}-${Math.random()}`;
-            const timeout = setTimeout(() => {
-              shutdownAcks.delete(requestId);
-              resolve(false);
-            }, 5000);
-            shutdownAcks.set(requestId, (succeeded) => {
-              clearTimeout(timeout);
-              shutdownAcks.delete(requestId);
-              resolve(succeeded);
-            });
-            window.webContents.send('shutdown:flush', requestId);
-          }),
-      ),
-    );
-    if (outcomes.every(Boolean)) return true;
-    const choice = await dialog.showMessageBox({
-      type: 'warning',
-      buttons: ['Keep editing', 'Discard changes and quit'],
-      defaultId: 0,
-      cancelId: 0,
-      message: 'Some changes could not be saved.',
-      detail:
-        'Keep editing to return to your notes, or explicitly discard changes and quit.',
-      noLink: true,
-    });
-    return choice.response === 1;
-  })().finally(() => {
-    shutdownInFlight = null;
-  });
-  return shutdownInFlight;
-}
+const flushBeforeQuit = registerShutdownTracking(ipcMain);
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -705,55 +633,7 @@ const createWindow = () => {
     },
   });
 
-  const contents = mainWindow.webContents;
-  const guardNavigation = (event: Electron.Event, url: string) => {
-    if (!agentAcceptedUrl || !isAcceptedUrl(url, agentAcceptedUrl))
-      event.preventDefault();
-  };
-  contents.on('will-navigate', guardNavigation);
-  contents.on('will-frame-navigate', (event) => {
-    if (
-      !event.isMainFrame ||
-      !agentAcceptedUrl ||
-      !isAcceptedUrl(event.url, agentAcceptedUrl)
-    )
-      event.preventDefault();
-  });
-  contents.on('will-redirect', guardNavigation);
-  contents.on('will-attach-webview', (event) => event.preventDefault());
-  const allowClipboardWrite = (
-    requester: Electron.WebContents | null,
-    permission: string,
-    details: { isMainFrame: boolean; requestingUrl?: string },
-  ) =>
-    requester === contents &&
-    permission === 'clipboard-sanitized-write' &&
-    details.isMainFrame &&
-    !!details.requestingUrl &&
-    !!agentAcceptedUrl &&
-    isAcceptedUrl(details.requestingUrl, agentAcceptedUrl);
-  contents.session.setPermissionRequestHandler(
-    (requester, permission, callback, details) =>
-      callback(allowClipboardWrite(requester, permission, details)),
-  );
-  contents.session.setPermissionCheckHandler(
-    (requester, permission, _origin, details) =>
-      allowClipboardWrite(requester, permission, details),
-  );
-
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
-        void shell.openExternal(parsed.href).catch((error) => {
-          console.error('Failed to open external link', error);
-        });
-      }
-    } catch {
-      // Reject malformed URLs and unsupported schemes.
-    }
-    return { action: 'deny' };
-  });
+  configureWindowSecurity(mainWindow, () => agentAcceptedUrl);
 
   agentWindow = mainWindow;
   mainWindow.on('closed', () => {
@@ -793,101 +673,14 @@ const createWindow = () => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-ipcMain.handle('vault:restore', async () => {
-  return vaultWriteBarrier.run(async () => {
-    try {
-      const savedPath = await readLastVault(app.getPath('userData'));
-      if (!savedPath) return { path: null, error: null };
-      await vaultService.selectVault(savedPath);
-      await watchSelectedVault();
-      return { path: vaultService.getSelectedVaultPath(), error: null };
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT' || code === 'ENOTDIR') {
-        return { path: null, error: null };
-      }
-      return {
-        path: null,
-        error: `Could not restore the last vault: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  });
+registerVaultIpc(ipcMain, {
+  vaultService,
+  vaultRegistry,
+  vaultWriteBarrier,
+  agentBroker,
+  watchSelectedVault,
+  invalidateSelectedVault,
 });
-
-ipcMain.handle('vault:choose', async () => {
-  const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
-  if (result.canceled) return { path: null, warning: null };
-  const selectedPath = result.filePaths[0];
-  if (!selectedPath) return { path: null, warning: null };
-  return vaultWriteBarrier.run(async () => {
-    await vaultService.selectVault(selectedPath);
-    const validatedPath = vaultService.getSelectedVaultPath()!;
-    try {
-      await watchSelectedVault();
-      return { path: validatedPath, warning: null };
-    } catch (error) {
-      return {
-        path: validatedPath,
-        warning: `Vault opened, but the vault selection could not be saved: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  });
-});
-
-const pendingGroupFolders = new Map<
-  string,
-  { directory: string; createdAt: number }
->();
-const groupFolderCreatesInFlight = new Set<string>();
-const GROUP_FOLDER_SELECTION_TTL_MS = 10 * 60 * 1000;
-const MAX_PENDING_GROUP_FOLDERS = 20;
-ipcMain.handle('vault:group-folder-choose', async () => {
-  const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
-  if (result.canceled || !result.filePaths[0]) return null;
-  const selectionId = randomUUID();
-  const now = Date.now();
-  for (const [id, selection] of pendingGroupFolders) {
-    if (now - selection.createdAt > GROUP_FOLDER_SELECTION_TTL_MS)
-      pendingGroupFolders.delete(id);
-  }
-  while (pendingGroupFolders.size >= MAX_PENDING_GROUP_FOLDERS) {
-    const oldestId = pendingGroupFolders.keys().next().value;
-    if (!oldestId) break;
-    pendingGroupFolders.delete(oldestId);
-  }
-  pendingGroupFolders.set(selectionId, {
-    directory: result.filePaths[0],
-    createdAt: now,
-  });
-  return { selectionId, name: path.basename(result.filePaths[0]) };
-});
-ipcMain.handle(
-  'vault:group-create-from-folder',
-  async (_event, selectionId: unknown, name: unknown) => {
-    if (typeof selectionId !== 'string' || typeof name !== 'string')
-      throw new Error('Invalid folder-based group request');
-    const selection = pendingGroupFolders.get(selectionId);
-    if (
-      !selection ||
-      Date.now() - selection.createdAt > GROUP_FOLDER_SELECTION_TTL_MS
-    ) {
-      pendingGroupFolders.delete(selectionId);
-      throw new Error('Folder selection expired; please choose it again');
-    }
-    if (groupFolderCreatesInFlight.has(selectionId))
-      throw new Error('Folder-based group creation is already in progress');
-    groupFolderCreatesInFlight.add(selectionId);
-    try {
-      const result = await vaultWriteBarrier.run(() =>
-        vaultRegistry.createGroupFromFolder(selection.directory, name),
-      );
-      pendingGroupFolders.delete(selectionId);
-      return result;
-    } finally {
-      groupFolderCreatesInFlight.delete(selectionId);
-    }
-  },
-);
 
 registerVaultRegistryIpc(ipcMain, {
   registry: vaultRegistry,
@@ -904,268 +697,6 @@ registerVaultRegistryIpc(ipcMain, {
   openPath: (directory) => shell.openPath(directory),
   showItemInFolder: (file) => shell.showItemInFolder(file),
 });
-
-ipcMain.handle('vault:resolve-note-link', async (_event, request: unknown) => {
-  if (!request || typeof request !== 'object' || Array.isArray(request))
-    return { ok: false, reason: 'invalid' as const };
-  const { vaultId, notePath, target } = request as Record<string, unknown>;
-  if (
-    typeof vaultId !== 'string' ||
-    typeof notePath !== 'string' ||
-    typeof target !== 'string'
-  )
-    return { ok: false, reason: 'invalid' as const };
-  const vault = await vaultRegistry.getById(vaultId);
-  if (!vault) return { ok: false, reason: 'invalid' as const };
-  try {
-    const path = await resolveVaultNote(vault.path, notePath, target);
-    return { ok: true, path };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    const reason = /ambiguous/i.test(message)
-      ? 'ambiguous'
-      : /not found/i.test(message)
-        ? 'missing'
-        : 'invalid';
-    return { ok: false, reason };
-  }
-});
-
-ipcMain.handle('vault:paste-image', async (_event, request: unknown) => {
-  if (!request || typeof request !== 'object' || Array.isArray(request))
-    throw new Error('Invalid paste image request');
-  const value = request as Record<string, unknown>;
-  if (
-    typeof value.vaultId !== 'string' ||
-    typeof value.notePath !== 'string' ||
-    typeof value.mimeType !== 'string' ||
-    typeof value.base64 !== 'string'
-  )
-    throw new Error('Invalid paste image request');
-  const { vaultId, notePath, mimeType, base64 } = value as {
-    vaultId: string;
-    notePath: string;
-    mimeType: string;
-    base64: string;
-  };
-  return vaultWriteBarrier.run(async () => {
-    const vault = await vaultRegistry.getById(vaultId);
-    if (!vault) throw new Error('Unknown vault');
-    const result = await savePastedImage(vault.path, {
-      vaultId,
-      notePath,
-      mimeType,
-      base64,
-    });
-    invalidateSelectedVault(vaultId);
-    return result;
-  });
-});
-
-ipcMain.handle('vault:read-asset', async (_event, request: unknown) => {
-  if (!request || typeof request !== 'object' || Array.isArray(request))
-    throw new Error('Invalid asset request');
-  const { vaultId, relativePath } = request as Record<string, unknown>;
-  if (typeof vaultId !== 'string' || typeof relativePath !== 'string')
-    throw new Error('Invalid asset request');
-  const vault = await vaultRegistry.getById(vaultId);
-  if (!vault) throw new Error('Unknown vault');
-  try {
-    return { ok: true, ...(await readVaultAsset(vault.path, relativePath)) };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    const reason = /not found|ENOENT/i.test(message)
-      ? 'not-found'
-      : /unsupported|content does not match/i.test(message)
-        ? 'unsupported'
-        : 'unavailable';
-    return { ok: false, reason };
-  }
-});
-
-ipcMain.handle('vault:read-pdf', async (_event, request: unknown) => {
-  if (!request || typeof request !== 'object' || Array.isArray(request))
-    throw new Error('Invalid PDF request');
-  const { vaultId, relativePath } = request as Record<string, unknown>;
-  if (typeof vaultId !== 'string' || typeof relativePath !== 'string')
-    throw new Error('Invalid PDF request');
-  const vault = await vaultRegistry.getById(vaultId);
-  if (!vault) throw new Error('Unknown vault');
-  return readVaultPdf(vault.path, relativePath);
-});
-
-ipcMain.handle('vault:read-image', async (_event, request: unknown) => {
-  if (!request || typeof request !== 'object')
-    throw new Error('Invalid image request');
-  const { vaultId, notePath, imagePath, kind } = request as Record<
-    string,
-    unknown
-  >;
-  if (typeof vaultId !== 'string') throw new Error('Invalid vault ID');
-  const vault = await vaultRegistry.getById(vaultId);
-  if (!vault) throw new Error('Unknown vault');
-  if (typeof notePath !== 'string' || typeof imagePath !== 'string')
-    throw new Error('Invalid image request');
-  try {
-    const image = await readVaultImage(vault.path, {
-      notePath,
-      imagePath,
-      kind: kind as 'markdown' | 'wiki' | undefined,
-    });
-    return { ok: true, ...image };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    const reason = /not found/i.test(message)
-      ? 'not-found'
-      : /ambiguous/i.test(message)
-        ? 'ambiguous'
-        : /unsupported|content does not match/i.test(message)
-          ? 'unsupported'
-          : 'unavailable';
-    return { ok: false, reason };
-  }
-});
-
-for (const [channel, create] of [
-  ['vault:create-note', createMarkdownNote],
-  ['vault:create-folder', createFolder],
-] as const)
-  ipcMain.handle(channel, async (_event, request: unknown) => {
-    if (!request || typeof request !== 'object' || Array.isArray(request))
-      throw new Error('Invalid creation request');
-    const { vaultId, parentRelativePath, name } = request as Record<
-      string,
-      unknown
-    >;
-    if (
-      typeof vaultId !== 'string' ||
-      typeof parentRelativePath !== 'string' ||
-      typeof name !== 'string'
-    )
-      throw new Error('Invalid creation request');
-    return vaultWriteBarrier.run(async () => {
-      const vault = await vaultRegistry.getById(vaultId);
-      if (!vault) throw new Error('Unknown vault');
-      const entry = await create(vault.path, parentRelativePath, name);
-      invalidateSelectedVault(vaultId);
-      return entry;
-    });
-  });
-
-ipcMain.handle('vault:delete-entry', async (event, request: unknown) => {
-  if (!request || typeof request !== 'object' || Array.isArray(request))
-    throw new Error('Invalid deletion request');
-  const { vaultId, path: relativePath } = request as Record<string, unknown>;
-  if (typeof vaultId !== 'string' || typeof relativePath !== 'string')
-    throw new Error('Invalid deletion request');
-  const vault = await vaultRegistry.getById(vaultId);
-  if (!vault) throw new Error('Unknown vault');
-  const target = await resolveDeletionTarget(vault.path, relativePath);
-  const window = BrowserWindow.fromWebContents(event.sender);
-  const description =
-    target.kind === 'folder'
-      ? 'Folder.'
-      : target.kind === 'image'
-        ? 'Image.'
-        : target.kind === 'pdf'
-          ? 'PDF document.'
-          : 'Markdown note.';
-  const contains =
-    target.kind === 'folder' ? ' Its entire contents will be moved.' : '';
-  const choice = await dialog.showMessageBox(
-    window ?? BrowserWindow.getFocusedWindow()!,
-    {
-      type: 'warning',
-      buttons: ['Cancel', 'Move to Trash'],
-      defaultId: 0,
-      cancelId: 0,
-      message: `Move “${target.relativePath}” to Trash?`,
-      detail: `${description}${contains}`,
-      noLink: true,
-    },
-  );
-  if (choice.response !== 1)
-    return { deleted: false, path: target.relativePath, kind: target.kind };
-  return vaultWriteBarrier.run(async () => {
-    if ((await vaultRegistry.getById(vaultId))?.path !== vault.path)
-      throw new Error('Vault is no longer registered');
-    await assertDeletionTargetUnchanged(target);
-    await shell.trashItem(target.absolutePath);
-    invalidateSelectedVault(vaultId);
-    return { deleted: true, path: target.relativePath, kind: target.kind };
-  });
-});
-
-ipcMain.handle('vault:list-notes', async () => {
-  try {
-    return await vaultService.listNotes();
-  } catch (error) {
-    const trace = randomUUID().slice(0, 8);
-    const severity = classifyVaultListError(error);
-    console.error(formatVaultListError(severity, trace, error));
-    throw error;
-  }
-});
-
-ipcMain.handle('vault:read-note', async (_event, relativePath: unknown) =>
-  vaultService.readNote(relativePath),
-);
-ipcMain.handle('vault:rename-entry', async (_event, request: unknown) => {
-  if (!request || typeof request !== 'object' || Array.isArray(request))
-    throw new Error('Invalid rename request');
-  const value = request as Record<string, unknown>;
-  if (typeof value.path !== 'string' || typeof value.newName !== 'string')
-    throw new Error('Invalid rename request');
-  const selectedPath = vaultService.getSelectedVaultPath();
-  if (!selectedPath) throw new Error('No vault selected');
-  const { vaults } = await vaultRegistry.list();
-  const selected = vaults.find((vault) => vault.path === selectedPath);
-  if (!selected) throw new Error('Selected vault is not registered');
-  const deadline = Date.now() + 30_000;
-  let releaseLease: (() => void) | null = null;
-  while (!releaseLease) {
-    releaseLease = agentBroker.acquireMaintenanceLease(selected.id);
-    if (releaseLease) break;
-    if (Date.now() >= deadline)
-      throw new Error(
-        'Rename timed out waiting for agent sessions to finish. No rename was performed.',
-      );
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  try {
-    return await vaultWriteBarrier.run(async () => {
-      if (vaultService.getSelectedVaultPath() !== selectedPath)
-        throw new Error('Selected vault changed; rename cancelled');
-      const result = await vaultService.renameEntryAndUpdateLinks(
-        value.path,
-        value.newName,
-      );
-      invalidateSelectedVault(selected.id);
-      return result;
-    });
-  } finally {
-    releaseLease();
-  }
-});
-ipcMain.handle('vault:save-note', async (_event, request: unknown) =>
-  vaultWriteBarrier.run(async () => {
-    const result = await vaultService.saveNote(request);
-    if (request && typeof request === 'object') {
-      const value = request as Record<string, unknown>;
-      if (
-        typeof value.vaultPath === 'string' &&
-        typeof value.path === 'string'
-      ) {
-        const { vaults } = await vaultRegistry.list();
-        const vaultId = vaults.find(
-          (vault) => vault.path === value.vaultPath,
-        )?.id;
-        if (vaultId) invalidateSelectedVault(vaultId);
-      }
-    }
-    return result;
-  }),
-);
 
 let agentEndpoint: StartedAgentEndpoint | undefined;
 async function closeAgentEndpoint(): Promise<void> {
@@ -1405,108 +936,7 @@ app.whenReady().then(async () => {
       ],
     },
   ]);
-  ipcMain.handle(
-    'cli:available',
-    () => process.platform === 'darwin' && app.isPackaged,
-  );
-  ipcMain.handle('cli:installed', () =>
-    isCliShortcutInstalled(process.resourcesPath),
-  );
-  ipcMain.handle(
-    'settings:canOpenFilesAndFolders',
-    () => process.platform === 'darwin',
-  );
-  ipcMain.handle('settings:openFilesAndFolders', async () => {
-    if (process.platform !== 'darwin') return false;
-    await shell.openExternal(
-      'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders',
-    );
-    return true;
-  });
-  ipcMain.handle('cli:disable', async () => {
-    const result = await removeCliShortcut(process.resourcesPath);
-    if (!result.removed && result.message) {
-      await dialog.showMessageBox({
-        type: 'warning',
-        buttons: ['OK'],
-        message: 'Could not disable the Storm CLI shortcut',
-        detail: result.message,
-      });
-    }
-    return result.removed;
-  });
-  const enableCli = async (interactive: boolean) => {
-    let result: { installed: boolean; message?: string };
-    try {
-      result = await installCliShortcut({
-        resourcesPath: process.resourcesPath,
-      });
-    } catch (error) {
-      result = {
-        installed: false,
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
-    await recordCliChoice(
-      app.getPath('userData'),
-      result.installed ? 'enabled' : 'failed',
-    );
-    if (interactive && result.message) {
-      await dialog.showMessageBox({
-        type: 'warning',
-        buttons: ['OK'],
-        message: 'Could not enable the Storm CLI shortcut',
-        detail: result.message,
-      });
-    }
-    return result.installed;
-  };
-  if (process.platform === 'darwin' && app.isPackaged) {
-    ipcMain.handle('cli:enable', () => enableCli(true));
-    const appMenu = menu.items[0]?.submenu;
-    appMenu?.append(
-      new MenuItem({
-        label: 'Enable CLI…',
-        click: () => {
-          void enableCli(true).catch((error: unknown) =>
-            dialog.showErrorBox('Storm CLI setup failed', String(error)),
-          );
-        },
-      }),
-    );
-    const firstWindow = BrowserWindow.getAllWindows()[0];
-    if (firstWindow) {
-      let promptStarted = false;
-      firstWindow.webContents.once('did-finish-load', () => {
-        if (promptStarted) return;
-        promptStarted = true;
-        setTimeout(() => {
-          void (async () => {
-            const state = await readCliSetupState(
-              path.join(app.getPath('userData'), 'cli-setup.json'),
-            );
-            if (state) return;
-            const choice = await dialog.showMessageBox(firstWindow, {
-              type: 'question',
-              buttons: ['Enable CLI', 'Not now'],
-              defaultId: 0,
-              cancelId: 1,
-              message: 'Enable Storm CLI?',
-              detail:
-                'Create a terminal command shortcut for the CLI bundled with this app. Storm will not change your shell configuration. If administrator authorization is needed, macOS will ask after you choose Enable CLI.',
-            });
-            if (choice.response === 0) {
-              const result = await enableCli(true);
-              if (!result)
-                await recordCliChoice(app.getPath('userData'), 'failed');
-            } else await recordCliChoice(app.getPath('userData'), 'declined');
-          })().catch((error: unknown) =>
-            dialog.showErrorBox('Storm CLI setup failed', String(error)),
-          );
-        }, 0);
-      });
-    }
-  }
+  registerSettingsIpc(ipcMain, menu);
   app.applicationMenu = menu;
   openFileMenuItem = menu.getMenuItemById('open-file-shortcut');
   toggleExplorerMenuItem = menu.getMenuItemById('toggle-explorer-shortcut');
