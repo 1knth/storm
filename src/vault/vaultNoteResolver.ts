@@ -1,11 +1,12 @@
+import { enumerateVault, VaultNoteIndex } from './vaultIndex';
 import path from 'node:path';
-import { readdir, realpath } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 
 export async function resolveVaultNote(
   vaultPath: string,
   currentNotePath: string,
   target: string,
-  indexedFiles?: readonly string[],
+  indexedFiles?: readonly string[] | VaultNoteIndex,
 ): Promise<string> {
   let decoded: string;
   try {
@@ -18,21 +19,15 @@ export async function resolveVaultNote(
   if (!decoded || decoded.split('/').some((part) => part === '..'))
     throw new Error('Invalid note link');
   const root = await realpath(vaultPath);
-  let files: readonly string[] = indexedFiles ?? [];
-  if (!indexedFiles) {
-    const found: string[] = [];
-    async function walk(directory: string): Promise<void> {
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
-        if (entry.isSymbolicLink()) continue;
-        const file = path.join(directory, entry.name);
-        if (entry.isDirectory()) await walk(file);
-        else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
-          found.push(path.relative(root, file).replace(/\\/g, '/'));
-      }
-    }
-    await walk(root);
-    files = found;
-  }
+  const index =
+    indexedFiles instanceof VaultNoteIndex
+      ? indexedFiles
+      : new VaultNoteIndex(
+          indexedFiles ??
+            (await enumerateVault(root))
+              .filter((entry) => entry.kind === 'note')
+              .map((entry) => entry.path),
+        );
   const withExtension = /\.md$/i.test(decoded) ? decoded : `${decoded}.md`;
   const lower = (value: string) => value.toLowerCase();
   const currentDirectory = path.posix.dirname(
@@ -42,14 +37,10 @@ export async function resolveVaultNote(
     currentDirectory === '.'
       ? withExtension
       : `${currentDirectory}/${withExtension}`;
-  const exact = files.filter((file) => lower(file) === lower(relative));
-  const rootMatch = files.filter(
-    (file) => lower(file) === lower(withExtension),
-  );
+  const exact = index.paths.get(lower(relative)) ?? [];
+  const rootMatch = index.paths.get(lower(withExtension)) ?? [];
   const basename = !withExtension.includes('/')
-    ? files.filter(
-        (file) => lower(path.posix.basename(file)) === lower(withExtension),
-      )
+    ? (index.basenames.get(lower(withExtension)) ?? [])
     : [];
   const matches = exact.length
     ? exact

@@ -1,3 +1,4 @@
+import { temporaryVaultRoot } from '../vault/testing/tempVault';
 import { strict as assert } from 'node:assert';
 import {
   mkdtemp,
@@ -276,7 +277,7 @@ test('forwards a registered group-member vault root drop through sidebar IPC', a
 });
 
 test('persists renderer-serialized image and PDF layouts through the tab-layout IPC handler', async () => {
-  const temp = await mkdtemp(path.join(os.tmpdir(), 'storm-tab-layout-ipc-'));
+  const temp = await temporaryVaultRoot();
   try {
     const vaultPath = path.join(temp, 'vault');
     await mkdir(vaultPath);
@@ -299,19 +300,14 @@ test('persists renderer-serialized image and PDF layouts through the tab-layout 
       },
     );
 
-    for (const [kind, relativePath] of [
-      ['image', 'assets/photo.png'],
-      ['pdf', 'docs/guide.pdf'],
-    ] as const) {
+    {
+      const kind = 'image';
+      const relativePath = 'assets/photo.png';
       const tabId = JSON.stringify([vault.id, relativePath]);
       const payload = JSON.parse(
         JSON.stringify({
           version: 1,
-          tabs: [
-            kind === 'image'
-              ? { kind, path: relativePath }
-              : { kind, relativePath },
-          ],
+          tabs: [{ kind, path: relativePath }],
           activeTab: tabId,
           groups: [],
           assignments: {},

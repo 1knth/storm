@@ -1,4 +1,5 @@
-import { mkdir, open, realpath, stat } from 'node:fs/promises';
+import { resolveVaultEntry } from './vaultPaths';
+import { mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import type { VaultEntry } from '../shared/types';
 
@@ -45,25 +46,11 @@ async function destination(
   validateName(name);
   if (protectedNames.has(name.toLowerCase()))
     throw new Error('That folder name is reserved.');
-  const canonicalRoot = await realpath(root);
-  const parent = path.resolve(canonicalRoot, parentRelativePath);
-  const relative = path.relative(canonicalRoot, parent);
-  if (
-    relative === '..' ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
-  )
-    throw new Error('Parent folder is outside the vault.');
-  const parentReal = await realpath(parent);
-  const realRelative = path.relative(canonicalRoot, parentReal);
-  if (
-    realRelative === '..' ||
-    realRelative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(realRelative)
-  )
-    throw new Error('Parent folder is outside the vault.');
-  if (!(await stat(parentReal)).isDirectory())
-    throw new Error('Parent path is not a folder.');
+  const { resolved: parentReal } = await resolveVaultEntry(
+    root,
+    parentRelativePath,
+    { symlinks: 'within-root', type: 'directory', allowRoot: true },
+  );
   return { parent: parentReal, name };
 }
 

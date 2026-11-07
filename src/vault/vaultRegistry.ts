@@ -565,6 +565,11 @@ export class VaultRegistry {
         !(this.settings.vaults ?? []).some((vault) => vault.id === id)
       )
         throw new Error('Unknown vault');
+      if (
+        this.settings.activeVaultId === id &&
+        !('lastVaultPath' in this.settings)
+      )
+        return;
       const next = { ...this.settings, activeVaultId: id };
       delete next.lastVaultPath;
       await this.update(next);
