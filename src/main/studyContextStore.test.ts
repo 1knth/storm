@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StudyContextStore } from './studyContextStore';
@@ -36,6 +36,40 @@ test('snapshot retention protects the accepted question against failed and out-o
     const copy = await store.snapshot('accepted');
     copy!.scope.notePath = 'mutated';
     assert.equal((await store.snapshot('accepted'))!.scope.notePath, 'note.md');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('unchanged binds, saves, and pins preserve the store file', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'study-store-noop-'));
+  try {
+    const file = join(dir, 'study.json');
+    const store = new StudyContextStore(file);
+    const scope = {
+      vaultId: 'v',
+      notePath: 'note.md',
+      folderPath: null,
+      selectedNotePaths: [],
+    };
+    const snapshot: StudySnapshot = {
+      schemaVersion: 1,
+      id: 's',
+      studyId: 'study',
+      scope,
+      sources: [],
+      createdAt: 'now',
+    };
+    await store.bind('study', scope);
+    await store.save(snapshot);
+    await store.pin('question', 's');
+    const before = await stat(file);
+    await store.bind('study', scope);
+    await store.save(snapshot);
+    await store.pin('question', 's');
+    const after = await stat(file);
+    assert.equal(after.ino, before.ino);
+    assert.equal(after.mtimeMs, before.mtimeMs);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

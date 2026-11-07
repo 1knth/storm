@@ -43,19 +43,30 @@ export class StudyContextStore {
     protectedSnapshot?: string,
   ): Promise<T> {
     return this.queue.run('store', async () => {
-      const data = structuredClone(await this.load());
+      const original = JSON.stringify(await this.load());
+      const data = JSON.parse(original) as StudyDatabase;
       const value = mutate(data);
       let encoded = JSON.stringify(data);
-      while (Buffer.byteLength(encoded) > STUDY_LIMITS.storeBytes) {
-        const index = data.snapshots.findIndex(
-          (s) =>
-            s.id !== protectedSnapshot &&
-            !Object.values(data.pins).includes(s.id),
-        );
-        if (index < 0) throw new Error('STUDY_STORAGE_FULL');
-        data.snapshots.splice(index, 1);
-        encoded = JSON.stringify(data);
+      if (encoded === original) return value;
+      const pinned = new Set(Object.values(data.pins));
+      if (protectedSnapshot) pinned.add(protectedSnapshot);
+      let size = Buffer.byteLength(encoded);
+      let count = data.snapshots.length;
+      const retained: StudySnapshot[] = [];
+      for (const snapshot of data.snapshots) {
+        if (
+          (count > 64 || size > STUDY_LIMITS.storeBytes) &&
+          !pinned.has(snapshot.id)
+        ) {
+          size -=
+            Buffer.byteLength(JSON.stringify(snapshot)) + (count > 1 ? 1 : 0);
+          count--;
+        } else retained.push(snapshot);
       }
+      if (count > 64 || size > STUDY_LIMITS.storeBytes)
+        throw new Error('STUDY_STORAGE_FULL');
+      data.snapshots = retained;
+      encoded = JSON.stringify(data);
       await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
       const temporary = `${this.file}.${randomUUID()}.tmp`;
       await writeFile(temporary, encoded, { mode: 0o600 });
@@ -78,15 +89,6 @@ export class StudyContextStore {
     await this.update((data) => {
       if (!data.snapshots.some((s) => s.id === snapshot.id))
         data.snapshots.push(snapshot);
-      // Bounded retention; pinned question evidence survives ordinary cache eviction.
-      while (data.snapshots.length > 64) {
-        const index = data.snapshots.findIndex(
-          (s) =>
-            !Object.values(data.pins).includes(s.id) && s.id !== snapshot.id,
-        );
-        if (index < 0) throw new Error('STUDY_STORAGE_FULL');
-        data.snapshots.splice(index, 1);
-      }
     }, snapshot.id);
   }
   async snapshot(id: string) {
