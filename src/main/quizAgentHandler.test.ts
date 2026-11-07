@@ -301,3 +301,40 @@ describe('quiz agent handler', () => {
     }
   });
 });
+
+test('bounded wait authenticates before waiting and returns the session projection at timeout', async () => {
+  const f = await fixture();
+  try {
+    const attached: any = await f.handle(
+      request('attach', { sessionId: f.session.id, clientId: 'cli' }),
+    );
+    const agentToken = attached.result.value.agentToken;
+    const denied = await f.handle({
+      protocol: 1,
+      requestId: 'denied',
+      type: 'quiz',
+      operation: 'wait',
+      sessionId: f.session.id,
+      agentToken: 'wrong',
+      waitMs: 20000,
+    });
+    assert.equal(denied.ok, false);
+    const response: any = await f.handle({
+      protocol: 1,
+      requestId: 'wait',
+      type: 'quiz',
+      operation: 'wait',
+      sessionId: f.session.id,
+      agentToken,
+      after: 0,
+      waitMs: 0,
+      compact: true,
+    });
+    assert.equal(response.ok, true);
+    assert.equal(response.operation, 'wait');
+    assert.equal(response.snapshot.session.id, f.session.id);
+    assert.equal(response.snapshot.session.agentToken, undefined);
+  } finally {
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});

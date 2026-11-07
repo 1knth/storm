@@ -1,3 +1,11 @@
+import {
+  agentProtocolErrorCode,
+  AGENT_DISCOVERY_LIMIT,
+  isAgentId,
+  isAgentNonnegativeInt,
+  isAgentDiscoveryLimit,
+  isAgentActivity,
+} from '../shared/agentProtocol';
 import { randomUUID } from 'node:crypto';
 import {
   isStudyRequest,
@@ -75,7 +83,7 @@ export interface AgentBrokerOptions {
 }
 type CachedOperation = {
   fingerprint: string;
-  promise: Promise<Extract<AgentResponse, { type: 'accepted' }>>;
+  promise: Promise<AgentResponse>;
 };
 type Session = {
   id: string;
@@ -102,10 +110,6 @@ export class AgentBroker {
   private resolvingConnects = 0;
   private rendererIsReady = true;
   private rendererGeneration = 0;
-  private readonly editOperations = new Map<
-    string,
-    { fingerprint: string; result: Promise<AgentResponse> }
-  >();
   constructor(private readonly options: AgentBrokerOptions) {
     options.renderer.onCancelled?.((id) => {
       const session = this.sessions.get(id);
@@ -165,6 +169,13 @@ export class AgentBroker {
   async handle(value: unknown): Promise<AgentResponse> {
     if (!isRequest(value))
       return failure('', 'INVALID_REQUEST', 'Invalid request');
+    // Terminal sessions retain only bounded status/replay metadata, never note contents.
+    const terminal = [...this.sessions.values()].filter(
+      (s) => !['connected', 'writing'].includes(s.state) && s.pending === 0,
+    );
+    for (const session of terminal) session.target.content = '';
+    for (const session of terminal.slice(0, Math.max(0, terminal.length - 256)))
+      this.sessions.delete(session.id);
     const request = value;
     const fail = (
       code: string,
@@ -174,7 +185,7 @@ export class AgentBroker {
       protocol: AGENT_PROTOCOL_VERSION,
       requestId: request.requestId,
       ok: false,
-      error: { code: code as never, message, retryable },
+      error: { code: agentProtocolErrorCode(code), message, retryable },
     });
     try {
       if (request.type === 'study') {
@@ -336,7 +347,7 @@ export class AgentBroker {
           const discovery = await this.options.discover(
             request.vaultId,
             request.query,
-            request.limit ?? 50,
+            request.limit ?? AGENT_DISCOVERY_LIMIT.default,
             {
               sourcePath: request.sourcePath,
               depth: request.depth,
@@ -412,22 +423,28 @@ export class AgentBroker {
       }
       const session = this.sessions.get(request.sessionId);
       if (!session) return fail('SESSION_NOT_FOUND', 'Unknown session');
-      if (request.type === 'edit-apply') {
-        const key = `${session.id}:${request.operationId}`;
+      if (request.type === 'edit-apply' || request.type === 'edit-preview') {
+        const key = request.operationId;
         const fingerprint = JSON.stringify([
+          request.type,
           request.expectedVersion,
           request.plan,
+          request.previewReceipt,
         ]);
-        const previous = this.editOperations.get(key);
+        const previous = session.operations.get(key);
         if (previous) {
           if (previous.fingerprint !== fingerprint)
             return fail(
               'DUPLICATE_OPERATION',
               'Operation ID was already used with different content',
             );
-          return { ...(await previous.result), requestId: request.requestId };
+          return { ...(await previous.promise), requestId: request.requestId };
         }
-        if (request.plan.type === 'replaceText' && !request.previewReceipt)
+        if (
+          request.type === 'edit-apply' &&
+          request.plan.type === 'replaceText' &&
+          !request.previewReceipt
+        )
           return fail(
             'PREVIEW_REQUIRED',
             'Patch apply requires a preview receipt',
@@ -493,7 +510,11 @@ export class AgentBroker {
         };
       }
       if (request.type === 'append') {
-        const fingerprint = JSON.stringify([request.sequence, request.text]);
+        const fingerprint = JSON.stringify([
+          request.type,
+          request.sequence,
+          request.text,
+        ]);
         const previous = session.operations.get(request.operationId);
         if (previous) {
           if (previous.fingerprint !== fingerprint)
@@ -519,10 +540,9 @@ export class AgentBroker {
           return fail('OPERATION_TOO_LARGE', 'Append exceeds 256 KiB');
         if (session.pending >= AGENT_TRANSPORT.maxPendingOperationsPerSession)
           return fail('QUEUE_FULL', 'Session queue is full', true);
-        session.pending++;
         session.activity = undefined;
         session.state = 'writing';
-        const promise = this.enqueue(session, async () => {
+        const promise = this.runSessionOperation(session, async () => {
           if (session.state !== 'connected' && session.state !== 'writing')
             throw new Error('SESSION_CLOSED');
           if (request.sequence !== session.sequence + 1)
@@ -574,17 +594,7 @@ export class AgentBroker {
             saveState: result.saveState ?? 'pending',
           };
         });
-        let rejectCancelled = () => {};
-        const cancelled = new Promise<never>((_, reject) => {
-          rejectCancelled = () => reject(new Error('cancelled'));
-          session.cancelWaiters.add(rejectCancelled);
-        });
-        const accepted = Promise.race([promise, cancelled]).finally(() => {
-          session.cancelWaiters.delete(rejectCancelled);
-          session.pending--;
-          if (session.pending === 0 && session.state === 'writing')
-            session.state = 'connected';
-        });
+        const accepted = promise;
         session.operations.set(request.operationId, {
           fingerprint,
           promise: accepted,
@@ -606,19 +616,20 @@ export class AgentBroker {
         }
       }
       if (request.type === 'edit-preview' || request.type === 'edit-apply') {
-        const cacheKey = `${session.id}:${request.operationId}`;
+        const cacheKey = request.operationId;
         const fingerprint = JSON.stringify([
+          request.type,
           request.expectedVersion,
           request.plan,
+          request.previewReceipt,
         ]);
         if (session.state !== 'connected' && session.state !== 'writing')
           return fail('SESSION_CLOSED', 'Session is not writable');
 
-        if (request.type === 'edit-apply') {
-          session.pending++;
-          session.outcomeUncertain = true;
-        }
-        const resultPromise = this.enqueue(
+        if (session.pending >= AGENT_TRANSPORT.maxPendingOperationsPerSession)
+          return fail('QUEUE_FULL', 'Session queue is full', true);
+        if (request.type === 'edit-apply') session.outcomeUncertain = true;
+        const resultPromise = this.runSessionOperation(
           session,
           async (): Promise<AgentResponse> => {
             if (session.state !== 'connected' && session.state !== 'writing')
@@ -769,19 +780,25 @@ export class AgentBroker {
               saveState: 'saved',
             };
           },
-        ).catch((error) => fail('INTERNAL', errorMessage(error)));
-        if (request.type === 'edit-apply') {
-          this.editOperations.set(cacheKey, {
+        ).catch((error) =>
+          fail(
+            errorMessage(error) === 'SESSION_CLOSED'
+              ? 'SESSION_CLOSED'
+              : 'INTERNAL',
+            errorMessage(error),
+          ),
+        );
+        {
+          session.operations.set(cacheKey, {
             fingerprint,
-            result: resultPromise,
+            promise: resultPromise,
           });
-          while (this.editOperations.size > MAX_REMEMBERED_OPERATIONS) {
-            const oldest = this.editOperations.keys().next().value;
-            if (oldest) this.editOperations.delete(oldest);
+          while (session.operations.size > MAX_REMEMBERED_OPERATIONS) {
+            const oldest = session.operations.keys().next().value;
+            if (oldest) session.operations.delete(oldest);
           }
         }
         const response = await resultPromise;
-        if (request.type === 'edit-apply') session.pending--;
         return { ...response, requestId: request.requestId };
       }
       if (request.type === 'disconnect') {
@@ -885,6 +902,34 @@ export class AgentBroker {
     session.operations.clear();
     for (const reject of session.cancelWaiters) reject();
   }
+  /** Shared admission accounting and cancellation settlement for document operations. */
+  private runSessionOperation<T>(
+    session: Session,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    session.pending++;
+    let cancel = () => {};
+    const cancelled = new Promise<never>((_, reject) => {
+      cancel = () => reject(new Error('SESSION_CLOSED'));
+      session.cancelWaiters.add(cancel);
+    });
+    const generation = this.rendererGeneration;
+    const work = this.enqueue(session, async () => {
+      if (
+        generation !== this.rendererGeneration ||
+        !this.rendererIsReady ||
+        (session.state !== 'connected' && session.state !== 'writing')
+      )
+        throw new Error('SESSION_CLOSED');
+      return operation();
+    });
+    return Promise.race([work, cancelled]).finally(() => {
+      session.cancelWaiters.delete(cancel);
+      session.pending--;
+      if (session.pending === 0 && session.state === 'writing')
+        session.state = 'connected';
+    });
+  }
   private enqueue<T>(
     session: Session,
     operation: () => Promise<T>,
@@ -940,7 +985,7 @@ function failure(
     protocol: AGENT_PROTOCOL_VERSION,
     requestId,
     ok: false,
-    error: { code: code as never, message, retryable: false },
+    error: { code: agentProtocolErrorCode(code), message, retryable: false },
   };
 }
 function isQuizAgentRequest(value: unknown): boolean {
@@ -1106,11 +1151,7 @@ function isQuizAgentRequest(value: unknown): boolean {
 function isRequest(v: unknown): v is AgentRequest {
   if (!v || typeof v !== 'object') return false;
   const r = v as Record<string, unknown>;
-  if (
-    r.protocol !== AGENT_PROTOCOL_VERSION ||
-    typeof r.requestId !== 'string' ||
-    r.requestId.length > 128
-  )
+  if (r.protocol !== AGENT_PROTOCOL_VERSION || !isAgentId(r.requestId))
     return false;
   if (r.type === 'study') return isStudyRequest(r.study);
   if (r.type === 'quiz') {
@@ -1172,8 +1213,10 @@ function isRequest(v: unknown): v is AgentRequest {
             (Number.isSafeInteger(item) && Number(item) >= 0),
         )
       );
-    if (r.operation === 'snapshot')
+    if (r.operation === 'snapshot' || r.operation === 'wait')
       return (
+        (r.waitMs === undefined ||
+          (isAgentNonnegativeInt(r.waitMs) && Number(r.waitMs) <= 20000)) &&
         (r.compact === undefined || typeof r.compact === 'boolean') &&
         (r.recover === undefined || typeof r.recover === 'boolean') &&
         typeof r.sessionId === 'string' &&
@@ -1198,27 +1241,21 @@ function isRequest(v: unknown): v is AgentRequest {
     );
   if (r.type === 'edit-preview' || r.type === 'edit-apply')
     return (
-      typeof r.sessionId === 'string' &&
-      typeof r.operationId === 'string' &&
-      r.operationId.length <= 128 &&
+      isAgentId(r.sessionId) &&
+      isAgentId(r.operationId) &&
       Number.isSafeInteger(r.expectedVersion) &&
       Number(r.expectedVersion) >= 0 &&
-      isAgentEditPlan(r.plan)
+      isAgentEditPlan(r.plan) &&
+      (r.previewReceipt === undefined || isAgentId(r.previewReceipt))
     );
   if (r.type === 'activity')
-    return (
-      typeof r.sessionId === 'string' &&
-      (r.activity === null ||
-        r.activity === 'thinking' ||
-        r.activity === 'drafting')
-    );
+    return isAgentId(r.sessionId) && isAgentActivity(r.activity);
   if (r.type === 'append')
     return (
-      typeof r.sessionId === 'string' &&
-      typeof r.operationId === 'string' &&
-      r.operationId.length <= 128 &&
+      isAgentId(r.sessionId) &&
+      isAgentId(r.operationId) &&
       typeof r.text === 'string' &&
-      Number.isSafeInteger(r.sequence)
+      isAgentNonnegativeInt(r.sequence)
     );
   if (r.type === 'context') return true;
   if (r.type === 'resolve-link')
@@ -1239,10 +1276,7 @@ function isRequest(v: unknown): v is AgentRequest {
       r.vaultId.length > 0 &&
       (r.query === undefined ||
         (typeof r.query === 'string' && r.query.length <= 256)) &&
-      (r.limit === undefined ||
-        (Number.isSafeInteger(r.limit) &&
-          Number(r.limit) >= 1 &&
-          Number(r.limit) <= 100)) &&
+      (r.limit === undefined || isAgentDiscoveryLimit(r.limit)) &&
       (r.sourcePath === undefined || hasSourcePath) &&
       (r.depth === undefined ||
         (Number.isSafeInteger(r.depth) &&
@@ -1255,6 +1289,6 @@ function isRequest(v: unknown): v is AgentRequest {
   }
   return (
     ['finish', 'cancel', 'status', 'disconnect'].includes(String(r.type)) &&
-    (r.sessionId === undefined || typeof r.sessionId === 'string')
+    (r.sessionId === undefined || isAgentId(r.sessionId))
   );
 }

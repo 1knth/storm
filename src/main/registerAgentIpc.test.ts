@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-  bindAgentBrokerIpc,
-  registerAgentIpc,
-  type AgentIpcEvent,
-} from './registerAgentIpc';
+import { registerAgentIpc, type AgentIpcEvent } from './registerAgentIpc';
 import type { AgentRendererRequest } from './agentBroker';
 import { rendererAuthorizer } from './rendererSecurity';
 
@@ -280,49 +276,4 @@ test('renderer lifecycle fences navigation, crashes, destruction, and untrusted 
     'destroyed',
   ]);
   assert.equal(ipcHandlers.size, 0);
-});
-
-test('broker invoke rejects foreign and stale-window senders', async () => {
-  const handlers = new Map<string, (...args: any[]) => unknown>();
-  const ipc = {
-    on: () => undefined,
-    handle: (channel: string, listener: (...args: any[]) => unknown) =>
-      handlers.set(channel, listener),
-    removeHandler: () => undefined,
-  };
-  const webContents = {
-    id: 3,
-    isDestroyed: () => false,
-    send: () => undefined,
-  };
-  let active = { isDestroyed: () => false, webContents };
-  const broker = {
-    handle: async () => {
-      throw new Error('must not reach broker');
-    },
-  } as any;
-  bindAgentBrokerIpc(
-    ipc,
-    broker,
-    () => active,
-    () => 'file:///app/index.html',
-  );
-  const invoke = handlers.get('agent:request')!;
-  const foreign: AgentIpcEvent = {
-    sender: { ...webContents, id: 4 },
-    senderFrame: { url: 'file:///app/index.html' },
-  };
-  assert.equal(
-    ((await invoke(foreign, {})) as any).error.code,
-    'INVALID_REQUEST',
-  );
-  const valid: AgentIpcEvent = {
-    sender: webContents,
-    senderFrame: { url: 'file:///app/index.html' },
-  };
-  active = { isDestroyed: () => false, webContents: { ...webContents, id: 5 } };
-  assert.equal(
-    ((await invoke(valid, {})) as any).error.code,
-    'INVALID_REQUEST',
-  );
 });

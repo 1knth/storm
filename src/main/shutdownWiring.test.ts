@@ -53,7 +53,7 @@ test('agent IPC remains active through before-quit and is removed at will-quit',
 
     try {
       await import(${JSON.stringify(mainPath)});
-      assert.equal(handlers.has('agent:request'), true, 'agent request handler is registered');
+      assert.equal(handlers.has('agent:request'), false, 'unused renderer broker API is absent');
       const responseListenersBefore = ipcMain.listenerCount('agent:renderer-response');
       assert.ok(responseListenersBefore > 0, 'renderer response listener is registered');
 
@@ -61,7 +61,7 @@ test('agent IPC remains active through before-quit and is removed at will-quit',
       app.emit('before-quit', { preventDefault() { quitPrevented = true; } });
       await new Promise((resolve) => setTimeout(resolve, 30));
       assert.equal(quitPrevented, true, 'quit confirmation prevents the initial quit');
-      assert.equal(handlers.has('agent:request'), true, 'agent request handler survives before-quit');
+      assert.equal(handlers.has('agent:request'), false, 'unused renderer broker API stays absent');
       assert.equal(
         ipcMain.listenerCount('agent:renderer-response'),
         responseListenersBefore,

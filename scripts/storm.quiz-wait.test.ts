@@ -30,7 +30,7 @@ async function runWait(
     broker: {
       handle: async (request: any) => {
         assert.equal(request.type, 'quiz');
-        assert.equal(request.operation, 'snapshot');
+        assert.equal(request.operation, 'wait');
         const responseSnapshot =
           snapshots[Math.min(calls, snapshots.length - 1)];
         calls++;
@@ -39,7 +39,7 @@ async function runWait(
           requestId: request.requestId,
           ok: true,
           type: 'quiz',
-          operation: 'snapshot',
+          operation: 'wait',
           snapshot: responseSnapshot,
         };
       },

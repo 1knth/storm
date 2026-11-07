@@ -10,6 +10,7 @@ import type {
 } from '../shared/agentProtocol';
 import type { QuizService } from './quizService';
 import {
+  isQuizLearnerEvent,
   quizAgentSession,
   quizContextChunk,
   quizEventPage,
@@ -219,12 +220,41 @@ export function createQuizAgentHandler(
         );
         return { ...base, operation: 'image-release', result };
       }
-      case 'snapshot': {
-        const read = await service.getSnapshot(
-          request.sessionId,
-          request.recover ? 0 : (request.after ?? 0),
-          request.compact && !request.recover,
-        );
+      case 'snapshot':
+      case 'wait': {
+        const deadline = Date.now() + Math.min(request.waitMs ?? 20000, 20000);
+        let read;
+        do {
+          read = await service.getSnapshot(
+            request.sessionId,
+            request.recover ? 0 : (request.after ?? 0),
+            request.operation === 'wait' ||
+              (request.compact && !request.recover),
+          );
+          if (
+            request.operation !== 'wait' ||
+            !read ||
+            read.session.agentToken !== request.agentToken ||
+            read.session.status === 'disconnected' ||
+            read.session.status === 'complete' ||
+            read.events.some(
+              (event) =>
+                event.cursor > (request.after ?? 0) &&
+                isQuizLearnerEvent(event),
+            ) ||
+            Date.now() >= deadline
+          )
+            break;
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.min(250, deadline - Date.now())),
+          );
+        } while (Date.now() < deadline);
+
+        if (read && request.operation === 'wait' && !request.compact)
+          read = await service.getSnapshot(
+            request.sessionId,
+            request.after ?? 0,
+          );
         // Only recovery reads touch the vault; polling waits stay in memory.
         const snapshot =
           read && request.recover
@@ -234,7 +264,7 @@ export function createQuizAgentHandler(
               }
             : read;
         if (!snapshot)
-          return { ...base, operation: 'snapshot', snapshot: null };
+          return { ...base, operation: request.operation, snapshot: null };
         if (snapshot.session.agentToken !== request.agentToken)
           return {
             protocol: 1,
@@ -248,7 +278,7 @@ export function createQuizAgentHandler(
           };
         return {
           ...base,
-          operation: 'snapshot',
+          operation: request.operation,
           snapshot: request.compact
             ? compactSnapshot(snapshot, !!request.recover, request.after ?? 0)
             : publicSnapshot(snapshot),

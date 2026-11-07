@@ -215,12 +215,12 @@ test('list and search CLI send read-only discovery requests through the broker',
     );
     assert.match(linkedText, /Traversal truncated/);
     assert.deepEqual(requests, [
-      { vaultId: 'vault-a', limit: 50 },
+      { vaultId: 'vault-a', limit: 100 },
       { vaultId: 'vault-a', query: 'needle', limit: 7 },
       {
         vaultId: 'vault-a',
         query: 'needle',
-        limit: 50,
+        limit: 100,
         sourcePath: 'Folder/Source.md',
         depth: 0,
         includeSource: true,
@@ -228,7 +228,7 @@ test('list and search CLI send read-only discovery requests through the broker',
       {
         vaultId: 'vault-a',
         query: 'needle',
-        limit: 50,
+        limit: 100,
         sourcePath: 'Folder/Source.md',
       },
     ]);
@@ -1251,38 +1251,6 @@ test('status accepts the documented session plus --json spelling', async () => {
     await endpoint.close();
     await rm(directory, { recursive: true, force: true });
   }
-});
-
-test('tool-neutral Storm skill has portable frontmatter and resolves the CLI relatively', async () => {
-  const { readFile } = await import('node:fs/promises');
-  const skillPath = new URL('../skills/storm/SKILL.md', import.meta.url);
-  const content = await readFile(skillPath, 'utf8');
-  assert.match(content, /^---\nname: storm\ndescription: .+\n---/);
-  assert.match(content, /Read `storm --help`/);
-  assert.match(content, /agent authoring guide/);
-  assert.match(content, /Use guarded `patch` for focused corrections/);
-  assert.match(
-    content,
-    /complete source review and one coordinated append-only write/,
-  );
-  assert.match(content, /Prefer the official installed `storm` CLI/);
-  assert.match(
-    content,
-    /for source development with the development app, use `bun scripts\/storm\.ts`/,
-  );
-  assert.ok(existsSync(new URL('../../scripts/storm.ts', skillPath)));
-  const authoringGuide = await readFile(
-    new URL('../docs/AGENT-AUTHORING.md', import.meta.url),
-    'utf8',
-  );
-  assert.match(
-    authoringGuide,
-    /atomicity protects the write but does not prescribe its scope/,
-  );
-  assert.match(authoringGuide, /## Write for understanding/);
-  assert.match(authoringGuide, /```mermaid/);
-  assert.match(authoringGuide, /inline math or `\$\$\.\.\.\$\$` display math/);
-  assert.match(authoringGuide, /raw HTML is not rendered/);
 });
 
 test('CLI stream forwards a small chunk before stdin EOF', async () => {

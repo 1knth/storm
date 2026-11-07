@@ -97,8 +97,10 @@ function serveSocket(
 ): void {
   let buffer = Buffer.alloc(0);
   let authenticated = false;
+  let multiplex = false;
   let pendingFrames = 0;
   let draining = false;
+  let inFlight = 0;
   let deadline: NodeJS.Timeout;
   const armIdleDeadline = () => {
     clearTimeout(deadline);
@@ -122,7 +124,7 @@ function serveSocket(
       0,
     );
     if (
-      pendingFrames + incomingFrames >
+      pendingFrames + incomingFrames + inFlight >
       AGENT_TRANSPORT.maxPendingOperationsPerSession
     ) {
       socket.destroy();
@@ -157,6 +159,7 @@ function serveSocket(
         try {
           const envelope = JSON.parse(line.toString('utf8')) as {
             token?: unknown;
+            multiplex?: unknown;
             request?: unknown;
           };
           if (!authenticated) {
@@ -168,6 +171,7 @@ function serveSocket(
               break;
             }
             authenticated = true;
+            multiplex = envelope.multiplex === true;
             armIdleDeadline();
             if (envelope.request === undefined) continue;
           }
@@ -175,11 +179,24 @@ function serveSocket(
             socket.destroy();
             break;
           }
-          const response = await broker.handle(envelope.request);
-          if (!socket.destroyed) {
-            const writable = socket.write(`${JSON.stringify(response)}\n`);
-            if (!writable) await waitForDrain(socket);
+          if (++inFlight > AGENT_TRANSPORT.maxPendingOperationsPerSession) {
+            socket.destroy();
+            break;
           }
+          const response = broker
+            .handle(envelope.request)
+            .then(async (response) => {
+              if (!socket.destroyed) {
+                const writable = socket.write(`${JSON.stringify(response)}\n`);
+                if (!writable) await waitForDrain(socket);
+              }
+            })
+            .catch(() => socket.destroy())
+            .finally(() => {
+              inFlight--;
+              armIdleDeadline();
+            });
+          if (!multiplex) await response;
         } catch {
           socket.destroy();
           break;
@@ -213,6 +230,13 @@ function safeEqual(a: string, b: string): boolean {
 export async function readAgentEndpoint(
   path: string,
 ): Promise<AgentEndpointInfo> {
+  await inspectAgentEndpointMetadata(path);
+  const value: unknown = JSON.parse(await readFile(path, 'utf8'));
+  if (!isAgentEndpointInfo(value)) throw new Error('Invalid endpoint metadata');
+  return value;
+}
+
+export async function inspectAgentEndpointMetadata(path: string) {
   const metadata = await lstat(path);
   if (
     !metadata.isFile() ||
@@ -220,17 +244,19 @@ export async function readAgentEndpoint(
     (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0)
   )
     throw new Error('Unsafe endpoint metadata permissions');
-  const value: unknown = JSON.parse(await readFile(path, 'utf8'));
-  if (
-    !value ||
-    typeof value !== 'object' ||
-    typeof (value as AgentEndpointInfo).endpoint !== 'string' ||
-    !(value as AgentEndpointInfo).endpoint ||
-    typeof (value as AgentEndpointInfo).token !== 'string' ||
-    !/^[a-f0-9]{64}$/.test((value as AgentEndpointInfo).token)
-  )
-    throw new Error('Invalid endpoint metadata');
-  return value as AgentEndpointInfo;
+  return metadata;
+}
+export function isAgentEndpointInfo(
+  value: unknown,
+): value is AgentEndpointInfo {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.endpoint === 'string' &&
+    item.endpoint.length > 0 &&
+    typeof item.token === 'string' &&
+    /^[a-f0-9]{64}$/.test(item.token)
+  );
 }
 const AGENT_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -287,4 +313,73 @@ export function sendAgentRequest(
     socket.once('error', onError);
     socket.once('close', onClose);
   });
+}
+
+/** One authenticated socket per invocation; independent requests correlate by ID. */
+export function createAgentConnection(info: AgentEndpointInfo) {
+  const socket = connectSocket(info.endpoint);
+  const decoder = new StringDecoder('utf8');
+  let buffer = '';
+  let failure: Error | undefined;
+  const pending = new Map<
+    string,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  const close = (
+    error = new Error('Agent endpoint closed before completing its response'),
+  ) => {
+    failure = error;
+    socket.destroy();
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
+    pending.clear();
+  };
+  socket.on('error', close);
+  socket.on('close', () => close());
+  socket.on('connect', () =>
+    socket.write(`${JSON.stringify({ token: info.token, multiplex: true })}\n`),
+  );
+  socket.on('data', (chunk: Buffer) => {
+    buffer += decoder.write(chunk);
+    let newline: number;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      try {
+        const response = JSON.parse(line);
+        const entry = pending.get(response.requestId);
+        if (!entry) throw new Error('Uncorrelated agent response');
+        pending.delete(response.requestId);
+        clearTimeout(entry.timer);
+        entry.resolve(response);
+      } catch (error) {
+        close(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+    }
+  });
+  return {
+    close,
+    request(request: AgentRequest): Promise<unknown> {
+      if (failure) return Promise.reject(failure);
+      if (pending.has(request.requestId))
+        return Promise.reject(new Error('Duplicate request ID'));
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => close(new Error('Agent request timed out')),
+          AGENT_REQUEST_TIMEOUT_MS,
+        );
+        pending.set(request.requestId, { resolve, reject, timer });
+        const write = () => socket.write(`${JSON.stringify({ request })}\n`);
+        if (socket.connecting) socket.once('connect', write);
+        else write();
+      });
+    },
+  };
 }

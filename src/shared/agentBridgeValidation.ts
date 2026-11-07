@@ -1,4 +1,9 @@
-import { isAgentContext } from './agentProtocol';
+import {
+  isAgentId as id,
+  isAgentNonnegativeInt as safeNonnegativeInt,
+  isAgentActivity,
+  isAgentContext,
+} from './agentProtocol';
 import { isAgentEditPlan } from './agentEditValidation';
 import type {
   AgentBridgeRequest,
@@ -8,10 +13,6 @@ import type {
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
-const id = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0 && value.length <= 128;
-const safeNonnegativeInt = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && Number(value) >= 0;
 const optionalSafeInt = (item: Record<string, unknown>, key: string) =>
   item[key] === undefined || safeNonnegativeInt(item[key]);
 const fingerprint = (value: unknown): value is string =>
@@ -50,9 +51,7 @@ export function isAgentRequest(value: unknown): value is AgentBridgeRequest {
     case 'activity':
       return (
         id(item.sessionId) &&
-        (item.activity === null ||
-          item.activity === 'thinking' ||
-          item.activity === 'drafting') &&
+        isAgentActivity(item.activity) &&
         optionalSafeInt(item, 'activitySequence') &&
         optionalSafeInt(item, 'documentVersion')
       );

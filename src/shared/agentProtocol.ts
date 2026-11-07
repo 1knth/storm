@@ -236,12 +236,14 @@ export type AgentRequest =
       protocol: typeof AGENT_PROTOCOL_VERSION;
       requestId: string;
       type: 'quiz';
-      operation: 'snapshot';
+      operation: 'snapshot' | 'wait';
       sessionId: string;
       agentToken: string;
       after?: number;
       compact?: boolean;
       recover?: boolean;
+      /** Server wait bound, at most 20 seconds. */
+      waitMs?: number;
     }
   | {
       protocol: typeof AGENT_PROTOCOL_VERSION;
@@ -503,7 +505,7 @@ export type AgentResponse =
       requestId: string;
       ok: true;
       type: 'quiz';
-      operation: 'snapshot';
+      operation: 'snapshot' | 'wait';
       snapshot: AgentQuizSnapshot | null;
     }
   | {
@@ -537,27 +539,39 @@ export type AgentResponse =
       error: AgentProtocolError;
     };
 
+export const AGENT_PROTOCOL_ERROR_CODES = [
+  'UNSUPPORTED_PROTOCOL',
+  'INVALID_REQUEST',
+  'CONTEXT_UNAVAILABLE',
+  'INVALID_PATH',
+  'PATH_OUTSIDE_VAULT',
+  'NOTE_NOT_OPEN',
+  'SESSION_NOT_FOUND',
+  'SESSION_CLOSED',
+  'DUPLICATE_OPERATION',
+  'INVALID_SEQUENCE',
+  'QUEUE_FULL',
+  'OPERATION_TOO_LARGE',
+  'DISK_CONFLICT',
+  'STALE_VERSION',
+  'INVALID_EDIT',
+  'PREVIEW_REQUIRED',
+  'PREVIEW_EXPIRED',
+  'PREVIEW_REJECTED',
+  'SAVE_FAILED',
+  'INTERNAL',
+  'STUDY_UNAVAILABLE',
+  'VAULT_MAINTENANCE',
+  'RENDERER_UNAVAILABLE',
+  'RENDERER_TIMEOUT',
+] as const;
 export type AgentProtocolErrorCode =
-  | 'UNSUPPORTED_PROTOCOL'
-  | 'INVALID_REQUEST'
-  | 'CONTEXT_UNAVAILABLE'
-  | 'INVALID_PATH'
-  | 'PATH_OUTSIDE_VAULT'
-  | 'NOTE_NOT_OPEN'
-  | 'SESSION_NOT_FOUND'
-  | 'SESSION_CLOSED'
-  | 'DUPLICATE_OPERATION'
-  | 'INVALID_SEQUENCE'
-  | 'QUEUE_FULL'
-  | 'OPERATION_TOO_LARGE'
-  | 'DISK_CONFLICT'
-  | 'STALE_VERSION'
-  | 'INVALID_EDIT'
-  | 'PREVIEW_REQUIRED'
-  | 'PREVIEW_EXPIRED'
-  | 'PREVIEW_REJECTED'
-  | 'SAVE_FAILED'
-  | 'INTERNAL';
+  (typeof AGENT_PROTOCOL_ERROR_CODES)[number];
+export function agentProtocolErrorCode(code: string): AgentProtocolErrorCode {
+  return (
+    AGENT_PROTOCOL_ERROR_CODES.find((known) => known === code) ?? 'INTERNAL'
+  );
+}
 
 export interface AgentProtocolError {
   code: AgentProtocolErrorCode;
@@ -573,3 +587,18 @@ export const AGENT_TRANSPORT = {
   maxAppendBytes: 262_144,
   maxPendingOperationsPerSession: 64,
 } as const;
+
+/** Shared constraints at CLI, broker and renderer trust boundaries. */
+export const AGENT_DISCOVERY_LIMIT = { default: 100, max: 1000 } as const;
+export const isAgentId = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= 128;
+export const isAgentNonnegativeInt = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && Number(value) >= 0;
+export const isAgentDiscoveryLimit = (value: unknown): value is number =>
+  isAgentNonnegativeInt(value) &&
+  value >= 1 &&
+  value <= AGENT_DISCOVERY_LIMIT.max;
+export const isAgentActivity = (
+  value: unknown,
+): value is AgentActivity | null =>
+  value === null || value === 'thinking' || value === 'drafting';

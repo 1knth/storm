@@ -201,21 +201,10 @@ export function bindAgentBrokerIpc(
   getWindow: () => AgentWindow | undefined,
   acceptedUrl: () => string | undefined,
 ): () => void {
-  const trusted = rendererAuthorizer(getWindow, acceptedUrl);
+  // Compatibility shim for main.ts; no renderer API exposes broker requests.
+  void broker;
+  void getWindow;
+  void acceptedUrl;
   ipc.removeHandler('agent:request');
-  ipc.handle('agent:request', async (event, value) =>
-    trusted(event)
-      ? broker.handle(value)
-      : {
-          protocol: 1,
-          requestId: '',
-          ok: false,
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'Untrusted IPC sender',
-            retryable: false,
-          },
-        },
-  );
-  return () => ipc.removeHandler('agent:request');
+  return () => {};
 }
