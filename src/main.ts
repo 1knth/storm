@@ -132,8 +132,7 @@ const quizService = new QuizService(
   (entries) => learnerStore.recordGrades(entries),
   createTutorNotesFile({
     vaults: async () => (await vaultRegistry.list()).vaults,
-    exclusive: (root, operation) =>
-      runVaultLifecycleExclusive(root, () => vaultWriteBarrier.run(operation)),
+    exclusive: (root, operation) => vaultWriteBarrier.mutate(root, operation),
   }),
   (session) =>
     learnerStore.attempts(learnerScopeKey(session.scope, session.id)),
@@ -222,8 +221,7 @@ const studyContext = new StudyContextService(studyStore, {
       ? { text: result.content, saveState: result.saveState }
       : null;
   },
-  capture: (root, operation) =>
-    runVaultLifecycleExclusive(root, () => vaultWriteBarrier.run(operation)),
+  capture: (root, operation) => vaultWriteBarrier.mutate(root, operation),
   read: readStudySource,
 });
 agentBroker = new AgentBroker({
@@ -563,8 +561,8 @@ ipcMain.handle('agent:save-note', async (_event, request: unknown) => {
     typeof value.revision !== 'string'
   )
     throw new Error('Invalid save request');
-  return vaultWriteBarrier.run(async () => {
-    const root = await realpath(value.vaultPath as string);
+  const root = await realpath(value.vaultPath as string);
+  return vaultWriteBarrier.mutate(root, async () => {
     const { vaults } = await vaultRegistry.list();
     const vault = vaults.find((entry) => entry.path === root);
     if (!vault) throw new Error('Vault is not registered');

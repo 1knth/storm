@@ -1,3 +1,4 @@
+import { VaultMutationCoordinator } from '../vault/mutationCoordinator';
 import { createAgentBrokerFixture as setup } from './agentTestFixtures';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1735,6 +1736,32 @@ describe('AgentBroker', () => {
     const lease = broker.waitForMaintenanceLease('fixture');
     drain.resolve();
     (await lease)();
+  });
+
+  it('allows renderer snapshot opening to flush through the mutation coordinator', async () => {
+    const coordinator = new VaultMutationCoordinator();
+    let flushed = false;
+    const { broker } = setup({
+      renderer: {
+        dispatch: async () => {
+          await coordinator.mutate('/private/fixture', async () => {
+            flushed = true;
+          });
+          return {
+            ok: true,
+            kind: 'document',
+            documentVersion: 0,
+            diskRevision: 'rev',
+          };
+        },
+      },
+    });
+    const connected = await broker.handle(
+      req('connect', { absolutePath: '/private/fixture/note.md' }),
+    );
+    assert.equal(connected.ok, true);
+    assert.equal(flushed, true);
+    assert.equal(broker.acquireMaintenanceLease('fixture'), null);
   });
 
   it('bounds terminal status tombstones and preserves recent finish receipts', async () => {

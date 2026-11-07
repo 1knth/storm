@@ -196,9 +196,11 @@ export function registerVaultIpc(
       mimeType: string;
       base64: string;
     };
-    return vaultWriteBarrier.run(async () => {
-      const vault = await vaultRegistry.getById(vaultId);
-      if (!vault) throw new Error('Unknown vault');
+    const vault = await vaultRegistry.getById(vaultId);
+    if (!vault) throw new Error('Unknown vault');
+    return vaultWriteBarrier.mutate(vault.path, async () => {
+      if ((await vaultRegistry.getById(vaultId))?.path !== vault.path)
+        throw new Error('Vault is no longer registered');
       const result = await savePastedImage(vault.path, {
         vaultId,
         notePath,
@@ -291,9 +293,11 @@ export function registerVaultIpc(
         typeof name !== 'string'
       )
         throw new Error('Invalid creation request');
-      return vaultWriteBarrier.run(async () => {
-        const vault = await vaultRegistry.getById(vaultId);
-        if (!vault) throw new Error('Unknown vault');
+      const vault = await vaultRegistry.getById(vaultId);
+      if (!vault) throw new Error('Unknown vault');
+      return vaultWriteBarrier.mutate(vault.path, async () => {
+        if ((await vaultRegistry.getById(vaultId))?.path !== vault.path)
+          throw new Error('Vault is no longer registered');
         const entry = await create(vault.path, parentRelativePath, name);
         invalidateSelectedVault(vaultId);
         return entry;
@@ -334,7 +338,7 @@ export function registerVaultIpc(
     );
     if (choice.response !== 1)
       return { deleted: false, path: target.relativePath, kind: target.kind };
-    return vaultWriteBarrier.run(async () => {
+    return vaultWriteBarrier.mutate(vault.path, async () => {
       if ((await vaultRegistry.getById(vaultId))?.path !== vault.path)
         throw new Error('Vault is no longer registered');
       await assertDeletionTargetUnchanged(target);
@@ -369,19 +373,10 @@ export function registerVaultIpc(
     const { vaults } = await vaultRegistry.list();
     const selected = vaults.find((vault) => vault.path === selectedPath);
     if (!selected) throw new Error('Selected vault is not registered');
-    const deadline = Date.now() + 30_000;
-    let releaseLease: (() => void) | null = null;
-    while (!releaseLease) {
-      releaseLease = agentBroker.acquireMaintenanceLease(selected.id);
-      if (releaseLease) break;
-      if (Date.now() >= deadline)
-        throw new Error(
-          'Rename timed out waiting for agent sessions to finish. No rename was performed.',
-        );
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    try {
-      return await vaultWriteBarrier.run(async () => {
+    return vaultWriteBarrier.maintain(
+      selectedPath,
+      () => agentBroker.waitForMaintenanceLease(selected.id),
+      async () => {
         if (vaultService.getSelectedVaultPath() !== selectedPath)
           throw new Error('Selected vault changed; rename cancelled');
         const result = await vaultService.renameEntryAndUpdateLinks(
@@ -390,28 +385,33 @@ export function registerVaultIpc(
         );
         invalidateSelectedVault(selected.id);
         return result;
-      });
-    } finally {
-      releaseLease();
-    }
+      },
+    );
   });
   ipcMain.handle('vault:save-note', async (_event, request: unknown) =>
-    vaultWriteBarrier.run(async () => {
-      const result = await vaultService.saveNote(request);
-      if (request && typeof request === 'object') {
-        const value = request as Record<string, unknown>;
-        if (
-          typeof value.vaultPath === 'string' &&
-          typeof value.path === 'string'
-        ) {
-          const { vaults } = await vaultRegistry.list();
-          const vaultId = vaults.find(
-            (vault) => vault.path === value.vaultPath,
-          )?.id;
-          if (vaultId) invalidateSelectedVault(vaultId);
+    vaultWriteBarrier.mutate(
+      request &&
+        typeof request === 'object' &&
+        typeof (request as Record<string, unknown>).vaultPath === 'string'
+        ? (request as { vaultPath: string }).vaultPath
+        : (vaultService.getSelectedVaultPath() ?? ''),
+      async () => {
+        const result = await vaultService.saveNote(request);
+        if (request && typeof request === 'object') {
+          const value = request as Record<string, unknown>;
+          if (
+            typeof value.vaultPath === 'string' &&
+            typeof value.path === 'string'
+          ) {
+            const { vaults } = await vaultRegistry.list();
+            const vaultId = vaults.find(
+              (vault) => vault.path === value.vaultPath,
+            )?.id;
+            if (vaultId) invalidateSelectedVault(vaultId);
+          }
         }
-      }
-      return result;
-    }),
+        return result;
+      },
+    ),
   );
 }
