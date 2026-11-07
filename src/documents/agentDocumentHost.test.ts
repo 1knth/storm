@@ -64,6 +64,7 @@ describe('agent document host', () => {
       await host.handleRequest({ type: 'context', requestId: 'c' }),
       {
         ok: true,
+        kind: 'context',
         context,
       },
     );
@@ -125,7 +126,7 @@ describe('agent document host', () => {
     } as any);
     assert.deepEqual(result, {
       ok: true,
-      inspected: true,
+      kind: 'inspect',
       open: true,
       content: 'unsaved live text',
       documentVersion: 0,
@@ -153,7 +154,7 @@ describe('agent document host', () => {
       content: 'disk text',
       diskRevision: 'r1',
     } as any);
-    assert.deepEqual(result, { ok: true, inspected: true, open: false });
+    assert.deepEqual(result, { ok: true, kind: 'inspect', open: false });
     assert.equal(host.controller.get('vault:notes/a.md'), undefined);
     host.dispose();
   });
@@ -169,6 +170,7 @@ describe('agent document host', () => {
       vaultRoot: '/vault',
     });
     assert.deepEqual(result, {
+      kind: 'document',
       ok: true,
       content: 'start',
       documentVersion: 0,
@@ -237,6 +239,7 @@ describe('agent document host', () => {
 
     const reconnected = await snapshot('new-session');
     assert.deepEqual(reconnected, {
+      kind: 'document',
       ok: true,
       content: 'initial\nSaved draft',
       documentVersion: 0,

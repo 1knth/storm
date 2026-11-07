@@ -53,15 +53,15 @@ export type AgentBridgeRequest =
   | { type: 'finish' | 'cancel'; requestId: string; sessionId: string };
 
 export type AgentBridgeResult =
-  | { ok: true; context: AgentContext }
+  | { ok: true; kind: 'context'; context: AgentContext }
   | {
       ok: true;
-      inspected: true;
+      kind: 'inspect';
       open: false;
     }
   | {
       ok: true;
-      inspected: true;
+      kind: 'inspect';
       open: true;
       content: string;
       documentVersion: number;
@@ -70,6 +70,7 @@ export type AgentBridgeResult =
     }
   | {
       ok: true;
+      kind: 'document';
       content?: string;
       documentVersion: number;
       diskRevision: string;
@@ -77,7 +78,7 @@ export type AgentBridgeResult =
     }
   | {
       ok: true;
-      preview: true;
+      kind: 'preview';
       saveState?: 'saved';
       content: string;
       changed: boolean;
@@ -89,7 +90,7 @@ export type AgentBridgeResult =
     }
   | {
       ok: true;
-      edited: true;
+      kind: 'edited';
       content: string;
       documentVersion: number;
       diskRevision: string;

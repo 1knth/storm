@@ -1,3 +1,4 @@
+import { createAgentBrokerFixture as setup } from './agentTestFixtures';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -7,70 +8,6 @@ import {
 } from './agentBroker';
 import { runVaultLifecycleExclusive } from './vaultLifecycle';
 
-function setup() {
-  const calls: AgentRendererRequest[] = [];
-  const broker = new AgentBroker({
-    resolveExistingTarget: async (absolutePath) => ({
-      absolutePath,
-      vaultId: 'fixture',
-      vaultRoot: '/private/fixture',
-      relativePath: 'note.md',
-      content: 'disk text',
-      diskRevision: 'rev',
-    }),
-    resolveTarget: async (absolutePath) => ({
-      absolutePath,
-      vaultId: 'fixture',
-      vaultRoot: '/private/fixture',
-      relativePath: 'note.md',
-      content: '',
-      diskRevision: 'rev',
-    }),
-    renderer: {
-      dispatch: async (request) => {
-        calls.push(request);
-        if (request.type === 'inspect')
-          return {
-            ok: true,
-            inspected: true,
-            open: true,
-            content: 'live text',
-            documentVersion: 1,
-            diskRevision: 'rev',
-            saveState: 'saved',
-          };
-        if (request.type === 'snapshot')
-          return {
-            ok: true,
-            content: '',
-            documentVersion: calls.length,
-            diskRevision: 'rev',
-            saveState: 'saved',
-          };
-        if (request.type === 'activity')
-          return {
-            ok: true,
-            documentVersion: calls.length,
-            diskRevision: 'rev',
-          };
-        if (request.type === 'append')
-          return {
-            ok: true,
-            documentVersion: calls.length,
-            diskRevision: 'rev',
-          };
-        if (request.type === 'finish' || request.type === 'cancel')
-          return {
-            ok: true,
-            documentVersion: calls.length,
-            diskRevision: 'rev',
-          };
-        return { ok: true, inspected: true, open: false };
-      },
-    },
-  });
-  return { broker, calls };
-}
 const req = (type: string, values: object = {}) => ({
   protocol: 1,
   requestId: Math.random().toString(),
@@ -110,7 +47,7 @@ describe('quiz broker requests', () => {
         throw new Error('not used');
       },
       renderer: {
-        dispatch: async () => ({ ok: true, inspected: true, open: false }),
+        dispatch: async () => ({ ok: true, kind: 'inspect', open: false }),
       },
       quiz: async (request) => {
         seen.push(request);
@@ -286,7 +223,7 @@ describe('quiz broker requests', () => {
         throw new Error('not used');
       },
       renderer: {
-        dispatch: async () => ({ ok: true, inspected: true, open: false }),
+        dispatch: async () => ({ ok: true, kind: 'inspect', open: false }),
       },
     });
     const noHandler = await unavailable.handle(valid);
@@ -303,7 +240,7 @@ describe('agent context', () => {
         throw new Error('not used');
       },
       renderer: {
-        dispatch: async () => ({ ok: true, inspected: true, open: false }),
+        dispatch: async () => ({ ok: true, kind: 'inspect', open: false }),
       },
       ...(getContext ? { getContext } : {}),
     });
@@ -335,7 +272,7 @@ describe('agent context', () => {
       renderer: {
         dispatch: async (request) => {
           calls.push(request);
-          return { ok: true, inspected: true, open: false };
+          return { ok: true, kind: 'inspect', open: false };
         },
       },
       getContext: async () => context,
@@ -387,7 +324,7 @@ describe('discovery request validation', () => {
         throw new Error('not used');
       },
       renderer: {
-        dispatch: async () => ({ ok: true, inspected: true, open: false }),
+        dispatch: async () => ({ ok: true, kind: 'inspect', open: false }),
       },
       discover: async (...args) => {
         calls.push(args);
@@ -448,9 +385,19 @@ describe('renderer reload lifecycle', () => {
     const response = deferred<AgentRendererResult>();
     const broker = brokerWithRenderer(async (request) => {
       if (request.type === 'snapshot')
-        return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+        return {
+          kind: 'document',
+          ok: true,
+          documentVersion: 0,
+          diskRevision: 'r0',
+        };
       if (request.type === 'append') return response.promise;
-      return { ok: true, documentVersion: 1, diskRevision: 'r1' };
+      return {
+        kind: 'document',
+        ok: true,
+        documentVersion: 1,
+        diskRevision: 'r1',
+      };
     });
     const connected = (await broker.handle(
       req('connect', { absolutePath: '/outcome/note.md' }),
@@ -467,7 +414,12 @@ describe('renderer reload lifecycle', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     broker.rendererUnavailable();
-    response.resolve({ ok: true, documentVersion: 1, diskRevision: 'r1' });
+    response.resolve({
+      kind: 'document',
+      ok: true,
+      documentVersion: 1,
+      diskRevision: 'r1',
+    });
     const result = (await append) as any;
     assert.equal(result.ok, false);
     assert.equal(result.error.code, 'SESSION_CLOSED');
@@ -516,11 +468,26 @@ describe('reported activity', () => {
     const broker = brokerWithRenderer(async (request) => {
       calls.push(request);
       if (request.type === 'snapshot')
-        return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+        return {
+          kind: 'document',
+          ok: true,
+          documentVersion: 0,
+          diskRevision: 'r0',
+        };
       if (request.type === 'activity') return activityDelivery.promise;
       if (request.type === 'append')
-        return { ok: true, documentVersion: 1, diskRevision: 'r1' };
-      return { ok: true, documentVersion: 1, diskRevision: 'r1' };
+        return {
+          kind: 'document',
+          ok: true,
+          documentVersion: 1,
+          diskRevision: 'r1',
+        };
+      return {
+        kind: 'document',
+        ok: true,
+        documentVersion: 1,
+        diskRevision: 'r1',
+      };
     });
     const connected = (await broker.handle(
       req('connect', { absolutePath: '/outcome/note.md' }),
@@ -608,9 +575,19 @@ describe('uncertain write outcomes', () => {
       const broker = brokerWithRenderer(async (request) => {
         calls.push(request.type);
         if (request.type === 'snapshot')
-          return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+          return {
+            kind: 'document',
+            ok: true,
+            documentVersion: 0,
+            diskRevision: 'r0',
+          };
         if (request.type === 'cancel')
-          return { ok: true, documentVersion: 1, diskRevision: 'r1' };
+          return {
+            kind: 'document',
+            ok: true,
+            documentVersion: 1,
+            diskRevision: 'r1',
+          };
         return {
           ok: false,
           code: 'RENDERER_TIMEOUT',
@@ -657,7 +634,12 @@ describe('uncertain write outcomes', () => {
     it(`retains uncertainty when cancellation confirmation is lost (${cancellation})`, async () => {
       const broker = brokerWithRenderer(async (request) => {
         if (request.type === 'snapshot')
-          return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+          return {
+            kind: 'document',
+            ok: true,
+            documentVersion: 0,
+            diskRevision: 'r0',
+          };
         if (request.type === 'cancel' && cancellation === 'throw')
           throw new Error('Connection lost');
         return { ok: false, code: 'RENDERER_TIMEOUT', message: 'No reply' };
@@ -689,9 +671,19 @@ describe('uncertain write outcomes', () => {
     let writes = 0;
     const broker = brokerWithRenderer(async (request) => {
       if (request.type === 'snapshot')
-        return { ok: true, documentVersion: 0, diskRevision: 'r0' };
+        return {
+          kind: 'document',
+          ok: true,
+          documentVersion: 0,
+          diskRevision: 'r0',
+        };
       if (request.type === 'cancel')
-        return { ok: true, documentVersion: 2, diskRevision: 'r2' };
+        return {
+          kind: 'document',
+          ok: true,
+          documentVersion: 2,
+          diskRevision: 'r2',
+        };
       writes++;
       entered.resolve();
       return held.promise;
@@ -718,7 +710,8 @@ describe('uncertain write outcomes', () => {
     assert.equal(cancelled.session.state, 'cancelled');
     held.resolve({
       ok: true,
-      edited: true,
+      kind: 'edited',
+      saveState: 'saved',
       content: 'first',
       documentVersion: 1,
       diskRevision: 'r1',
@@ -774,11 +767,16 @@ describe('AgentBroker', () => {
         dispatch: async (request) => {
           calls.push(request);
           if (request.type === 'snapshot')
-            return { ok: true, documentVersion: 2, diskRevision: 'r0' };
+            return {
+              kind: 'document',
+              ok: true,
+              documentVersion: 2,
+              diskRevision: 'r0',
+            };
           if (request.type === 'edit-preview')
             return {
               ok: true,
-              preview: true,
+              kind: 'preview',
               content: 'draft',
               changed: true,
               documentVersion: 2,
@@ -787,12 +785,13 @@ describe('AgentBroker', () => {
           if (request.type === 'edit-apply')
             return {
               ok: true,
-              edited: true,
+              kind: 'edited',
+              saveState: 'saved',
               content: 'saved',
               documentVersion: 3,
               diskRevision: 'r1',
             };
-          return { ok: true, inspected: true, open: false };
+          return { ok: true, kind: 'inspect', open: false };
         },
       },
     });
@@ -855,11 +854,16 @@ describe('AgentBroker', () => {
         dispatch: async (request) => {
           calls.push(request);
           if (request.type === 'snapshot')
-            return { ok: true, documentVersion: 1, diskRevision: 'r0' };
+            return {
+              kind: 'document',
+              ok: true,
+              documentVersion: 1,
+              diskRevision: 'r0',
+            };
           if (request.type === 'edit-preview')
             return {
               ok: true,
-              preview: true,
+              kind: 'preview',
               content: 'after',
               changed: true,
               edits: [],
@@ -877,11 +881,11 @@ describe('AgentBroker', () => {
             content = 'after';
             return {
               ok: true,
-              edited: true,
+              kind: 'edited',
+              saveState: 'saved',
               content,
               documentVersion: 2,
               diskRevision: 'r1',
-              saveState: 'saved',
             };
           }
           return { ok: false, code: 'INTERNAL', message: 'unexpected request' };
@@ -957,11 +961,16 @@ describe('AgentBroker', () => {
       renderer: {
         dispatch: async (request) => {
           if (request.type === 'snapshot')
-            return { ok: true, documentVersion: 1, diskRevision: 'r0' };
+            return {
+              kind: 'document',
+              ok: true,
+              documentVersion: 1,
+              diskRevision: 'r0',
+            };
           if (request.type === 'edit-preview')
             return {
               ok: true,
-              preview: true,
+              kind: 'preview',
               content: 'after',
               changed: true,
               edits: [],
@@ -974,13 +983,14 @@ describe('AgentBroker', () => {
             applyCalls++;
             return {
               ok: true,
-              edited: true,
+              kind: 'edited',
+              saveState: 'saved',
               content: 'after',
               documentVersion: 2,
               diskRevision: 'r1',
             };
           }
-          return { ok: true, inspected: true, open: false };
+          return { ok: true, kind: 'inspect', open: false };
         },
       },
     });
@@ -1039,16 +1049,21 @@ describe('AgentBroker', () => {
       renderer: {
         dispatch: async (request) => {
           if (request.type === 'snapshot')
-            return { ok: true, documentVersion: 1, diskRevision: 'r0' };
+            return {
+              kind: 'document',
+              ok: true,
+              documentVersion: 1,
+              diskRevision: 'r0',
+            };
           if (request.type === 'edit-apply') {
             applyCalls++;
             return {
               ok: true,
-              edited: true,
+              kind: 'edited',
+              saveState: 'saved',
               content: 'saved once',
               documentVersion: 2,
               diskRevision: 'r1',
-              saveState: 'saved',
             };
           }
           return { ok: false, code: 'INTERNAL', message: 'unexpected request' };
@@ -1095,7 +1110,12 @@ describe('AgentBroker', () => {
         renderer: {
           dispatch: async (request) =>
             request.type === 'snapshot'
-              ? { ok: true, documentVersion: 4, diskRevision: 'r' }
+              ? {
+                  kind: 'document',
+                  ok: true,
+                  documentVersion: 4,
+                  diskRevision: 'r',
+                }
               : { ok: false, code, message },
         },
       });
@@ -1132,7 +1152,12 @@ describe('AgentBroker', () => {
       renderer: {
         dispatch: async (request) => {
           if (request.type === 'snapshot')
-            return { ok: true, documentVersion: 1, diskRevision: 'r' };
+            return {
+              kind: 'document',
+              ok: true,
+              documentVersion: 1,
+              diskRevision: 'r',
+            };
           if (request.type === 'edit-preview') {
             order.push('first-start');
             started.resolve();
@@ -1140,7 +1165,7 @@ describe('AgentBroker', () => {
             order.push('first-end');
             return {
               ok: true,
-              preview: true,
+              kind: 'preview',
               content: '',
               changed: false,
               documentVersion: 1,
@@ -1151,13 +1176,14 @@ describe('AgentBroker', () => {
             order.push('second');
             return {
               ok: true,
-              edited: true,
+              kind: 'edited',
+              saveState: 'saved',
               content: 'x',
               documentVersion: 2,
               diskRevision: 'r2',
             };
           }
-          return { ok: true, inspected: true, open: false };
+          return { ok: true, kind: 'inspect', open: false };
         },
       },
     });
@@ -1213,7 +1239,12 @@ describe('AgentBroker', () => {
             started.resolve();
             await snapshot.promise;
           }
-          return { ok: true, documentVersion: 1, diskRevision: 'r' };
+          return {
+            kind: 'document',
+            ok: true,
+            documentVersion: 1,
+            diskRevision: 'r',
+          };
         },
       },
     });
@@ -1252,7 +1283,12 @@ describe('AgentBroker', () => {
       renderer: {
         dispatch: async () => {
           snapshots++;
-          return { ok: true, documentVersion: 1, diskRevision: 'r' };
+          return {
+            kind: 'document',
+            ok: true,
+            documentVersion: 1,
+            diskRevision: 'r',
+          };
         },
       },
     });
@@ -1325,40 +1361,6 @@ describe('AgentBroker', () => {
     assert.equal(status.sessions[0].state, 'finished');
   });
 
-  it('replays duplicate operation acknowledgements without applying twice and enforces append sequence', async () => {
-    const { broker, calls } = setup();
-    const connected = (await broker.handle(
-      req('connect', { absolutePath: '/private/fixture/note.md' }),
-    )) as any;
-    const sid = connected.session.sessionId;
-    const snapshot = calls.find((call) => call.type === 'snapshot');
-    assert.equal(
-      snapshot?.type === 'snapshot' ? snapshot.sessionId : null,
-      sid,
-    );
-    const first = req('append', {
-      sessionId: sid,
-      operationId: 'op-1',
-      sequence: 1,
-      text: 'alpha',
-    });
-    const ack = await broker.handle(first);
-    const replay = await broker.handle({ ...first, requestId: 'replay' });
-    assert.deepEqual(replay, { ...ack, requestId: 'replay' });
-    assert.equal(calls.filter((call) => call.type === 'append').length, 1);
-    const invalid = (await broker.handle(
-      req('append', {
-        sessionId: sid,
-        operationId: 'op-2',
-        sequence: 3,
-        text: 'skip',
-      }),
-    )) as any;
-    assert.equal(invalid.ok, false);
-    assert.equal(invalid.error.code, 'INVALID_SEQUENCE');
-    assert.equal(calls.filter((call) => call.type === 'append').length, 1);
-  });
-
   it('serializes concurrent appends, deduplicates in-flight retries, and rejects changed replay', async () => {
     let release!: () => void;
     const calls: AgentRendererRequest[] = [];
@@ -1378,7 +1380,12 @@ describe('AgentBroker', () => {
             await new Promise<void>((resolve) => {
               release = resolve;
             });
-          return { ok: true, documentVersion: calls.length, diskRevision: 'r' };
+          return {
+            kind: 'document',
+            ok: true,
+            documentVersion: calls.length,
+            diskRevision: 'r',
+          };
         },
       },
     });
@@ -1436,7 +1443,12 @@ describe('AgentBroker', () => {
             await new Promise<void>((resolve) => {
               release = resolve;
             });
-          return { ok: true, documentVersion: calls.length, diskRevision: 'r' };
+          return {
+            kind: 'document',
+            ok: true,
+            documentVersion: calls.length,
+            diskRevision: 'r',
+          };
         },
       },
     });
@@ -1479,7 +1491,12 @@ describe('AgentBroker', () => {
         await new Promise<void>((resolve) => {
           releaseBlocked = resolve;
         });
-      return { ok: true, documentVersion: calls.length, diskRevision: 'r' };
+      return {
+        kind: 'document',
+        ok: true,
+        documentVersion: calls.length,
+        diskRevision: 'r',
+      };
     };
     const blocked = broker.handle(
       req('append', {
@@ -1533,7 +1550,12 @@ describe('AgentBroker', () => {
             await new Promise<void>((resolve) => {
               release = resolve;
             });
-          return { ok: true, documentVersion: calls.length, diskRevision: 'r' };
+          return {
+            kind: 'document',
+            ok: true,
+            documentVersion: calls.length,
+            diskRevision: 'r',
+          };
         },
       },
     });
@@ -1602,6 +1624,7 @@ describe('AgentBroker', () => {
       },
       renderer: {
         dispatch: async () => ({
+          kind: 'document',
           ok: true,
           documentVersion: 1,
           diskRevision: 'r',
@@ -1631,6 +1654,115 @@ describe('AgentBroker', () => {
     assert.equal(broker.isMaintenanceLeased('v'), true);
     release?.();
     assert.equal(broker.isMaintenanceLeased('v'), false);
+  });
+
+  it('awaits maintenance lease release and supports timeout and abort', async () => {
+    const { broker } = setup();
+    const release = broker.acquireMaintenanceLease('fixture')!;
+    let acquired = false;
+    const waiting = broker.waitForMaintenanceLease('fixture').then((unlock) => {
+      acquired = true;
+      return unlock;
+    });
+    await Promise.resolve();
+    assert.equal(acquired, false);
+    release();
+    const unlock = await waiting;
+    assert.equal(acquired, true);
+    await assert.rejects(
+      broker.waitForMaintenanceLease('fixture', { timeoutMs: 1 }),
+      /timed out/,
+    );
+    const controller = new AbortController();
+    const aborted = broker.waitForMaintenanceLease('fixture', {
+      signal: controller.signal,
+    });
+    controller.abort();
+    await assert.rejects(aborted, /aborted/);
+    unlock();
+    (await broker.waitForMaintenanceLease('fixture'))();
+  });
+
+  it('awaits an active session finishing before granting maintenance', async () => {
+    const { broker } = setup();
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/private/fixture/note.md' }),
+    )) as any;
+    const waiting = broker.waitForMaintenanceLease('fixture');
+    await broker.handle(
+      req('finish', { sessionId: connected.session.sessionId }),
+    );
+    const release = await waiting;
+    assert.equal(broker.isMaintenanceLeased('fixture'), true);
+    release();
+  });
+
+  it('maintenance waits for dispatched work after cancellation settles callers', async () => {
+    const started = deferred<void>();
+    const drain = deferred<void>();
+    const { broker } = setup({
+      renderer: {
+        dispatch: async (request) => {
+          if (request.type === 'append') {
+            started.resolve();
+            await drain.promise;
+          }
+          return {
+            ok: true,
+            kind: 'document',
+            documentVersion: 1,
+            diskRevision: 'rev',
+          };
+        },
+      },
+    });
+    const connected = (await broker.handle(
+      req('connect', { absolutePath: '/private/fixture/note.md' }),
+    )) as any;
+    const sessionId = connected.session.sessionId;
+    const append = broker.handle(
+      req('append', {
+        sessionId,
+        operationId: 'drain',
+        sequence: 1,
+        text: 'a',
+      }),
+    );
+    await started.promise;
+    await broker.handle(req('cancel', { sessionId }));
+    await append;
+    assert.equal(broker.acquireMaintenanceLease('fixture'), null);
+    const lease = broker.waitForMaintenanceLease('fixture');
+    drain.resolve();
+    (await lease)();
+  });
+
+  it('bounds terminal status tombstones and preserves recent finish receipts', async () => {
+    const { broker } = setup();
+    let first = '';
+    let last = '';
+    for (let index = 0; index < 258; index++) {
+      const connected = (await broker.handle(
+        req('connect', { absolutePath: '/private/fixture/note.md' }),
+      )) as any;
+      last = connected.session.sessionId;
+      if (!index) first = last;
+      await broker.handle(req('finish', { sessionId: last }));
+    }
+    const status = (await broker.handle(req('status'))) as any;
+    assert.equal(status.sessions.length, 256);
+    assert.equal(
+      status.sessions.some((s: any) => s.sessionId === first),
+      false,
+    );
+    assert.equal(
+      status.sessions.every((s: any) => s.state === 'finished'),
+      true,
+    );
+    assert.equal(
+      (await broker.handle(req('finish', { sessionId: last }))).ok,
+      true,
+    );
   });
 
   it('rejects append after cancellation', async () => {

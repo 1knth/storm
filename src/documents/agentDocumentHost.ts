@@ -94,7 +94,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
       if (request.type === 'context') {
         const context = options.getContext?.();
         return context
-          ? { ok: true, context }
+          ? { ok: true, kind: 'context', context }
           : {
               ok: false,
               code: 'CONTEXT_UNAVAILABLE',
@@ -104,10 +104,10 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
       if (request.type === 'inspect') {
         const document = lookupDocument(request.vaultId, request.path);
         if (!document || document.closed)
-          return { ok: true, inspected: true, open: false };
+          return { ok: true, kind: 'inspect', open: false };
         return {
           ok: true,
-          inspected: true,
+          kind: 'inspect',
           open: true,
           content: document.state.doc.toString(),
           documentVersion: document.acceptedVersion,
@@ -152,6 +152,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           session: toSessionStatus(sessionId, document),
         });
         return {
+          kind: 'document',
           ok: true,
           content: document.state.doc.toString(),
           documentVersion: document.acceptedVersion,
@@ -179,6 +180,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           document.status === 'disconnected'
         )
           return {
+            kind: 'document',
             ok: true,
             documentVersion: document.acceptedVersion,
             diskRevision: document.revision,
@@ -190,6 +192,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           session: toSessionStatus(request.sessionId, document),
         });
         return {
+          kind: 'document',
           ok: true,
           documentVersion: document.acceptedVersion,
           diskRevision: document.revision,
@@ -205,6 +208,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           };
         const result = await controller.append(document, request.text);
         return {
+          kind: 'document',
           ok: true,
           documentVersion: result.version,
           diskRevision: document.revision,
@@ -230,7 +234,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
         );
         return {
           ok: true,
-          preview: true,
+          kind: 'preview',
           ...preview,
           ...fingerprints,
           documentVersion: document.acceptedVersion,
@@ -246,7 +250,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
         );
         return {
           ok: true,
-          edited: true,
+          kind: 'edited',
           content: applied.content,
           documentVersion: applied.version,
           diskRevision: document.revision,
@@ -260,6 +264,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
         const viewFlushed = await adapter?.flush();
         return flushed && viewFlushed !== false
           ? {
+              kind: 'document',
               ok: true,
               documentVersion: document.acceptedVersion,
               diskRevision: document.revision,
@@ -275,6 +280,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
         const flushed = await controller.flush(document);
         return flushed
           ? {
+              kind: 'document',
               ok: true,
               documentVersion: document.acceptedVersion,
               diskRevision: document.revision,

@@ -1,3 +1,4 @@
+import { createAgentBrokerFixture } from './agentTestFixtures';
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -10,7 +11,6 @@ import {
   readAgentEndpoint,
   sendAgentRequest,
 } from './agentEndpoint';
-import { AgentBroker } from './agentBroker';
 
 describe('agent endpoint', () => {
   async function socketClosed(
@@ -90,7 +90,7 @@ describe('agent endpoint', () => {
 
   test('authenticates then dispatches bounded framed broker requests', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'storm-agent-'));
-    const broker = new AgentBroker({
+    const { broker } = createAgentBrokerFixture({
       resolveTarget: async () => {
         throw Error('not reached');
       },

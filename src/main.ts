@@ -216,7 +216,7 @@ const studyContext = new StudyContextService(studyStore, {
       vaultId,
       path: relativePath,
     });
-    if (!result.ok || !('inspected' in result))
+    if (!result.ok || !(result.kind === 'inspect'))
       throw new Error('STUDY_RENDERER_UNAVAILABLE');
     return result.open
       ? { text: result.content, saveState: result.saveState }
@@ -271,7 +271,7 @@ agentBroker = new AgentBroker({
       type: 'context',
       requestId: randomUUID(),
     });
-    if (!result.ok || !('context' in result))
+    if (!result.ok || !(result.kind === 'context'))
       throw Object.assign(
         new Error(result.ok ? 'Invalid context response' : result.message),
         {
