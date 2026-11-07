@@ -255,9 +255,6 @@ importers:
       '@electron-forge/maker-zip':
         specifier: ^8.0.1
         version: 8.0.1
-      '@electron-forge/plugin-auto-unpack-natives':
-        specifier: ^8.0.1
-        version: 8.0.1
       '@electron-forge/plugin-fuses':
         specifier: ^8.0.1
         version: 8.0.1(@electron/fuses@2.1.3)
@@ -532,10 +529,6 @@ packages:
 
   '@electron-forge/multi-logger@8.0.1':
     resolution: {integrity: sha512-cgYcETMtlkcYiMC8YcaaW8jFDmVZ6mbNBL0Yi0ekjoOjcBecJS/uy7+9GvM9DWq3Ie5YCfe4+AWuVR3HF56/sQ==}
-    engines: {node: '>= 22.13.0'}
-
-  '@electron-forge/plugin-auto-unpack-natives@8.0.1':
-    resolution: {integrity: sha512-ZdODnSqdwkkk8anu/lMDxuIJwCvKA+OaRuOesFbCTdgdRObMv1NsYZ4BpfTZLIGzs4kaG2hb/fnK3p1xYVbETg==}
     engines: {node: '>= 22.13.0'}
 
   '@electron-forge/plugin-base@8.0.1':
@@ -3733,13 +3726,6 @@ snapshots:
       - react-devtools-core
       - supports-color
       - utf-8-validate
-
-  '@electron-forge/plugin-auto-unpack-natives@8.0.1':
-    dependencies:
-      '@electron-forge/plugin-base': 8.0.1
-      '@electron-forge/shared-types': 8.0.1
-    transitivePeerDependencies:
-      - supports-color
 
   '@electron-forge/plugin-base@8.0.1':
     dependencies:

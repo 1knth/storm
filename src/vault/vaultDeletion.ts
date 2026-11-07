@@ -1,3 +1,4 @@
+import { resolveVaultEntry } from './vaultPaths';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { isSupportedVaultImagePath } from './vaultAssets';
@@ -37,15 +38,14 @@ export async function resolveDeletionTarget(
     )
   )
     throw new Error('That path cannot be deleted');
-  const root = await realpath(registryRoot);
-  let current = root;
-  for (const segment of segments) {
-    current = path.join(current, segment);
-    const info = await lstat(current);
-    if (info.isSymbolicLink())
-      throw new Error('Cannot delete through a symbolic link');
-  }
-  const target = await lstat(current);
+  const {
+    root,
+    target: current,
+    info: target,
+  } = await resolveVaultEntry(registryRoot, relativePath, {
+    symlinks: 'reject',
+    type: 'entry',
+  });
   if (target.isDirectory()) {
     // Root is deliberately excluded; only descendants may be removed.
   } else if (target.isFile() && /\.md$/i.test(path.basename(current))) {

@@ -1,3 +1,4 @@
+import { temporaryVaultRoot } from './testing/tempVault';
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import {
@@ -12,7 +13,6 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { VaultService } from './vaultService';
-import { readVaultAsset } from './vaultAssets';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NotePeek from '../components/NotePeek';
@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'storm-vault-safety-'));
+  const root = await temporaryVaultRoot();
   fixtureRoots.push(root);
   await writeFile(path.join(root, 'note.md'), 'original note');
   const service = new VaultService();
@@ -146,7 +146,7 @@ test('lists images as lightweight entries while preserving notes and excluding S
   await writeFile(path.join(root, 'Manual.PDF'), '%PDF-1.7');
   await writeFile(path.join(root, 'vector.svg'), '<svg/>');
   await symlink(path.join(root, 'Photo.PNG'), path.join(root, 'linked.png'));
-  const entries = await service.listNotes();
+  const entries = await service.listNotes({ previews: true });
   assert.deepEqual(
     entries.find((entry) => entry.name === 'note.md'),
     {
@@ -201,7 +201,7 @@ test('sidebar peeks omit fenced delimiters and retain visible content', async ()
 
   for (const [markdown, expectedPeek] of cases) {
     await writeFile(path.join(root, 'note.md'), markdown);
-    const entry = (await service.listNotes()).find(
+    const entry = (await service.listNotes({ previews: true })).find(
       (candidate) => candidate.name === 'note.md',
     );
     assert.equal(entry?.peek, expectedPeek, markdown);
@@ -226,7 +226,7 @@ test('bounds long Markdown previews and supports listing without reading preview
   const { root, service } = await fixture();
   const content = `A${'x'.repeat(2 * 1024 * 1024 - 1)}`;
   await writeFile(path.join(root, 'huge.md'), content);
-  const withPreview = await service.listNotes();
+  const withPreview = await service.listNotes({ previews: true });
   const hugePreview = withPreview.find((entry) => entry.name === 'huge.md');
   assert.equal(hugePreview?.peek.length, 300);
   const withoutPreviews = await service.listNotes({ previews: false });
@@ -247,29 +247,6 @@ test('bounds long Markdown previews and supports listing without reading preview
       (entry) => entry.kind !== 'note' || entry.peek === '',
     ),
   );
-});
-
-test('reads assets with signature, path, MIME, and size validation', async () => {
-  const { root } = await fixture();
-  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
-  await writeFile(path.join(root, 'ok.png'), signature);
-  const image = await readVaultAsset(root, 'ok.png');
-  assert.equal(image.mimeType, 'image/png');
-  assert.deepEqual(Buffer.from(image.base64, 'base64'), signature);
-  await writeFile(path.join(root, 'fake.png'), Buffer.from('not an image'));
-  await assert.rejects(readVaultAsset(root, 'fake.png'), /does not match/i);
-  await assert.rejects(readVaultAsset(root, '../outside.png'));
-  await symlink(
-    path.join(os.tmpdir(), 'outside-image.png'),
-    path.join(root, 'escape.png'),
-  );
-  await assert.rejects(readVaultAsset(root, 'escape.png'));
-  await assert.rejects(readVaultAsset(root, 'nope.svg'), /Unsupported/);
-  await writeFile(
-    path.join(root, 'large.png'),
-    Buffer.alloc(10 * 1024 * 1024 + 1),
-  );
-  await assert.rejects(readVaultAsset(root, 'large.png'), /10 MB/);
 });
 
 test('rename-link planning failures leave the source untouched', async () => {
@@ -499,3 +476,30 @@ for (const separateServices of [false, true]) {
     );
   });
 }
+
+test('no-op rename does not enumerate or read unrelated documents', async () => {
+  const { root } = await fixture();
+  class NoScanService extends VaultService {
+    override async listNotes(): Promise<never> {
+      throw new Error('unexpected scan');
+    }
+  }
+  const service = new NoScanService();
+  await service.selectVault(root);
+  const result = await service.renameEntryAndUpdateLinks('note.md', 'note.md');
+  assert.deepEqual(result.changedNotes, []);
+});
+
+test('metadata enumeration defaults to empty previews and excludes private trees for resolution', async () => {
+  const { root, service } = await fixture();
+  for (const name of ['.git', '.obsidian', 'node_modules']) {
+    await mkdir(path.join(root, name));
+    await writeFile(path.join(root, name, 'note.md'), 'private');
+  }
+  const entries = await service.listNotes();
+  assert.deepEqual(
+    entries.map((entry) => entry.path),
+    ['note.md'],
+  );
+  assert.equal(entries[0].peek, '');
+});

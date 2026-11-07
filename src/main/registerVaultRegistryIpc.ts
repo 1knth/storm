@@ -1,5 +1,6 @@
+import { activateVaultSelection } from './vaultSelection';
 import path from 'node:path';
-import { lstat, realpath } from 'node:fs/promises';
+import { resolveVaultEntry } from '../vault/vaultPaths';
 import type { VaultRegistry } from '../vault/vaultRegistry';
 import type { VaultService } from '../vault/vaultService';
 import type { VaultWriteBarrier } from '../vault/writeBarrier';
@@ -50,39 +51,11 @@ export function registerVaultRegistryIpc(
       }
       const root = service.getSelectedVaultPath();
       if (!root) throw new Error('No vault selected');
-      const target = path.resolve(root, ...relativePath.split(/[\\/]+/));
-      const relative = path.relative(root, target);
-      if (
-        !relative ||
-        relative.startsWith(`..${path.sep}`) ||
-        relative === '..' ||
-        path.isAbsolute(relative)
-      )
-        throw new Error('Path is outside the selected vault');
-      const resolvedRoot = await realpath(root);
-      let currentPath = resolvedRoot;
-      for (const segment of relativePath.split(/[\\/]+/)) {
-        currentPath = path.join(currentPath, segment);
-        if ((await lstat(currentPath)).isSymbolicLink())
-          throw new Error('Symbolic links are not valid vault entries');
-      }
-      const [resolvedTarget, info] = await Promise.all([
-        realpath(target),
-        lstat(target),
-      ]);
-      const resolvedRelative = path.relative(resolvedRoot, resolvedTarget);
-      if (
-        resolvedRelative.startsWith(`..${path.sep}`) ||
-        resolvedRelative === '..' ||
-        path.isAbsolute(resolvedRelative) ||
-        info.isSymbolicLink()
-      )
-        throw new Error('Path is outside the selected vault');
-      if (
-        (kind === 'folder' && !info.isDirectory()) ||
-        (kind !== 'folder' && !info.isFile())
-      )
-        throw new Error('Vault entry type changed');
+      const { resolved: resolvedTarget } = await resolveVaultEntry(
+        root,
+        relativePath,
+        { symlinks: 'reject', type: kind === 'folder' ? 'directory' : 'file' },
+      );
       if (kind === 'folder') {
         const error = await dependencies.openPath(resolvedTarget);
         if (error) throw new Error(error);
@@ -193,13 +166,12 @@ export function registerVaultRegistryIpc(
   ipc.handle('vault:registry-activate', async (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('Invalid vault ID');
     return writeBarrier.run(async () => {
-      const { vaults } = await registry.list();
-      const selected = vaults.find((vault) => vault.id === id);
-      if (!selected) throw new Error('Unknown vault');
-      await service.selectVault(selected.path);
-      await registry.setActive(id);
-      await dependencies.watchSelectedVault();
-      return { id, path: service.getSelectedVaultPath() };
+      return activateVaultSelection(
+        registry,
+        service,
+        id,
+        dependencies.watchSelectedVault,
+      );
     });
   });
   ipc.handle('vault:registry-unload-one', async (_event, id: unknown) => {

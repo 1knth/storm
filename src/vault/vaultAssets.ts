@@ -1,5 +1,8 @@
+import { enumerateVault } from './vaultIndex';
+import { MIME_BY_EXTENSION } from './vaultImageTypes';
+export { isSupportedVaultImagePath } from './vaultImageTypes';
 import path from 'node:path';
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
+import { lstat, readFile, realpath } from 'node:fs/promises';
 
 export type VaultImageKind = 'markdown' | 'wiki';
 export interface VaultImageRequest {
@@ -16,14 +19,6 @@ export interface VaultImageResult {
 const MAX_BYTES = 10 * 1024 * 1024;
 export const MAX_PDF_BYTES = 100 * 1024 * 1024;
 const MAX_SCAN_ENTRIES = 5000;
-const MIME_BY_EXTENSION: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.avif': 'image/avif',
-};
 
 export async function readVaultPdf(
   rootPath: string,
@@ -59,10 +54,6 @@ export async function readVaultPdf(
   if (content.subarray(0, 5).toString('ascii') !== '%PDF-')
     throw new Error('Invalid PDF file');
   return new Uint8Array(content);
-}
-
-export function isSupportedVaultImagePath(filePath: string): boolean {
-  return Object.hasOwn(MIME_BY_EXTENSION, path.extname(filePath).toLowerCase());
 }
 
 function inside(root: string, target: string): boolean {
@@ -258,25 +249,16 @@ async function existingSafe(paths: string[], root: string): Promise<string[]> {
 }
 
 async function findBareImage(root: string, name: string): Promise<string[]> {
-  const found: string[] = [];
-  let visited = 0;
-  async function walk(directory: string, depth: number): Promise<void> {
-    if (depth > 12) return;
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (++visited > MAX_SCAN_ENTRIES)
-        throw new Error('Image lookup exceeded its scan limit');
-      if (entry.isSymbolicLink()) continue;
-      const target = path.join(directory, entry.name);
-      if (entry.isFile() && entry.name.toLowerCase() === name.toLowerCase())
-        found.push(target);
-      else if (
-        entry.isDirectory() &&
-        !['.obsidian', '.git', 'node_modules'].includes(entry.name)
-      )
-        await walk(target, depth + 1);
-    }
-  }
-  await walk(root, 0);
+  const entries = await enumerateVault(root, { limit: MAX_SCAN_ENTRIES + 1 });
+  if (entries.length > MAX_SCAN_ENTRIES)
+    throw new Error('Image lookup exceeded its scan limit');
+  const found = entries
+    .filter(
+      (entry) =>
+        entry.kind === 'image' &&
+        entry.name.toLowerCase() === name.toLowerCase(),
+    )
+    .map((entry) => path.join(root, entry.path));
   if (found.length > 1) throw new Error('Ambiguous image path');
   return found;
 }

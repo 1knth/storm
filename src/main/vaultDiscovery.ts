@@ -1,5 +1,6 @@
+import { VaultNoteIndex } from '../vault/vaultIndex';
 import path from 'node:path';
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import { VaultService } from '../vault/vaultService';
 import { resolveVaultNote } from '../vault/vaultNoteResolver';
 
@@ -30,15 +31,14 @@ export async function resolveVaultLink(
   const service = new VaultService();
   await service.selectVault(root);
   const paths = new Set(
-    (await service.listNotes())
+    (await service.listNotes({ previews: false }))
       .filter((entry) => entry.kind === 'note')
       .map((entry) => entry.path),
   );
+  const index = new VaultNoteIndex([...paths]);
   if (!paths.has(sourcePath)) throw new Error('Source note not found');
   try {
-    const resolved = await resolveVaultNote(root, sourcePath, target, [
-      ...paths,
-    ]);
+    const resolved = await resolveVaultNote(root, sourcePath, target, index);
     return paths.has(resolved)
       ? { sourcePath, target, path: resolved }
       : { sourcePath, target, reason: 'missing' };
@@ -76,10 +76,20 @@ export async function discoverVaultNotes(
   const needle = query?.toLocaleLowerCase();
   const hasSourceLinks = Boolean(options?.sourcePath);
   const metadataOnly = !needle && !hasSourceLinks;
-  const entries = (await service.listNotes({ previews: !metadataOnly })).filter(
+  const entries = (await service.listNotes({ previews: false })).filter(
     (entry) => entry.kind === 'note',
   );
   const paths = new Set(entries.map((entry) => entry.path));
+  const noteIndex = new VaultNoteIndex([...paths]);
+  const contentsByPath = new Map<string, Promise<string>>();
+  const readContents = (relative: string) => {
+    let pending = contentsByPath.get(relative);
+    if (!pending) {
+      pending = service.readNote(relative).then((note) => note.content);
+      contentsByPath.set(relative, pending);
+    }
+    return pending;
+  };
   const unresolved: DiscoveryIssue[] = [];
   let truncated = false;
   let candidates = entries;
@@ -107,7 +117,7 @@ export async function discoverVaultNotes(
       if (!absolute.startsWith(root + path.sep)) continue;
       const info = await lstat(absolute);
       if (!info.isFile() || info.isSymbolicLink()) continue;
-      const contents = await readFile(absolute, 'utf8');
+      const contents = await readContents(current.path);
       const links = [
         ...contents.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g),
       ];
@@ -118,9 +128,12 @@ export async function discoverVaultNotes(
         }
         const target = link[1].trim();
         try {
-          const resolved = await resolveVaultNote(root, current.path, target, [
-            ...paths,
-          ]);
+          const resolved = await resolveVaultNote(
+            root,
+            current.path,
+            target,
+            noteIndex,
+          );
           if (paths.has(resolved) && !visited.has(resolved)) {
             found.add(resolved);
             queue.push({ path: resolved, level: current.level + 1 });
@@ -149,7 +162,7 @@ export async function discoverVaultNotes(
     if (!absolute.startsWith(root + path.sep)) continue;
     const info = await lstat(absolute);
     if (!info.isFile() || info.isSymbolicLink()) continue;
-    const contents = metadataOnly ? '' : await readFile(absolute, 'utf8');
+    const contents = metadataOnly ? '' : await readContents(entry.path);
     const lowered = contents.toLocaleLowerCase();
     if (
       needle &&
