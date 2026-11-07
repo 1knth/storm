@@ -44,6 +44,41 @@ async function withStore(
 }
 
 describe('QuizStore storage regressions', () => {
+  test('draft and activity commits reuse history and leave other sessions untouched', async () => {
+    await withStore(async (dir, store) => {
+      const first = session();
+      await store.create(first);
+      await store.create({ ...session(), id: 'other' });
+      const path = join(dir, 'sessions.json');
+      const before = JSON.parse(await readFile(path, 'utf8'));
+      await store.updateDraft(
+        { ...first, freeChatDraft: 'private response' },
+        0,
+      );
+      await store.updateActivity(first.id, first.agentToken!, {
+        state: 'thinking',
+        updatedAt: first.updatedAt,
+      });
+      const after = JSON.parse(await readFile(path, 'utf8'));
+      assert.equal(
+        after.sessions[first.id].history,
+        before.sessions[first.id].history,
+      );
+      assert.deepEqual(after.sessions.other, before.sessions.other);
+      const history = await readFile(
+        join(`${path}.sessions`, after.sessions[first.id].history),
+        'utf8',
+      );
+      assert.equal(history.includes('private response'), false);
+      const reopened = await new QuizStore(path).get(first.id);
+      assert.equal(reopened?.freeChatDraft, 'private response');
+      assert.deepEqual(
+        reopened?.activity,
+        (await store.get(first.id))?.activity,
+      );
+    });
+  });
+
   test('picker summaries omit capabilities, history and drafts and isolate nested metadata', async () => {
     await withStore(async (_dir, store) => {
       const saved = session();
@@ -97,7 +132,7 @@ describe('QuizStore storage regressions', () => {
       assert.deepEqual(await store.events(draft.id), [event(1)]);
       await assert.rejects(stat(path), { code: 'ENOENT' });
       await store.promote(draft.id);
-      const saved = JSON.parse(await readFile(path, 'utf8'));
+      const saved = await persistedDatabase(path);
       assert.deepEqual(saved.sessions, [revised]);
       assert.deepEqual(saved.events[draft.id], [event(1)]);
       assert.deepEqual(saved.idempotency['draft-receipt'], {
@@ -155,16 +190,16 @@ describe('QuizStore storage regressions', () => {
           );
         }
         const path = join(dir, 'sessions.json');
-        sizes.push((await stat(path)).size);
+        const manifest = JSON.parse(await readFile(path, 'utf8'));
+        const files = manifest.sessions[current.id];
+        sizes.push((await stat(join(`${path}.sessions`, files.history))).size);
       }
       // Doubling accumulated messages may add fixed metadata, but must not approach quadratic growth.
       assert.ok(
         sizes[1] / sizes[0] < 3,
         `100/50 size ratio was ${sizes[1] / sizes[0]}`,
       );
-      const saved = JSON.parse(
-        await readFile(join(dir, 'sessions.json'), 'utf8'),
-      );
+      const saved = await persistedDatabase(join(dir, 'sessions.json'));
       assert.equal(saved.idempotency['key-100'].session, undefined);
       assert.equal(saved.idempotency['key-100'].transcript, undefined);
       assert.equal(saved.sessions[0].transcript.length, 100);
@@ -209,9 +244,7 @@ describe('QuizStore storage regressions', () => {
         (await reopened.idempotent('session-2:key', 'fp2'))?.id,
         'session-2',
       );
-      const saved = JSON.parse(
-        await readFile(join(dir, 'sessions.json'), 'utf8'),
-      );
+      const saved = await persistedDatabase(join(dir, 'sessions.json'));
       assert.deepEqual(Object.keys(saved.events), ['session-2']);
       assert.deepEqual(Object.keys(saved.idempotency), ['session-2:key']);
       assert.equal(await readFile(sourceNote, 'utf8'), 'Keep this vault note.');
@@ -309,9 +342,7 @@ describe('QuizStore storage regressions', () => {
       assert.equal(retried?.revision, 2);
       assert.equal(retried?.transcript[0].text, 'kept transcript');
       assert.equal(retried?.currentQuestion?.reasoningDraft, 'keep draft');
-      const saved = JSON.parse(
-        await readFile(join(dir, 'sessions.json'), 'utf8'),
-      );
+      const saved = await persistedDatabase(join(dir, 'sessions.json'));
       assert.deepEqual(saved.idempotency.old, {
         fingerprint: 'fp',
         sessionId: 'session-1',
@@ -329,3 +360,30 @@ describe('QuizStore storage regressions', () => {
     });
   });
 });
+
+async function persistedDatabase(path: string) {
+  const store = new QuizStore(path);
+  const sessions = await store.list();
+  const manifest = JSON.parse(await readFile(path, 'utf8'));
+  const idempotency: Record<string, Record<string, unknown>> = {};
+  for (const files of Object.values(manifest.sessions) as {
+    history: string;
+  }[]) {
+    const history = JSON.parse(
+      await readFile(join(`${path}.sessions`, files.history), 'utf8'),
+    );
+    Object.assign(idempotency, history.idempotency);
+  }
+  return {
+    sessions,
+    events: Object.fromEntries(
+      await Promise.all(
+        sessions.map(async (session) => [
+          session.id,
+          await store.events(session.id),
+        ]),
+      ),
+    ),
+    idempotency,
+  };
+}

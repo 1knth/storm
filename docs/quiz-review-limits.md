@@ -162,3 +162,31 @@ session deletion, successful recovery from interrupted migration, schema rollbac
 or backup, and foreign-key behavior. A proposed performance gate is draft saves
 below 50 ms p95 and due-queue reads below 100 ms p95 at the intended history size,
 measured in the packaged runtime; these targets are not current measurements.
+
+## Per-session persistence consolidation (2026-11-06)
+
+QuizStore now imports the version-1 database at first read into a version-2
+manifest at the original path, with immutable files in `<path>.sessions/`.
+Each manifest entry names a history file (session, events, compact receipts) and
+a separate transient file (draft fields and activity). A commit writes new files
+before atomically replacing the manifest, including pooled metadata changes.
+Successful commits remove their superseded files. Interrupted writes can leave
+unreferenced files; they do not change the committed manifest. Missing referenced
+files are errors, never an empty database. The original version-1 bytes remain in
+`<path>.v1-backup`. Rolling back requires restoring that backup, and discards all
+changes made after migration. Unsaved sessions remain memory-only.
+
+The storage experiment above was rerun with the same synthetic fixtures in
+Electron on 2026-11-06. Mean draft writes were 0.8, 1.1, and 3.7 ms for 10, 100,
+and 500 sessions respectively (previously 19.1, 212.4, and 1,263.3 ms).
+Mean activity writes were 0.9, 1.1, and 3.4 ms. The largest draft range was
+2.2–9.1 ms. These are five samples per fixture, not a p95 certification.
+Cold summary timings now include the one-time migration: 40.5, 237.1, and
+2,163.4 ms. The benchmark's reported file MiB measures only the manifest in this
+format and must not be compared with the old database's total bytes.
+
+Draft/activity updates copy the small database containers and the current session,
+reuse unchanged history files, and keep the cache coherent after commit. Semantic
+updates still rewrite the affected session history; transcripts remain unbounded.
+The learner projection, transcript replay, and serialized mastery policies described
+elsewhere remain in place.

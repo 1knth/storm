@@ -277,11 +277,7 @@ export class QuizService {
   }
 
   private async recoverConnectedSessions(): Promise<void> {
-    const sessions = await this.store.list();
-    for (const session of sessions) {
-      if (session.status === 'connected')
-        await this.disconnectAgentExclusive(session.id, session.agentToken);
-    }
+    const sessions = await this.store.recoverConnections(this.now());
     // Transcripts are durable and unbounded. Replay repairs crashes between the
     // feedback commit and derived-model recording, including legacy questions.
     await this.reconcileSessions(sessions);
@@ -695,7 +691,7 @@ export class QuizService {
     const deletions = this.store.deletions;
     const saved = claims ? await this.savedAttempts(current) : undefined;
     let reason: string | undefined;
-    const result = await this.store.setLessonMap(
+    const result = await this.store.transactMetadata(
       request.sessionId,
       request.agentToken,
       (session, sessions) => {
@@ -757,7 +753,7 @@ export class QuizService {
       return 'invalid-input';
     };
     let ended = false;
-    const result = await this.store.setLessonMap(
+    const result = await this.store.transactMetadata(
       request.sessionId,
       request.agentToken,
       (session) => {
@@ -892,7 +888,7 @@ export class QuizService {
       } catch {
         file = undefined;
       }
-    const result = await this.store.setLessonMap(
+    const result = await this.store.transactMetadata(
       request.sessionId,
       request.agentToken,
       (session) =>
