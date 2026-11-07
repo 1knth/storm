@@ -1,29 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { rm, writeFile } from 'node:fs/promises';
 import { QuizStore } from './quizStore';
+import { quizFixture, quizValue as value } from './quizTestFixtures';
 import { QuizService } from './quizService';
 import { createQuizAgentHandler } from './quizAgentHandler';
 import type { AgentRequest } from '../shared/agentProtocol';
-import type {
-  QuizAgentRequest,
-  QuizLearnerRequest,
-  QuizResult,
-} from '../shared/quizProtocol';
 
-function value<T>(result: QuizResult<T>): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.value;
-}
 async function fixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'storm-recovery-'));
-  const path = join(dir, 'quiz.json');
-  const store = new QuizStore(path);
-  const service = new QuizService(store, () => true);
-  const session = value(await service.createSession());
-  const attached = value(await service.attachSession(session.id));
+  const shared = await quizFixture({ connected: true });
+  const { dir, path, store, service, session, attached, driver } = shared;
   const handle = createQuizAgentHandler(service);
   const request = (operation: string, fields = {}) =>
     handle({
@@ -36,21 +22,11 @@ async function fixture() {
       ...fields,
     } as Extract<AgentRequest, { type: 'quiz' }>);
   async function send(type: string, fields = {}, learner = false) {
-    const current = (await service.getSnapshot(session.id))!.session;
-    const action = {
-      type,
-      sessionId: session.id,
-      expectedRevision: current.revision,
-      idempotencyKey: crypto.randomUUID(),
-      ...fields,
-    };
+    await driver.refresh();
     return value(
-      learner
-        ? await service.learnerRequest(action as QuizLearnerRequest)
-        : await service.request({
-            ...action,
-            agentToken: attached.agentToken,
-          } as QuizAgentRequest),
+      await (learner
+        ? driver.learnerInput({ type, ...fields })
+        : driver.agentInput({ type, ...fields })),
     );
   }
   return { dir, path, store, service, session, attached, request, send };

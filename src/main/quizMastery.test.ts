@@ -1,32 +1,24 @@
 import { describe, it as test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import {
+  QuizSessionDriver,
+  quizValue as value,
+  quizScope as vault,
+  quizFixture,
+} from './quizTestFixtures';
 import { QuizService } from './quizService';
 import { quizRevisionChange } from './quizOperations';
 import { QuizStore } from './quizStore';
-import { LearnerStore, learnerScopeKey } from './learnerStore';
+import { learnerScopeKey } from './learnerStore';
 import { createHash } from 'node:crypto';
 import type { LearnerAttempt } from '../shared/learnerModel';
 import { questionFingerprintSource } from '../shared/mastery';
 import {
   QUIZ_PRACTICE_TEST_MAX_TRANSITIONS,
-  type QuizResult,
   type QuizSession,
 } from '../shared/quizProtocol';
-
-const value = (result: QuizResult<QuizSession>) => {
-  assert.equal(result.ok, true, JSON.stringify(result));
-  return (result as { value: QuizSession }).value;
-};
-
-const vault = {
-  vaultId: 'vault',
-  notePath: 'loops.md',
-  selectedNotePaths: [],
-  folderPath: null,
-};
 
 /** A connected session with a two-node map, driven through the public service API. */
 async function fixture(
@@ -36,62 +28,39 @@ async function fixture(
     learner?: boolean;
   } = {},
 ) {
-  const dir = await mkdtemp(join(tmpdir(), 'storm-mastery-'));
-  const store = new QuizStore(join(dir, 'quiz.json'));
-  const learnerStore = new LearnerStore(join(dir, 'learner.json'));
-  if (options.attempts)
-    await store.importLearner({
-      [learnerScopeKey(vault)]: { attempts: options.attempts },
-    });
-  const service = new QuizService(
-    store,
-    () => true,
-    undefined,
-    undefined,
-    undefined,
-    learnerStore,
-  );
-
-  const cleanup = () => rm(dir, { recursive: true, force: true });
+  const shared = await quizFixture({
+    scope: vault,
+    learning: true,
+    beforeService: async (store) => {
+      if (options.attempts)
+        await store.importLearner({
+          [learnerScopeKey(vault)]: { attempts: options.attempts },
+        });
+    },
+  });
   return {
-    ...(await session(service)),
-    store,
-    service,
-    learnerStore,
-    dir,
-    cleanup,
+    ...(await session(shared.service, vault, shared.session)),
+    store: shared.store,
+    service: shared.service,
+    learnerStore: shared.learner,
+    dir: shared.dir,
+    cleanup: shared.cleanup,
   };
 }
 
 /** Another connected quiz in the same vault, sharing its learning pool. */
-async function session(service: QuizService, scope = vault) {
-  const created = value(await service.createSession(scope));
-  const { id, agentToken } = created;
-  let revision = created.revision;
-  let key = 0;
-  const agent = async (type: string, fields = {}) => {
-    const result = await service.request({
-      type,
-      sessionId: id,
-      agentToken,
-      expectedRevision: revision,
-      idempotencyKey: `k${++key}`,
-      ...fields,
-    } as never);
-    if (result.ok) revision = result.value.revision;
-    return result;
-  };
-  const learner = async (type: string, fields = {}) => {
-    const result = await service.learnerRequest({
-      type,
-      sessionId: id,
-      expectedRevision: revision,
-      idempotencyKey: `k${++key}`,
-      ...fields,
-    } as never);
-    if (result.ok) revision = result.value.revision;
-    return result;
-  };
+async function session(
+  service: QuizService,
+  scope = vault,
+  initial?: QuizSession,
+) {
+  const created = initial ?? value(await service.createSession(scope));
+  const { id } = created;
+  const driver = new QuizSessionDriver(service, created);
+  const agent = (type: string, fields = {}) =>
+    driver.agentInput({ type, ...fields });
+  const learner = (type: string, fields = {}) =>
+    driver.learnerInput({ type, ...fields });
   value(await agent('attach'));
   value(
     await agent('lesson-map', {

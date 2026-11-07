@@ -6,67 +6,27 @@ import { join } from 'node:path';
 import { QuizService } from './quizService';
 import { QuizStore } from './quizStore';
 import { LearnerStore, learnerScopeKey } from './learnerStore';
+import {
+  quizFixture,
+  FailingQuizStore,
+  quizScope as scope,
+} from './quizTestFixtures';
 import { createQuizAgentHandler } from './quizAgentHandler';
 
-const scope = {
-  vaultId: 'vault',
-  notePath: 'loops.md',
-  selectedNotePaths: [],
-  folderPath: null,
-};
-
-class FailingQuizStore extends QuizStore {
-  fail = false;
-  constructor(readonly path: string) {
-    super(path);
-  }
-  protected override async atomicWrite(path: string, value: unknown) {
-    if (this.fail && path === this.path) throw new Error('disk unavailable');
-    return super.atomicWrite(path, value);
-  }
-}
-
 async function fixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'storm-learner-'));
-  const learner = new LearnerStore(join(dir, 'learner.json'));
-  const store = new FailingQuizStore(join(dir, 'sessions.json'));
-  const service = new QuizService(
-    store,
-    () => true,
-    undefined,
-    undefined,
-    undefined,
-    learner,
-  );
-  const created = await service.createSession(scope);
-  if (!created.ok) throw new Error('create failed');
-  const attached = await service.attachSession(created.value.id);
-  if (!attached.ok) throw new Error('attach failed');
-  const sessionId = created.value.id;
-  const agentToken = attached.value.agentToken;
-  let revision = attached.value.snapshot.session.revision;
-  let key = 0;
-  const agent = async (fields: Record<string, unknown>) => {
-    const result = await service.request({
-      sessionId,
-      agentToken,
-      expectedRevision: revision,
-      idempotencyKey: `k${++key}`,
-      ...fields,
-    } as never);
-    if (result.ok) revision = result.value.revision;
-    return result;
-  };
-  const learnerAction = async (fields: Record<string, unknown>) => {
-    const result = await service.learnerRequest({
-      sessionId,
-      expectedRevision: revision,
-      idempotencyKey: `k${++key}`,
-      ...fields,
-    } as never);
-    if (result.ok) revision = result.value.revision;
-    return result;
-  };
+  const shared = await quizFixture({
+    scope,
+    connected: true,
+    learning: true,
+    fileName: 'sessions.json',
+    store: (path) => new FailingQuizStore(path),
+  });
+  const { dir, learner, store, service, driver } = shared;
+  const sessionId = driver.id;
+  const agentToken = driver.agentToken;
+  const agent = (fields: Record<string, unknown>) => driver.agentInput(fields);
+  const learnerAction = (fields: Record<string, unknown>) =>
+    driver.learnerInput(fields);
   const question = {
     type: 'pose-question',
     question: 'Which loop repeats until the player says no?',

@@ -25,7 +25,7 @@ Storm is an Electron application. This maintained map describes the shipped impl
 
 ## Development and checks
 
-Use the repository's pinned package manager (`pnpm`, see `package.json`) to install dependencies. Pure source tests use Bun's built-in test runner; an installed Bun runtime is required for them (`bun test`, or `pnpm test`). No additional test dependency is needed. The repository checks are:
+Use the repository's pinned package manager (`pnpm`, see `package.json`) to install dependencies. Pure source tests use Bun's built-in test runner; an installed Bun runtime is required for them (`bun test`, or `pnpm test`). No additional test dependency is needed. Quiz tests share a typed session driver and temporary-store fixtures in `src/main/quizTestFixtures.ts`; question validation and lifecycle tests use the same variant tables. The repository checks are:
 
 - `pnpm test` — the source test suite (Bun required).
 - `pnpm typecheck` — strict TypeScript checks for the app, CLI/build scripts, and portable quiz extension runtime.
