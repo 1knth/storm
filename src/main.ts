@@ -41,7 +41,7 @@ import { AgentBroker } from './main/agentBroker';
 import { createQuizAgentHandler } from './main/quizAgentHandler';
 import { runVaultLifecycleExclusive } from './main/vaultLifecycle';
 import { createTutorNotesFile } from './main/tutorNotesFile';
-import { bindAgentBrokerIpc, registerAgentIpc } from './main/registerAgentIpc';
+import { registerAgentIpc } from './main/registerAgentIpc';
 import { rendererAuthorizer, trustedIpc } from './main/rendererSecurity';
 import {
   resolveAgentNoteTarget,
@@ -281,15 +281,8 @@ agentBroker = new AgentBroker({
     return result.context;
   },
 });
-const removeAgentBrokerIpc = bindAgentBrokerIpc(
-  electronIpcMain,
-  agentBroker,
-  () => agentWindow,
-  () => agentAcceptedUrl,
-);
 app.on('will-quit', () => {
   quizService.disposeImages();
-  removeAgentBrokerIpc();
   agentTransport.dispose?.();
 });
 const quizPublicSession = (

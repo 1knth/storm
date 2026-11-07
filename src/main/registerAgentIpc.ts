@@ -1,8 +1,4 @@
-import type {
-  AgentBroker,
-  AgentRendererRequest,
-  AgentRendererResult,
-} from './agentBroker';
+import type { AgentRendererRequest, AgentRendererResult } from './agentBroker';
 import { isAgentResult } from '../shared/agentBridgeValidation';
 import { rendererAuthorizer } from './rendererSecurity';
 
@@ -193,18 +189,4 @@ export function registerAgentIpc(
       }
     },
   };
-}
-
-export function bindAgentBrokerIpc(
-  ipc: AgentIpcMain,
-  broker: AgentBroker,
-  getWindow: () => AgentWindow | undefined,
-  acceptedUrl: () => string | undefined,
-): () => void {
-  // Compatibility shim for main.ts; no renderer API exposes broker requests.
-  void broker;
-  void getWindow;
-  void acceptedUrl;
-  ipc.removeHandler('agent:request');
-  return () => {};
 }
