@@ -343,6 +343,7 @@ test('activity CLI round-trips through the local endpoint and broker lifecycle',
       dispatch: async (request) => {
         if (request.type === 'snapshot')
           return {
+            kind: 'document',
             ok: true,
             content: '',
             documentVersion: document.version,
@@ -350,18 +351,21 @@ test('activity CLI round-trips through the local endpoint and broker lifecycle',
           };
         if (request.type === 'activity')
           return {
+            kind: 'document',
             ok: true,
             documentVersion: document.version,
             diskRevision: document.revision,
           };
         if (request.type === 'append')
           return {
+            kind: 'document',
             ok: true,
             documentVersion: ++document.version,
             diskRevision: document.revision,
           };
         if (request.type === 'finish')
           return {
+            kind: 'document',
             ok: true,
             documentVersion: document.version,
             diskRevision: document.revision,

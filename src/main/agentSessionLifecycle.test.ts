@@ -38,7 +38,13 @@ describe('agent session finish lifecycle', () => {
       renderer: {
         dispatch: async (call) =>
           call.type === 'snapshot'
-            ? { ok: true, content: '', documentVersion: 0, diskRevision: 'rev' }
+            ? {
+                kind: 'document',
+                ok: true,
+                content: '',
+                documentVersion: 0,
+                diskRevision: 'rev',
+              }
             : {
                 ok: false,
                 code: 'SESSION_CLOSED',
@@ -92,8 +98,19 @@ describe('agent session finish lifecycle', () => {
         dispatch: async (call) => {
           calls.push(call);
           return call.type === 'snapshot'
-            ? { ok: true, content: '', documentVersion: 0, diskRevision: 'rev' }
-            : { ok: true, documentVersion: 0, diskRevision: 'rev' };
+            ? {
+                kind: 'document',
+                ok: true,
+                content: '',
+                documentVersion: 0,
+                diskRevision: 'rev',
+              }
+            : {
+                kind: 'document',
+                ok: true,
+                documentVersion: 0,
+                diskRevision: 'rev',
+              };
         },
       },
     });

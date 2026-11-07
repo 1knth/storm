@@ -1,3 +1,4 @@
+import { documentResult } from './agentTestFixtures';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { registerAgentIpc, type AgentIpcEvent } from './registerAgentIpc';
@@ -99,9 +100,7 @@ test('renderer dispatch accepts only trusted main-frame responses and cancellati
   handlers.get('agent:renderer-ready')!(event);
   const result = transport.dispatch(request);
   const response = {
-    ok: true,
-    documentVersion: 0,
-    diskRevision: 'rev',
+    ...documentResult(),
     content: 'live',
   };
   const listener = handlers.get('agent:renderer-response')!;

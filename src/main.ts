@@ -132,8 +132,7 @@ const quizService = new QuizService(
   (entries) => learnerStore.recordGrades(entries),
   createTutorNotesFile({
     vaults: async () => (await vaultRegistry.list()).vaults,
-    exclusive: (root, operation) =>
-      runVaultLifecycleExclusive(root, () => vaultWriteBarrier.run(operation)),
+    exclusive: (root, operation) => vaultWriteBarrier.mutate(root, operation),
   }),
   (session) =>
     learnerStore.attempts(learnerScopeKey(session.scope, session.id)),
@@ -216,14 +215,13 @@ const studyContext = new StudyContextService(studyStore, {
       vaultId,
       path: relativePath,
     });
-    if (!result.ok || !('inspected' in result))
+    if (!result.ok || !(result.kind === 'inspect'))
       throw new Error('STUDY_RENDERER_UNAVAILABLE');
     return result.open
       ? { text: result.content, saveState: result.saveState }
       : null;
   },
-  capture: (root, operation) =>
-    runVaultLifecycleExclusive(root, () => vaultWriteBarrier.run(operation)),
+  capture: (root, operation) => vaultWriteBarrier.mutate(root, operation),
   read: readStudySource,
 });
 agentBroker = new AgentBroker({
@@ -271,7 +269,7 @@ agentBroker = new AgentBroker({
       type: 'context',
       requestId: randomUUID(),
     });
-    if (!result.ok || !('context' in result))
+    if (!result.ok || !(result.kind === 'context'))
       throw Object.assign(
         new Error(result.ok ? 'Invalid context response' : result.message),
         {
@@ -563,8 +561,8 @@ ipcMain.handle('agent:save-note', async (_event, request: unknown) => {
     typeof value.revision !== 'string'
   )
     throw new Error('Invalid save request');
-  return vaultWriteBarrier.run(async () => {
-    const root = await realpath(value.vaultPath as string);
+  const root = await realpath(value.vaultPath as string);
+  return vaultWriteBarrier.mutate(root, async () => {
     const { vaults } = await vaultRegistry.list();
     const vault = vaults.find((entry) => entry.path === root);
     if (!vault) throw new Error('Vault is not registered');

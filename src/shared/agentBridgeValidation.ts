@@ -95,8 +95,8 @@ export function isAgentResult(value: unknown): value is AgentBridgeResult {
       typeof item.message === 'string'
     );
   if (item.ok !== true) return false;
-  if (item.context !== undefined) return isAgentContext(item.context);
-  if (item.inspected === true)
+  if (item.kind === 'context') return isAgentContext(item.context);
+  if (item.kind === 'inspect')
     return (
       (item.open === false &&
         item.content === undefined &&
@@ -109,7 +109,7 @@ export function isAgentResult(value: unknown): value is AgentBridgeResult {
         typeof item.diskRevision === 'string' &&
         ['pending', 'saved', 'failed'].includes(String(item.saveState)))
     );
-  if (item.preview === true) {
+  if (item.kind === 'preview') {
     if (
       typeof item.content !== 'string' ||
       typeof item.changed !== 'boolean' ||
@@ -127,19 +127,14 @@ export function isAgentResult(value: unknown): value is AgentBridgeResult {
       (item.saveState === undefined || item.saveState === 'saved')
     );
   }
-  if (item.edited === true)
+  if (item.kind === 'edited')
     return (
       typeof item.content === 'string' &&
       safeNonnegativeInt(item.documentVersion) &&
       typeof item.diskRevision === 'string' &&
       item.saveState === 'saved'
     );
-  if (
-    item.inspected !== undefined ||
-    item.preview !== undefined ||
-    item.edited !== undefined
-  )
-    return false;
+  if (item.kind !== 'document') return false;
   return (
     safeNonnegativeInt(item.documentVersion) &&
     typeof item.diskRevision === 'string' &&

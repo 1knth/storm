@@ -181,8 +181,8 @@ export function registerVaultRegistryIpc(
     const { vaults } = await registry.list();
     const vault = vaults.find((entry) => entry.id === id);
     if (!vault) throw new Error('Unknown vault');
-    return withLifecycle(vault.path, () =>
-      writeBarrier.close(async () => {
+    return writeBarrier.close(() =>
+      withLifecycle(vault.path, async () => {
         const { vaults: currentVaults, activeVaultId } = await registry.list();
         if (!currentVaults.some((entry) => entry.id === id))
           throw new Error('Unknown vault');
@@ -201,10 +201,10 @@ export function registerVaultRegistryIpc(
   });
   ipc.handle('vault:registry-unload-all', async () => {
     const { vaults } = await registry.list();
-    return runVaultsLifecycleExclusive(
-      vaults.map((vault) => vault.path),
-      () =>
-        writeBarrier.close(async () => {
+    return writeBarrier.close(() =>
+      runVaultsLifecycleExclusive(
+        vaults.map((vault) => vault.path),
+        async () => {
           const current = await registry.list();
           if (
             current.vaults.some((vault) =>
@@ -218,7 +218,8 @@ export function registerVaultRegistryIpc(
           dependencies.stopWatcher();
           dependencies.clearWatchedVaultId();
           service.clearSelectedVault();
-        }),
+        },
+      ),
     );
   });
 }

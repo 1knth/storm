@@ -87,6 +87,7 @@ type CachedOperation = {
 };
 type Session = {
   id: string;
+  createdAt: number;
   target: AgentNoteTarget;
   name?: string;
   state: AgentSessionStatus['state'];
@@ -105,8 +106,23 @@ const MAX_REMEMBERED_OPERATIONS = 256;
 /** Per-session mutation queue preserves renderer order; operation results are retained up to a bounded count per session. */
 export class AgentBroker {
   private readonly sessions = new Map<string, Session>();
+  private readonly tombstones = new Map<
+    string,
+    {
+      status: AgentSessionStatus;
+      createdAt: number;
+      finishedAt: number;
+      errorCode?: string;
+    }
+  >();
+  private readonly draining = new Map<Session, number>();
+  private readonly terminalOperations = new Map<
+    string,
+    Map<string, CachedOperation>
+  >();
   private readonly patchReceipts = new PatchPreviewReceipts();
   private readonly maintenanceVaults = new Set<string>();
+  private readonly maintenanceWaiters = new Set<() => void>();
   private resolvingConnects = 0;
   private rendererIsReady = true;
   private rendererGeneration = 0;
@@ -116,6 +132,7 @@ export class AgentBroker {
       if (session && session.state !== 'finished') {
         session.state = 'cancelled';
         session.activity = undefined;
+        this.notifyMaintenanceWaiters();
       }
     });
   }
@@ -132,6 +149,7 @@ export class AgentBroker {
         for (const reject of session.cancelWaiters) reject();
       }
     }
+    this.notifyMaintenanceWaiters();
   }
 
   rendererReady(): void {
@@ -151,7 +169,49 @@ export class AgentBroker {
       if (released) return;
       released = true;
       this.maintenanceVaults.delete(vaultId);
+      this.notifyMaintenanceWaiters();
     };
+  }
+
+  /** Wait without polling; timeout and abort remove their subscription. */
+  waitForMaintenanceLease(
+    vaultId: string,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<() => void> {
+    return new Promise((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.maintenanceWaiters.delete(attempt);
+        options.signal?.removeEventListener('abort', abort);
+      };
+      const abort = () => {
+        cleanup();
+        reject(new Error('Maintenance lease acquisition aborted'));
+      };
+      const attempt = () => {
+        if (options.signal?.aborted) return abort();
+        const release = this.acquireMaintenanceLease(vaultId);
+        if (!release) return;
+        cleanup();
+        resolve(release);
+      };
+      this.maintenanceWaiters.add(attempt);
+      options.signal?.addEventListener('abort', abort, { once: true });
+      timer = setTimeout(() => {
+        cleanup();
+        reject(
+          new Error(
+            'Rename timed out waiting for agent sessions to finish. No rename was performed.',
+          ),
+        );
+      }, options.timeoutMs ?? 30_000);
+      attempt();
+    });
+  }
+
+  private notifyMaintenanceWaiters(): void {
+    for (const attempt of this.maintenanceWaiters) attempt();
   }
 
   isMaintenanceLeased(vaultId: string): boolean {
@@ -162,20 +222,16 @@ export class AgentBroker {
     return [...this.sessions.values()].some(
       (session) =>
         session.target.vaultId === vaultId &&
-        (session.state === 'connected' || session.state === 'writing'),
+        (session.state === 'connected' ||
+          session.state === 'writing' ||
+          this.draining.has(session)),
     );
   }
 
   async handle(value: unknown): Promise<AgentResponse> {
     if (!isRequest(value))
       return failure('', 'INVALID_REQUEST', 'Invalid request');
-    // Terminal sessions retain only bounded status/replay metadata, never note contents.
-    const terminal = [...this.sessions.values()].filter(
-      (s) => !['connected', 'writing'].includes(s.state) && s.pending === 0,
-    );
-    for (const session of terminal) session.target.content = '';
-    for (const session of terminal.slice(0, Math.max(0, terminal.length - 256)))
-      this.sessions.delete(session.id);
+    this.cleanupTerminalSessions();
     const request = value;
     const fail = (
       code: string,
@@ -230,7 +286,7 @@ export class AgentBroker {
           path: target.relativePath,
         });
         if (!rendered.ok) return fail(rendered.code, rendered.message);
-        if (!('inspected' in rendered))
+        if (!(rendered.kind === 'inspect'))
           return fail(
             'INTERNAL',
             'Renderer returned a mutation response for inspection',
@@ -273,7 +329,7 @@ export class AgentBroker {
               'Vault rename is in progress; retry shortly',
               true,
             );
-          return await withLifecycle(target.vaultRoot, async () => {
+          const admitted = await withLifecycle(target.vaultRoot, async () => {
             if (this.maintenanceVaults.has(target.vaultId))
               return fail(
                 'VAULT_MAINTENANCE',
@@ -282,6 +338,7 @@ export class AgentBroker {
               );
             await this.options.assertTargetRegistered?.(target);
             const session: Session = {
+              createdAt: Date.now(),
               id: randomUUID(),
               target,
               ...(request.name
@@ -297,6 +354,16 @@ export class AgentBroker {
               cancelWaiters: new Set(),
               outcomeUncertain: false,
             };
+            this.sessions.set(session.id, session);
+            return session;
+          });
+          if (!('id' in admitted)) return admitted;
+          const session = admitted;
+          let connected = false;
+          // Renderer opening can flush a note or activate a vault through IPC.
+          // The registered session fences unload/maintenance while no lock is
+          // held across that round trip.
+          try {
             const generation = this.rendererGeneration;
             const snapshot = await this.options.renderer.dispatch({
               type: 'snapshot',
@@ -313,7 +380,7 @@ export class AgentBroker {
                 true,
               );
             if (!snapshot.ok) return fail(snapshot.code, snapshot.message);
-            if ('inspected' in snapshot || 'context' in snapshot)
+            if (snapshot.kind !== 'document')
               return fail(
                 'INTERNAL',
                 'Renderer returned an inspection response for snapshot',
@@ -324,9 +391,11 @@ export class AgentBroker {
                 'Vault rename is in progress; retry shortly',
                 true,
               );
+            if (session.state !== 'connected')
+              return fail('SESSION_CLOSED', 'Session closed during connect');
             session.version = snapshot.documentVersion;
             session.target.diskRevision = snapshot.diskRevision;
-            this.sessions.set(session.id, session);
+            connected = true;
             return {
               protocol: AGENT_PROTOCOL_VERSION,
               requestId: request.requestId,
@@ -335,9 +404,15 @@ export class AgentBroker {
               session: this.status(session),
               content: snapshot.content ?? target.content,
             };
-          });
+          } finally {
+            if (!connected) {
+              session.state = 'failed';
+              this.sessions.delete(session.id);
+            }
+          }
         } finally {
           this.resolvingConnects--;
+          this.notifyMaintenanceWaiters();
         }
       }
       if (request.type === 'discover') {
@@ -408,11 +483,12 @@ export class AgentBroker {
         }
       }
       if (request.type === 'status') {
+        const all = [...this.sessions.values()]
+          .map((s) => this.status(s))
+          .concat([...this.tombstones.values()].map((t) => t.status));
         const sessions = request.sessionId
-          ? [this.sessions.get(request.sessionId)]
-              .filter((s): s is Session => !!s)
-              .map((s) => this.status(s))
-          : [...this.sessions.values()].map((s) => this.status(s));
+          ? all.filter((s) => s.sessionId === request.sessionId)
+          : all;
         return {
           protocol: AGENT_PROTOCOL_VERSION,
           requestId: request.requestId,
@@ -422,24 +498,27 @@ export class AgentBroker {
         };
       }
       const session = this.sessions.get(request.sessionId);
-      if (!session) return fail('SESSION_NOT_FOUND', 'Unknown session');
+      if (!session) {
+        const terminal = this.tombstones.get(request.sessionId);
+        if (!terminal) return fail('SESSION_NOT_FOUND', 'Unknown session');
+        const replay = this.lookupOperation(
+          { operations: this.terminalOperations.get(request.sessionId)! },
+          request,
+        );
+        if (replay) return { ...(await replay), requestId: request.requestId };
+        if (request.type === 'finish' && terminal.status.state === 'finished')
+          return {
+            protocol: AGENT_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            ok: true,
+            type: 'closed',
+            session: terminal.status,
+          };
+        return fail('SESSION_CLOSED', `Session is ${terminal.status.state}`);
+      }
+      const replay = this.lookupOperation(session, request);
+      if (replay) return { ...(await replay), requestId: request.requestId };
       if (request.type === 'edit-apply' || request.type === 'edit-preview') {
-        const key = request.operationId;
-        const fingerprint = JSON.stringify([
-          request.type,
-          request.expectedVersion,
-          request.plan,
-          request.previewReceipt,
-        ]);
-        const previous = session.operations.get(key);
-        if (previous) {
-          if (previous.fingerprint !== fingerprint)
-            return fail(
-              'DUPLICATE_OPERATION',
-              'Operation ID was already used with different content',
-            );
-          return { ...(await previous.promise), requestId: request.requestId };
-        }
         if (
           request.type === 'edit-apply' &&
           request.plan.type === 'replaceText' &&
@@ -510,27 +589,6 @@ export class AgentBroker {
         };
       }
       if (request.type === 'append') {
-        const fingerprint = JSON.stringify([
-          request.type,
-          request.sequence,
-          request.text,
-        ]);
-        const previous = session.operations.get(request.operationId);
-        if (previous) {
-          if (previous.fingerprint !== fingerprint)
-            return fail(
-              'DUPLICATE_OPERATION',
-              'Operation ID was already used with different content',
-            );
-          try {
-            return {
-              ...(await previous.promise),
-              requestId: request.requestId,
-            };
-          } catch (e) {
-            return fail('INVALID_SEQUENCE', errorMessage(e));
-          }
-        }
         if (session.state !== 'connected' && session.state !== 'writing')
           return fail('SESSION_CLOSED', 'Session is not writable');
         if (
@@ -542,7 +600,7 @@ export class AgentBroker {
           return fail('QUEUE_FULL', 'Session queue is full', true);
         session.activity = undefined;
         session.state = 'writing';
-        const promise = this.runSessionOperation(session, async () => {
+        const promise = this.runSessionOperation(session, request, async () => {
           if (session.state !== 'connected' && session.state !== 'writing')
             throw new Error('SESSION_CLOSED');
           if (request.sequence !== session.sequence + 1)
@@ -573,7 +631,7 @@ export class AgentBroker {
               code: result.code,
             });
           }
-          if ('inspected' in result || 'context' in result)
+          if (result.kind !== 'document')
             throw new Error('Renderer returned an invalid response for append');
           this.observeDocument(
             session,
@@ -595,14 +653,6 @@ export class AgentBroker {
           };
         });
         const accepted = promise;
-        session.operations.set(request.operationId, {
-          fingerprint,
-          promise: accepted,
-        });
-        while (session.operations.size > MAX_REMEMBERED_OPERATIONS) {
-          const oldest = session.operations.keys().next().value;
-          if (oldest) session.operations.delete(oldest);
-        }
         try {
           return { ...(await accepted), requestId: request.requestId };
         } catch (error) {
@@ -616,13 +666,6 @@ export class AgentBroker {
         }
       }
       if (request.type === 'edit-preview' || request.type === 'edit-apply') {
-        const cacheKey = request.operationId;
-        const fingerprint = JSON.stringify([
-          request.type,
-          request.expectedVersion,
-          request.plan,
-          request.previewReceipt,
-        ]);
         if (session.state !== 'connected' && session.state !== 'writing')
           return fail('SESSION_CLOSED', 'Session is not writable');
 
@@ -631,6 +674,7 @@ export class AgentBroker {
         if (request.type === 'edit-apply') session.outcomeUncertain = true;
         const resultPromise = this.runSessionOperation(
           session,
+          request,
           async (): Promise<AgentResponse> => {
             if (session.state !== 'connected' && session.state !== 'writing')
               return fail('SESSION_CLOSED', 'Session is not writable');
@@ -701,8 +745,8 @@ export class AgentBroker {
             }
             if (!rendered.ok) return fail(rendered.code, rendered.message);
             if (
-              'inspected' in rendered ||
-              !('preview' in rendered || 'edited' in rendered)
+              rendered.kind === 'inspect' ||
+              !(rendered.kind === 'preview' || rendered.kind === 'edited')
             )
               return fail(
                 'INTERNAL',
@@ -719,7 +763,7 @@ export class AgentBroker {
                 'SESSION_CLOSED',
                 'Session closed before acknowledgement',
               );
-            if ('preview' in rendered) {
+            if (rendered.kind === 'preview') {
               let receiptFields = {};
               if (
                 request.type === 'edit-preview' &&
@@ -788,16 +832,6 @@ export class AgentBroker {
             errorMessage(error),
           ),
         );
-        {
-          session.operations.set(cacheKey, {
-            fingerprint,
-            promise: resultPromise,
-          });
-          while (session.operations.size > MAX_REMEMBERED_OPERATIONS) {
-            const oldest = session.operations.keys().next().value;
-            if (oldest) session.operations.delete(oldest);
-          }
-        }
         const response = await resultPromise;
         return { ...response, requestId: request.requestId };
       }
@@ -822,11 +856,7 @@ export class AgentBroker {
         });
         // Cancellation remains fenced, but its response is authoritative observation
         // of the renderer's document state (not acknowledgement of queued writes).
-        if (
-          cancellation.ok &&
-          !('inspected' in cancellation) &&
-          !('context' in cancellation)
-        ) {
+        if (cancellation.ok && cancellation.kind === 'document') {
           this.observeDocument(
             session,
             cancellation.documentVersion,
@@ -861,7 +891,10 @@ export class AgentBroker {
               code: rendererResult.code,
             });
           }
-          if ('inspected' in rendererResult || 'context' in rendererResult)
+          if (
+            rendererResult.kind === 'inspect' ||
+            rendererResult.kind === 'context'
+          )
             throw new Error('Renderer returned an invalid response for finish');
           if (session.state !== 'connected' && session.state !== 'writing')
             throw new Error('SESSION_CLOSED');
@@ -893,8 +926,36 @@ export class AgentBroker {
       };
     } catch (error) {
       return fail('INTERNAL', errorMessage(error));
+    } finally {
+      this.notifyMaintenanceWaiters();
     }
   }
+  private cleanupTerminalSessions(): void {
+    for (const session of this.sessions.values()) {
+      if (
+        session.pending ||
+        this.draining.has(session) ||
+        session.state === 'connected' ||
+        session.state === 'writing'
+      )
+        continue;
+      this.tombstones.set(session.id, {
+        status: this.status(session),
+        createdAt: session.createdAt,
+        finishedAt: Date.now(),
+        ...(session.state === 'failed' ? { errorCode: 'SESSION_CLOSED' } : {}),
+      });
+      this.terminalOperations.set(session.id, session.operations);
+      session.target.content = '';
+      this.sessions.delete(session.id);
+    }
+    while (this.tombstones.size > 256) {
+      const oldest = this.tombstones.keys().next().value!;
+      this.tombstones.delete(oldest);
+      this.terminalOperations.delete(oldest);
+    }
+  }
+
   private fenceSession(session: Session, state: 'cancelled' | 'disconnected') {
     this.patchReceipts.revokeSession(session.id);
     session.state = state;
@@ -903,10 +964,55 @@ export class AgentBroker {
     for (const reject of session.cancelWaiters) reject();
   }
   /** Shared admission accounting and cancellation settlement for document operations. */
-  private runSessionOperation<T>(
+  private operationIdentity(
+    request: AgentRequest,
+  ): { key: string; fingerprint: string } | null {
+    if (request.type === 'append')
+      return {
+        key: request.operationId,
+        fingerprint: JSON.stringify([
+          request.type,
+          request.sequence,
+          request.text,
+        ]),
+      };
+    if (request.type === 'edit-preview' || request.type === 'edit-apply')
+      return {
+        key: request.operationId,
+        fingerprint: JSON.stringify([
+          request.type,
+          request.expectedVersion,
+          request.plan,
+          request.previewReceipt,
+        ]),
+      };
+    return null;
+  }
+
+  private lookupOperation(
+    session: Pick<Session, 'operations'>,
+    request: AgentRequest,
+  ): Promise<AgentResponse> | undefined {
+    const identity = this.operationIdentity(request);
+    if (!identity) return;
+    const previous = session.operations.get(identity.key);
+    if (!previous) return;
+    if (previous.fingerprint !== identity.fingerprint)
+      return Promise.resolve(
+        failure(
+          request.requestId,
+          'DUPLICATE_OPERATION',
+          'Operation ID was already used with different content',
+        ),
+      );
+    return previous.promise;
+  }
+
+  private runSessionOperation(
     session: Session,
-    operation: () => Promise<T>,
-  ): Promise<T> {
+    request: AgentRequest,
+    operation: () => Promise<AgentResponse>,
+  ): Promise<AgentResponse> {
     session.pending++;
     let cancel = () => {};
     const cancelled = new Promise<never>((_, reject) => {
@@ -914,6 +1020,7 @@ export class AgentBroker {
       session.cancelWaiters.add(cancel);
     });
     const generation = this.rendererGeneration;
+    this.draining.set(session, (this.draining.get(session) ?? 0) + 1);
     const work = this.enqueue(session, async () => {
       if (
         generation !== this.rendererGeneration ||
@@ -923,12 +1030,45 @@ export class AgentBroker {
         throw new Error('SESSION_CLOSED');
       return operation();
     });
-    return Promise.race([work, cancelled]).finally(() => {
-      session.cancelWaiters.delete(cancel);
-      session.pending--;
-      if (session.pending === 0 && session.state === 'writing')
-        session.state = 'connected';
+    void work
+      .finally(() => {
+        const remaining = this.draining.get(session)! - 1;
+        if (remaining) this.draining.set(session, remaining);
+        else this.draining.delete(session);
+        this.notifyMaintenanceWaiters();
+      })
+      .catch(() => {});
+    const result = Promise.race([work, cancelled])
+      .finally(() => {
+        session.cancelWaiters.delete(cancel);
+        session.pending--;
+        this.notifyMaintenanceWaiters();
+        if (session.pending === 0 && session.state === 'writing')
+          session.state = 'connected';
+      })
+      .catch((error) =>
+        failure(
+          request.requestId,
+          (error as { code?: string }).code ??
+            (errorMessage(error) === 'sequence'
+              ? 'INVALID_SEQUENCE'
+              : request.type === 'append' ||
+                  errorMessage(error) === 'SESSION_CLOSED'
+                ? 'SESSION_CLOSED'
+                : 'INTERNAL'),
+          errorMessage(error),
+        ),
+      );
+    const identity = this.operationIdentity(request)!;
+    session.operations.set(identity.key, {
+      fingerprint: identity.fingerprint,
+      promise: result,
     });
+    while (session.operations.size > MAX_REMEMBERED_OPERATIONS) {
+      const oldest = session.operations.keys().next().value;
+      if (oldest) session.operations.delete(oldest);
+    }
+    return result;
   }
   private enqueue<T>(
     session: Session,

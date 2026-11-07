@@ -41,6 +41,7 @@ describe('AgentBroker route isolation', () => {
           rendererCalls.push(request);
           if (request.type === 'snapshot')
             return {
+              kind: 'document',
               ok: true,
               content: '',
               documentVersion: 4,
@@ -50,7 +51,7 @@ describe('AgentBroker route isolation', () => {
           if (request.type === 'edit-preview')
             return {
               ok: true,
-              preview: true,
+              kind: 'preview',
               content: plan.content,
               changed: true,
               documentVersion: 4,
@@ -59,12 +60,13 @@ describe('AgentBroker route isolation', () => {
           if (request.type === 'edit-apply')
             return {
               ok: true,
-              edited: true,
+              kind: 'edited',
+              saveState: 'saved',
               content: plan.content,
               documentVersion: 5,
               diskRevision: 'r1',
             };
-          return { ok: true, inspected: true, open: false };
+          return { ok: true, kind: 'inspect', open: false };
         },
       },
       quiz: async (request) => {

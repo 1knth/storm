@@ -94,13 +94,13 @@ describe('agent bridge validators', () => {
 
   test('accepts valid result variants and legacy preview metadata omissions', () => {
     assert.equal(
-      isAgentResult({ ok: true, inspected: true, open: false }),
+      isAgentResult({ ok: true, kind: 'inspect', open: false }),
       true,
     );
     assert.equal(
       isAgentResult({
         ok: true,
-        preview: true,
+        kind: 'preview',
         content: 'x',
         changed: true,
         documentVersion: 0,
@@ -111,7 +111,7 @@ describe('agent bridge validators', () => {
     assert.equal(
       isAgentResult({
         ok: true,
-        preview: true,
+        kind: 'preview',
         content: 'x',
         changed: true,
         documentVersion: 0,
@@ -136,7 +136,7 @@ describe('agent bridge validators', () => {
     assert.equal(
       isAgentResult({
         ok: true,
-        edited: true,
+        kind: 'edited',
         content: 'x',
         documentVersion: 1,
         diskRevision: 'd',
@@ -148,13 +148,13 @@ describe('agent bridge validators', () => {
 
   test('rejects malformed discriminated results and optional preview metadata', () => {
     assert.equal(
-      isAgentResult({ ok: true, inspected: true, open: true }),
+      isAgentResult({ ok: true, kind: 'inspect', open: true }),
       false,
     );
     assert.equal(
       isAgentResult({
         ok: true,
-        inspected: true,
+        kind: 'inspect',
         open: false,
         documentVersion: -1,
         diskRevision: 'd',
@@ -164,7 +164,7 @@ describe('agent bridge validators', () => {
     assert.equal(
       isAgentResult({
         ok: true,
-        preview: true,
+        kind: 'preview',
         content: 'x',
         changed: true,
         documentVersion: 0,
@@ -176,7 +176,7 @@ describe('agent bridge validators', () => {
     assert.equal(
       isAgentResult({
         ok: true,
-        preview: true,
+        kind: 'preview',
         content: 'x',
         changed: true,
         documentVersion: 0,
@@ -188,7 +188,7 @@ describe('agent bridge validators', () => {
     assert.equal(
       isAgentResult({
         ok: true,
-        edited: true,
+        kind: 'edited',
         content: 'x',
         documentVersion: 0,
         diskRevision: 'd',
