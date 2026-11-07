@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
 import { SessionManager } from '../node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js';
+import { describe, expect, test } from 'bun:test';
 import {
   createWaitRuntime,
   parseWaitResponse,
@@ -12,9 +12,7 @@ import {
   attachPrompt,
   compactLearnerState,
   modelSession,
-  pruneStormContext,
-  reattachPrompt,
-  compactAttachPrompts,
+  projectStormContext,
   STORM_PRUNE_STEP,
   externalSourceAllowed,
   withReaderFallback,
@@ -115,92 +113,9 @@ describe('model-safe quiz context', () => {
       agentToken: 'synthetic-secret',
     });
     expect(prompt).not.toContain('synthetic-secret');
-    expect(prompt).toContain(
-      'set the explicit verdict field to correct, partial, or incorrect',
-    );
-    expect(prompt).toContain('do not repeat a verdict heading');
-    expect(prompt).toContain('Never use Markdown headings');
-    expect(prompt).toContain('inline Markdown only');
-    expect(prompt).toContain(
-      "address the learner's supplied reasoning specifically",
-    );
-    expect(prompt).toContain('do not use em dashes');
-    expect(prompt).toContain('Do not add a separate Continue instruction');
-    expect(prompt).toContain(
-      'kind next-steps or clarification and 1–6 structured choices',
-    );
-    expect(prompt).toContain(
-      'Keep explanations as thorough as the material requires',
-    );
-    expect(prompt).not.toContain('**Verdict** —');
-    expect(prompt).toContain('Keep the explicit Continue gate');
-    expect(prompt).toContain('Substantial teaching is welcome');
-    expect(prompt).toContain('the line breaks and blank lines are intentional');
-    expect(prompt).toContain(
-      'A writer argues,\n\n*“The college should extend evening library hours.”*\n\nWhich addition identifies an exception, a **circumstance** in which that recommendation might not apply, rather than **evidence**, a **warrant**, or a **qualifier**?',
-    );
-    expect(prompt).toContain('real newline characters and blank lines');
-  });
-
-  test('unscoped attach asks for study context without assuming a source location', () => {
-    const prompt = attachPrompt({ id: 'draft', status: 'connected' });
-    expect(prompt).toContain('No study scope was supplied');
-    expect(prompt).toContain('ask what they are studying');
-    expect(prompt).toContain('registered Storm CLI discovery tools');
-    expect(prompt).not.toContain('scope:');
-    expect(
-      JSON.stringify(modelSession({ id: 'draft', status: 'connected' })),
-    ).not.toContain('scope');
-  });
-
-  test('attach provides adaptive practice and confidence policy without weakening Continue or Skip', () => {
-    const prompt = attachPrompt({ id: 'quiz', status: 'connected' });
-    for (const guidance of [
-      'After Continue and before choosing or posing a question, read storm with action learner',
-      'Tag every substantive question with concepts, level, and support',
-      'Reuse existing concept IDs',
-      'help actually supplied, not help merely planned',
-      'action support-update',
-      'strongest support (independent < hinted < worked)',
-      'Levels are recall, explain, apply, transfer',
-      'independent performance, zpd',
-      'beyond (teach with support first)',
-      'explain new material before testing it',
-      'Target predicted independent success of 0.70–0.85',
-      'at most about a third of questions',
-      'easiest ZPD concept first at its recommended level and support',
-      'After two misses at one level, step down a level or add support',
-      'a worked example or contrasting case',
-      'Above the band independently, raise the level, offer transfer, or move on',
-      'Fade support from worked to hinted to independent',
-      'Once two or more concepts are introduced, mix earlier concepts in',
-      'data.confidence (0–100)',
-      'High-confidence incorrect or partial answers (>=70) are correction candidates',
-      'Low-confidence correct answers need brief reinforcement of why',
-      'calibration.guidanceEligible is true',
-      'at least 20 ratings',
-      'at most one brief, supportive comment per session',
-      'fresh item at the recommended level and support',
-      'Recommendations are advisory; explicit learner requests win',
-      'Never present model numbers as grades or as a mastery verdict',
-      'Mastery verdicts follow the Tutor evidence criteria',
-      'Rated graded answers inform confidence calibration even when untagged',
-      'Keep the existing Continue and Skip rules',
-      'continue only after explicit Continue or learner Skip',
-      'use storm with action skip-question',
-    ])
-      expect(prompt).toContain(guidance);
-  });
-
-  test('attach states extension waiter ownership so the clipboard need not repeat it', () => {
-    const prompt = attachPrompt({ id: 'quiz', status: 'connected' });
-    for (const guidance of [
-      'The extension owns learner-event delivery in this session',
-      'do not start another attach, wait subprocess, listener, polling loop, or subagent',
-      'then end your turn',
-      'makes no idle model calls',
-    ])
-      expect(prompt).toContain(guidance);
+    expect(prompt).toContain('"id":"q"');
+    expect(prompt).toContain('"scope":"scope"');
+    expect(prompt).not.toContain('Adaptive practice');
   });
 
   test('recurring learner notifications stay compact without repeating attach guidance', () => {
@@ -575,228 +490,6 @@ describe('context savings', () => {
     ]);
     expect(compact.conceptDefaults).toContain('false');
   });
-
-  const call = (id: string, name: string, args: Record<string, unknown>) => ({
-    role: 'assistant',
-    content: [{ type: 'toolCall', id, name, arguments: args }],
-  });
-  const result = (id: string, name: string, text: string) => ({
-    role: 'toolResult',
-    toolCallId: id,
-    toolName: name,
-    content: [{ type: 'text', text }],
-  });
-  const filler = (n: number) =>
-    Array.from({ length: n }, (_, i) => ({
-      role: 'user',
-      content: `filler ${i}`,
-    }));
-  const conversation = () => [
-    {
-      role: 'user',
-      content:
-        'You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"quiz-a","note":"first {state}"}. Long instructions.',
-    },
-    call('l1', 'storm', { action: 'learner' }),
-    result('l1', 'storm', '{"learner":"one","omittedConcepts":0}'),
-    call('n1', 'storm', { action: 'notes', text: 'full notes v1' }),
-    result('n1', 'storm', '{"tutorNotes":{"version":1}}'),
-    call('st1', 'storm', { action: 'status' }),
-    result('st1', 'storm', '{"studyContextChanged":{"available":true}}'),
-    call('s1', 'storm_study', { action: 'retrieve', query: 'a' }),
-    result(
-      's1',
-      'storm_study',
-      '{"snapshotId":"snap","chunks":[{"text":"source"}]}',
-    ),
-    {
-      role: 'user',
-      content:
-        'You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"quiz-a","note":"second"}. Long instructions.',
-    },
-    call('l2', 'storm', { action: 'learner' }),
-    result('l2', 'storm', '{"learner":"two","omittedConcepts":0}'),
-    call('n2', 'storm', { action: 'notes', text: 'full notes v2' }),
-    result('n2', 'storm', '{"tutorNotes":{"version":2}}'),
-    call('st2', 'storm', { action: 'status' }),
-    result('st2', 'storm', '{"revision":9}'),
-  ];
-  const text = (m: any) =>
-    typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-
-  test('nothing changes before the first boundary', () => {
-    const messages = conversation();
-    expect(pruneStormContext(messages)).toBe(messages);
-  });
-
-  test('superseded Storm material becomes stubs and the latest stays verbatim', () => {
-    const messages = [...conversation(), ...filler(STORM_PRUNE_STEP * 2)];
-    const pruned = pruneStormContext(messages) as any[];
-    expect(text(pruned[0])).toBe(
-      'Earlier Storm attach. Follow the full instructions retained in this conversation; its quiz state then was: {"id":"quiz-a","note":"first {state}"}',
-    );
-    expect(text(pruned[9])).toContain('second');
-    expect(text(pruned[2])).toContain('superseded by a later learner read');
-    expect(text(pruned[11])).toBe(text(messages[11]));
-    expect(pruned[3].content[0].arguments.text).toContain('Superseded');
-    expect(pruned[12].content[0].arguments.text).toBe('full notes v2');
-    // A status that reported a scope change keeps its bootstrap.
-    expect(text(pruned[6])).toContain('studyContextChanged');
-    // Study packets are never stubbed.
-    expect(text(pruned[8])).toContain('source');
-    expect(messages[0].content).toContain('Long instructions');
-  });
-
-  test('failed reads and notes writes do not supersede earlier ones', () => {
-    const messages = [
-      call('l1', 'storm', { action: 'learner' }),
-      result('l1', 'storm', '{"learner":"one","omittedConcepts":0}'),
-      call('n1', 'storm', { action: 'notes', text: 'saved notes' }),
-      result('n1', 'storm', '{"tutorNotes":{"version":1}}'),
-      call('l2', 'storm', { action: 'learner' }),
-      { ...result('l2', 'storm', 'CLI failed'), isError: true },
-      call('st1', 'storm', { action: 'status' }),
-      result('st1', 'storm', '{"revision":1}'),
-      call('st2', 'storm', { action: 'status' }),
-      result(
-        'st2',
-        'storm',
-        'No Storm quiz attached; use /storm attach SESSION_ID.',
-      ),
-      call('n2', 'storm', { action: 'notes', text: 'x'.repeat(7000) }),
-      { ...result('n2', 'storm', 'too long'), isError: true },
-      ...filler(STORM_PRUNE_STEP),
-    ];
-    expect(pruneStormContext(messages)).toBe(messages);
-  });
-
-  test('a learner read that omitted concepts does not replace earlier ones', () => {
-    const messages = [
-      call('l1', 'storm', { action: 'learner' }),
-      result('l1', 'storm', '{"concepts":[{"id":"old"}],"omittedConcepts":0}'),
-      call('l2', 'storm', { action: 'learner' }),
-      result('l2', 'storm', '{"concepts":[{"id":"new"}],"omittedConcepts":1}'),
-      ...filler(STORM_PRUNE_STEP),
-    ];
-    expect(pruneStormContext(messages)).toBe(messages);
-  });
-
-  test('reads and notes about another quiz or learner scope are kept', () => {
-    const attach = (id: string) => ({
-      role: 'user',
-      content: `You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"${id}"}. Instructions.`,
-    });
-    const messages = [
-      attach('quiz-a'),
-      call('l1', 'storm', { action: 'learner' }),
-      result('l1', 'storm', '{"scopeKey":"vault-a","omittedConcepts":0}'),
-      call('n1', 'storm', { action: 'notes', text: 'quiz A notes' }),
-      result('n1', 'storm', '{"tutorNotes":{"version":1}}'),
-      attach('quiz-b'),
-      call('l2', 'storm', { action: 'learner' }),
-      // Same vault learner scope, different quiz.
-      result('l2', 'storm', '{"scopeKey":"vault-a","omittedConcepts":0}'),
-      call('n2', 'storm', { action: 'notes', text: 'quiz B notes' }),
-      result('n2', 'storm', '{"tutorNotes":{"version":1}}'),
-      ...filler(STORM_PRUNE_STEP),
-    ] as any[];
-    const pruned = pruneStormContext(messages) as any[];
-    expect(text(pruned[2])).toContain('vault-a');
-    expect(pruned[3].content[0].arguments.text).toBe('quiz A notes');
-    // Only the repeated attach instructions go.
-    expect(text(pruned[0])).toContain(
-      'its quiz state then was: {"id":"quiz-a"}',
-    );
-  });
-
-  test('an attach whose instructions differ from the latest is kept', () => {
-    const attach = (id: string, guidance: string) => ({
-      role: 'user',
-      content: `You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"${id}"}. ${guidance}`,
-    });
-    const messages = [
-      attach('quiz-a', 'Scoped guidance.'),
-      attach('quiz-b', 'Unscoped guidance.'),
-      ...filler(STORM_PRUNE_STEP),
-    ] as any[];
-    expect(pruneStormContext(messages)).toBe(messages);
-  });
-
-  test('a result separated from its call by an attach supersedes nothing', () => {
-    const attach = (id: string) => ({
-      role: 'user',
-      content: `You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"${id}"}. Instructions.`,
-    });
-    const messages = [
-      attach('quiz-b'),
-      call('st1', 'storm', { action: 'status' }),
-      result('st1', 'storm', '{"revision":1}'),
-      call('st2', 'storm', { action: 'status' }),
-      // An attach whose quiz state cannot be read starts its own segment.
-      {
-        role: 'user',
-        content:
-          'You are tutoring in an explicitly attached Storm quiz. Malformed.',
-      },
-      result('st2', 'storm', '{"revision":2}'),
-      ...filler(STORM_PRUNE_STEP),
-    ] as any[];
-    const pruned = pruneStormContext(messages) as any[];
-    expect(text(pruned[2])).not.toContain('superseded');
-  });
-
-  test('a result separated from its call by an attach is not superseded', () => {
-    const attach = (id: string) => ({
-      role: 'user',
-      content: `You are tutoring in an explicitly attached Storm quiz. Initial quiz state: {"id":"${id}"}. Instructions.`,
-    });
-    const messages = [
-      attach('quiz-a'),
-      call('c1', 'storm', { action: 'status' }),
-      attach('quiz-b'),
-      result('c1', 'storm', '{"id":"quiz-a","revision":7}'),
-      call('c2', 'storm', { action: 'status' }),
-      result('c2', 'storm', '{"id":"quiz-b","revision":1}'),
-      ...filler(STORM_PRUNE_STEP),
-    ] as any[];
-    const pruned = pruneStormContext(messages) as any[];
-    expect(text(pruned[3])).not.toContain('superseded');
-  });
-
-  test('results pair with the latest call of a reused id', () => {
-    const messages = [
-      call('call_0', 'storm', { action: 'status' }),
-      result('call_0', 'storm', '{"revision":1}'),
-      call('call_0', 'storm', { action: 'question', text: 'Q' }),
-      result(
-        'call_0',
-        'storm',
-        '{"message":"Storm quiz updated (pose-question)."}',
-      ),
-      call('call_1', 'storm', { action: 'status' }),
-      result('call_1', 'storm', '{"revision":2}'),
-      ...filler(STORM_PRUNE_STEP),
-    ] as any[];
-    const pruned = pruneStormContext(messages) as any[];
-    expect(text(pruned[1])).toContain('superseded by a later status read');
-    // The question write result is not mistaken for a status read.
-    expect(text(pruned[3])).toContain('pose-question');
-  });
-
-  test('later reads only stub earlier ones once the boundary passes them', () => {
-    const base = [...conversation(), ...filler(STORM_PRUNE_STEP * 2 - 4)];
-    const before = pruneStormContext(base);
-    // A learner read arriving after the boundary leaves the prefix untouched.
-    const after = pruneStormContext([
-      ...base,
-      call('l3', 'storm', { action: 'learner' }),
-      result('l3', 'storm', '{"learner":"three","omittedConcepts":0}'),
-    ]);
-    expect(JSON.stringify(after.slice(0, before.length))).toBe(
-      JSON.stringify(before),
-    );
-    expect(text(after[11])).toContain('two');
-  });
 });
 
 describe('reader fallback', () => {
@@ -853,132 +546,85 @@ test('externalSource must be a non-Markdown file inside the vault', () => {
   expect(externalSourceAllowed('/vault/Slides/W1.pdf', undefined)).toBe(false);
 });
 
-describe('reattach', () => {
-  const session = { id: 'quiz-a', revision: 3, status: 'connected' };
-  test('effective SDK context restores full attaches after compaction or omission', () => {
-    const full = attachPrompt(
-      { ...session, tutorNotes: { text: 'Retained plan', version: 2 } },
-      { study: { indexRevision: 'r1', entries: [{ path: 'retained.pdf' }] } },
-    );
-    for (const operation of ['compact', 'omit'] as const) {
-      const manager = SessionManager.inMemory();
-      const first = manager.appendMessage({
-        role: 'user',
-        content: full,
-        timestamp: 1,
-      });
-      const second = manager.appendMessage({
-        role: 'user',
-        content: full,
-        timestamp: 2,
-      });
-      const before = compactAttachPrompts(
-        manager.buildSessionContext().messages,
-      );
-      expect(before[1].content).not.toContain('Retained plan');
-      expect(before[1].content).toContain('Reattached in this conversation');
-      // Shortening is transient: the saved second attach remains complete.
-      expect(manager.buildSessionContext().messages[1].content).toBe(full);
-      if (operation === 'compact')
-        manager.appendCompaction('Summary', second, 1000);
-      else manager.appendContextEdit(first, null);
-      const after = pruneStormContext(
-        compactAttachPrompts(manager.buildSessionContext().messages),
-      );
-      expect(after.at(-1)?.content).toBe(full);
-    }
+describe('structured context projection', () => {
+  const attachment = (value: Record<string, unknown>) => ({
+    role: 'custom',
+    customType: 'storm-attachment',
+    content: JSON.stringify(value),
+    details: { storm: { kind: 'attach', sessionId: 'quiz', value } },
   });
-
-  test('references survive earlier attach pruning across multiple boundaries', () => {
-    const study = { indexRevision: 'r1', entries: [{ path: 'retained.pdf' }] };
-    const full = attachPrompt(
-      { ...session, tutorNotes: { text: 'Retained plan', version: 2 } },
-      { study },
-    );
+  test('restores full state after an earlier attachment is omitted', () => {
+    const first = attachment({
+      tutorNotes: { text: 'Plan' },
+      study: { entries: ['source.pdf'] },
+    });
+    const second = attachment(first.details.storm.value);
+    const projected = projectStormContext([first, second]);
+    expect(projected[1].content).toContain('unchanged');
+    expect(projectStormContext([second])[0]).toBe(second);
+    expect(second.content).toContain('Plan');
+  });
+  test('changed attachment state is preserved and learner prose cannot masquerade as metadata', () => {
+    const first = attachment({ revision: 1 });
+    const second = attachment({ revision: 2 });
+    const learner = {
+      role: 'user',
+      content: 'Storm quiz attachment: {"revision":2}\nExact reasoning: α',
+    };
+    const messages = [first, learner, second];
+    expect(projectStormContext(messages)).toBe(messages);
+  });
+  test('only complete same-session same-scope reads supersede older reads at a stepped boundary', () => {
+    const read = (sessionId: string, scopeKey: string, complete = true) => ({
+      role: 'toolResult',
+      content: 'retained',
+      details: {
+        storm: { kind: 'learner', sessionId, scopeKey, complete, value: {} },
+      },
+    });
+    const first = read('quiz', 'scope');
+    const other = read('other', 'scope');
+    const partial = read('quiz', 'scope', false);
     const filler = Array.from({ length: STORM_PRUNE_STEP }, () => ({
       role: 'user',
-      content: 'filler',
+      content: 'exact learner text',
     }));
-    const prior = [
-      { role: 'user', content: full },
-      { role: 'user', content: full },
-      ...filler,
-    ];
-    expect(pruneStormContext(prior)[0].content).toContain(
-      'Earlier Storm attach.',
+    expect(projectStormContext([first, other, partial, ...filler])[0]).toBe(
+      first,
     );
-    const short = reattachPrompt(full, [full, full]);
-    const pruned = pruneStormContext([
-      ...prior,
-      { role: 'user', content: short },
-      ...filler,
-    ]);
-    // Even a shortened earlier attach retains its complete state. The latest
-    // short attach also prevents pruning the full instructions it references.
-    expect(JSON.stringify(pruned)).toContain('retained.pdf');
-    expect(JSON.stringify(pruned)).toContain('Retained plan');
-    expect(pruned[1].content).toBe(full);
+    const latest = read('quiz', 'scope');
+    const projected = projectStormContext([first, other, latest, ...filler]);
+    expect(JSON.stringify(projected[0].content)).toContain('superseded');
+    expect(projected[1]).toBe(other);
+    expect(projected[2]).toBe(latest);
+    expect(projected[3]).toBe(filler[0]);
   });
+});
 
-  test('a re-attach with instructions already held sends only the state', () => {
-    const first = attachPrompt(session, { contextId: 'one' });
-    const again = attachPrompt(
-      { ...session, revision: 4 },
-      { contextId: 'two' },
-    );
-    const short = reattachPrompt(again, ['other message', first]);
-    expect(short.length).toBeLessThan(again.length / 3);
-    expect(short).toContain('"revision":4');
-    expect(short).toContain('"contextId":"two"');
-    expect(short).toContain('instructions given in the earlier attach above');
-    // The pruner keeps the earlier full attach, whose instructions differ.
-    const messages = [
-      { role: 'user', content: first },
-      { role: 'user', content: short },
-      ...Array.from({ length: STORM_PRUNE_STEP }, (_, i) => ({
-        role: 'user',
-        content: `filler ${i}`,
-      })),
-    ];
-    expect(pruneStormContext(messages)).toBe(messages);
-  });
-
-  test('an unchanged study listing and notes text are referenced, changed ones sent', () => {
-    const study = {
-      available: true,
-      indexRevision: 'r1',
-      entries: [{ path: 'a.pdf' }],
-    };
-    const notes = { text: 'Plan: logic laws', version: 2 };
-    const first = attachPrompt({ ...session, tutorNotes: notes }, { study });
-    const same = reattachPrompt(
-      attachPrompt({ ...session, tutorNotes: notes }, { study }),
-      [first],
-    );
-    expect(same).not.toContain('a.pdf');
-    expect(same).not.toContain('Plan: logic laws');
-    expect(same).toContain('indexRevision r1) is in the earlier attach');
-    const changed = reattachPrompt(
-      attachPrompt(
-        { ...session, tutorNotes: { text: 'Plan v3', version: 3 } },
-        {
-          study: {
-            ...study,
-            indexRevision: 'r2',
-            entries: [{ path: 'b.pdf' }],
-          },
-        },
-      ),
-      [first],
-    );
-    expect(changed).toContain('b.pdf');
-    expect(changed).toContain('Plan v3');
-  });
-
-  test('instructions not already held are sent in full', () => {
-    const scoped = attachPrompt({ ...session, scope: { folderPath: '.' } });
-    const unscoped = attachPrompt(session);
-    expect(reattachPrompt(unscoped, [scoped])).toBe(unscoped);
-    expect(reattachPrompt(unscoped, [])).toBe(unscoped);
-  });
+test('saved Pi custom attachments restore their complete state after compaction', () => {
+  const manager = SessionManager.inMemory();
+  const details = {
+    storm: {
+      kind: 'attach',
+      sessionId: 'quiz',
+      value: { tutorNotes: { text: 'Durable plan' } },
+    },
+  };
+  manager.appendCustomMessageEntry(
+    'storm-attachment',
+    'Durable plan',
+    true,
+    details,
+  );
+  const second = manager.appendCustomMessageEntry(
+    'storm-attachment',
+    'Durable plan',
+    true,
+    details,
+  );
+  const before = projectStormContext(manager.buildSessionContext().messages);
+  expect(before[1].content).toContain('unchanged');
+  manager.appendCompaction('Summary', second, 1000);
+  const after = projectStormContext(manager.buildSessionContext().messages);
+  expect(after.at(-1)?.content).toBe('Durable plan');
 });
