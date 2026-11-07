@@ -188,5 +188,7 @@ format and must not be compared with the old database's total bytes.
 Draft/activity updates copy the small database containers and the current session,
 reuse unchanged history files, and keep the cache coherent after commit. Semantic
 updates still rewrite the affected session history; transcripts remain unbounded.
-The learner projection, transcript replay, and serialized mastery policies described
-elsewhere remain in place.
+Attempt facts commit in each session history file with feedback and receipts.
+Legacy learner facts and facts retained after quiz deletion live in a learning
+archive referenced by the same manifest. Learner reads do not replay transcripts
+or write a second projection.

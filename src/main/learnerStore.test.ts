@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QuizService } from './quizService';
@@ -15,23 +15,28 @@ const scope = {
   folderPath: null,
 };
 
-async function fixture(
-  record?: (
-    store: LearnerStore,
-  ) => ConstructorParameters<typeof QuizService>[5],
-) {
+class FailingQuizStore extends QuizStore {
+  fail = false;
+  constructor(readonly path: string) {
+    super(path);
+  }
+  protected override async atomicWrite(path: string, value: unknown) {
+    if (this.fail && path === this.path) throw new Error('disk unavailable');
+    return super.atomicWrite(path, value);
+  }
+}
+
+async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'storm-learner-'));
   const learner = new LearnerStore(join(dir, 'learner.json'));
-  const store = new QuizStore(join(dir, 'sessions.json'));
+  const store = new FailingQuizStore(join(dir, 'sessions.json'));
   const service = new QuizService(
     store,
     () => true,
     undefined,
     undefined,
     undefined,
-    record
-      ? record(learner)
-      : (session, question) => learner.recordQuestion(session, question),
+    learner,
   );
   const created = await service.createSession(scope);
   if (!created.ok) throw new Error('create failed');
@@ -73,6 +78,7 @@ async function fixture(
   return {
     dir,
     learner,
+    store,
     service,
     sessionId,
     agentToken,
@@ -205,46 +211,38 @@ test('invalid learning tags and confidence values are rejected', async () => {
   }
 });
 
-test('a learner-model failure does not fail the accepted feedback write', async () => {
-  const f = await fixture(() => async () => {
-    throw new Error('disk full');
-  });
-  try {
-    await f.agent({ ...f.question, concepts: ['loops'], level: 'recall' });
-    await f.learnerAction({ type: 'answer', choiceId: 'a', reasoning: '' });
-    const feedback = await f.agent({
-      type: 'feedback',
-      text: 'Correct.',
-      verdict: 'correct',
-    });
-    assert.equal(feedback.ok, true);
-    assert.equal(
-      feedback.ok && feedback.value.currentQuestion?.status,
-      'feedback',
-    );
-  } finally {
-    await f.cleanup();
-  }
-});
-
-test('records are idempotent by question and persisted with private permissions', async () => {
+test('failed publication commits neither feedback nor attempts; retry commits both', async () => {
   const f = await fixture();
   try {
     await f.agent({ ...f.question, concepts: ['loops'], level: 'recall' });
     await f.learnerAction({ type: 'answer', choiceId: 'a', reasoning: '' });
-    await f.agent({ type: 'feedback', text: 'Correct.', verdict: 'correct' });
-    const [first] = await f.learner.attempts(learnerScopeKey(scope));
-    await f.learner.record(learnerScopeKey(scope), {
-      ...first!,
-      verdict: 'partial',
-    });
-    const attempts = await f.learner.attempts(learnerScopeKey(scope));
-    assert.equal(attempts.length, 1);
-    assert.equal(attempts[0]!.verdict, 'partial');
-    const saved = JSON.parse(
-      await readFile(join(f.dir, 'learner.json'), 'utf8'),
+    f.store.fail = true;
+    assert.equal(
+      (
+        await f.agent({
+          type: 'feedback',
+          text: 'Correct.',
+          verdict: 'correct',
+        })
+      ).ok,
+      false,
     );
-    assert.equal(saved.version, 1);
+    assert.equal((await f.learner.attempts(learnerScopeKey(scope))).length, 0);
+    assert.equal(
+      (await f.store.get(f.sessionId))?.currentQuestion?.status,
+      'answered',
+    );
+    f.store.fail = false;
+    assert.ok(
+      (
+        await f.agent({
+          type: 'feedback',
+          text: 'Correct.',
+          verdict: 'correct',
+        })
+      ).ok,
+    );
+    assert.equal((await f.learner.attempts(learnerScopeKey(scope))).length, 1);
   } finally {
     await f.cleanup();
   }
@@ -402,76 +400,10 @@ test('help updates retain strongest supplied support through answer, grade and r
   }
 });
 
-test('learner read repairs failed recording after Continue exactly once at the original grade time', async () => {
-  let failing = true;
-  const f = await fixture((learner) => async (session, question) => {
-    if (failing) throw new Error('sensitive failure detail');
-    await learner.recordQuestion(session, question);
-  });
+test('restart after Continue reads committed facts at the original grade time without recording', async () => {
+  const f = await fixture();
   try {
     await f.agent({ ...f.question, concepts: ['loops'], level: 'recall' });
-    await f.learnerAction({
-      type: 'answer',
-      choiceId: 'a',
-      reasoning: '',
-      confidence: 70,
-    });
-    const feedback = await f.agent({
-      type: 'feedback',
-      text: 'Correct.',
-      verdict: 'correct',
-    });
-    assert.ok(feedback.ok);
-    if (!feedback.ok) return;
-    const gradedAt = feedback.value.currentQuestion!.gradedAt;
-    const handler = createQuizAgentHandler(f.service, (s, id) =>
-      f.learner.state(s, id),
-    );
-    const read = () =>
-      handler({
-        protocol: 1,
-        requestId: 'learner',
-        type: 'quiz',
-        operation: 'learner',
-        sessionId: f.sessionId,
-        agentToken: f.agentToken,
-      });
-    const pending = await read();
-    assert.ok('result' in pending && pending.result.ok);
-    if (!('result' in pending && pending.result.ok)) return;
-    const diagnostics = (pending.result.value as any).recording;
-    assert.equal(diagnostics.pending, 1);
-    assert.ok(diagnostics.failures >= 1);
-    assert.equal(diagnostics.lastError, 'LEARNER_RECORDING_RETRY_PENDING');
-    assert.ok(!JSON.stringify(pending).includes('sensitive failure detail'));
-    await f.learnerAction({ type: 'continue' });
-    await f.agent({
-      type: 'agent-message',
-      text: 'Later activity must not move the grade time.',
-    });
-    failing = false;
-    const repaired = await read();
-    assert.equal(
-      'result' in repaired &&
-        repaired.result.ok &&
-        (repaired.result.value as any).recording.pending,
-      0,
-    );
-    await Promise.all([read(), read(), read()]);
-    const attempts = await f.learner.attempts(learnerScopeKey(scope));
-    assert.equal(attempts.length, 1);
-    assert.equal(attempts[0]?.at, gradedAt);
-  } finally {
-    await f.cleanup();
-  }
-});
-
-test('restart recovers a grade from durable history after recording failed and current question was cleared', async () => {
-  const f = await fixture(() => async () => {
-    throw new Error('disk unavailable');
-  });
-  try {
-    await f.agent(f.question);
     await f.learnerAction({
       type: 'answer',
       choiceId: 'a',
@@ -480,42 +412,38 @@ test('restart recovers a grade from durable history after recording failed and c
     });
     const feedback = await f.agent({
       type: 'feedback',
-      text: 'A missing condition.',
-      verdict: 'incorrect',
+      text: 'Correct.',
+      verdict: 'correct',
     });
     assert.ok(feedback.ok);
     if (!feedback.ok) return;
-    const gradedAt = feedback.value.currentQuestion!.gradedAt;
+    const at = feedback.value.currentQuestion!.gradedAt;
     await f.learnerAction({ type: 'continue' });
-    // New instances discard all process memory, simulating a crash after durable feedback.
     const learner = new LearnerStore(join(f.dir, 'learner.json'));
+    const store = new QuizStore(join(f.dir, 'sessions.json'));
     const restarted = new QuizService(
-      new QuizStore(join(f.dir, 'sessions.json')),
+      store,
       () => true,
-      () => '2099-01-01T00:00:00.000Z',
       undefined,
       undefined,
-      (session, question) => learner.recordQuestion(session, question),
+      undefined,
+      learner,
     );
     await restarted.listSessions();
-    await restarted.reconcileLearner(f.sessionId);
+    await Promise.all([
+      restarted.reconcileLearner(f.sessionId),
+      restarted.reconcileLearner(f.sessionId),
+    ]);
     const attempts = await learner.attempts(learnerScopeKey(scope));
     assert.equal(attempts.length, 1);
-    assert.equal(attempts[0]?.at, gradedAt);
-    assert.equal(attempts[0]?.support, 'unknown');
-    assert.equal(attempts[0]?.confidence, 90);
+    assert.equal(attempts[0].at, at);
   } finally {
     await f.cleanup();
   }
 });
 
-test('feedback retry repairs uncertain recording without duplicating a question', async () => {
-  let writes = 0;
-  const f = await fixture((learner) => async (session, question) => {
-    await learner.recordQuestion(session, question);
-    if (++writes === 1)
-      throw new Error('record persisted, acknowledgement lost');
-  });
+test('lost feedback acknowledgement retries do not duplicate committed facts', async () => {
+  const f = await fixture();
   try {
     await f.agent({ ...f.question, concepts: ['loops'], level: 'recall' });
     await f.learnerAction({
@@ -524,7 +452,7 @@ test('feedback retry repairs uncertain recording without duplicating a question'
       reasoning: '',
       confidence: 60,
     });
-    const before = (await f.service.getSnapshot(f.sessionId))!.session;
+    const before = (await f.store.get(f.sessionId))!;
     const request = {
       type: 'feedback' as const,
       text: 'Correct.',
@@ -532,16 +460,14 @@ test('feedback retry repairs uncertain recording without duplicating a question'
       sessionId: f.sessionId,
       agentToken: f.agentToken,
       expectedRevision: before.revision,
-      idempotencyKey: 'uncertain-feedback',
+      idempotencyKey: 'uncertain',
     };
     assert.ok((await f.service.request(request)).ok);
-    assert.equal(f.service.learnerRecordingDiagnostics().pending, 1);
     assert.ok((await f.service.request(request)).ok);
-    assert.equal(f.service.learnerRecordingDiagnostics().pending, 0);
     assert.equal((await f.learner.attempts(learnerScopeKey(scope))).length, 1);
     assert.equal(
-      (await f.service.getSnapshot(f.sessionId))!.session.transcript.filter(
-        (m) => m.question?.verdict,
+      (await f.store.get(f.sessionId))!.transcript.filter(
+        (message) => message.question?.verdict,
       ).length,
       1,
     );
@@ -603,11 +529,15 @@ test('unscoped learner pools stay isolated and ignore the legacy global unscoped
     const [old] = await f.learner.attempts(
       learnerScopeKey(undefined, a.sessionId),
     );
-    await f.learner.record('unscoped', {
-      ...old!,
-      id: 'legacy',
-      confidence: 50,
-    });
+    await writeFile(
+      join(f.dir, 'learner.json'),
+      JSON.stringify({
+        version: 1,
+        scopes: {
+          unscoped: { attempts: [{ ...old!, id: 'legacy', confidence: 50 }] },
+        },
+      }),
+    );
     const handler = createQuizAgentHandler(f.service, (s, id) =>
       f.learner.state(s, id),
     );
@@ -635,7 +565,7 @@ test('unscoped learner pools stay isolated and ignore the legacy global unscoped
   }
 });
 
-test('large startup replay is batched, retried on failure, then skipped on repeated learner reads', async () => {
+test('large legacy transcript import is bounded and repeated learner reads perform no writes', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'storm-batch-replay-'));
   try {
     const at = '2026-11-01T09:00:00.000Z';
@@ -681,64 +611,66 @@ test('large startup replay is batched, retried on failure, then skipped on repea
       }),
     );
     const learner = new LearnerStore(join(dir, 'learner.json'));
-    let batches = 0;
-    let merges = 0;
-    const merge = learner.recordMany.bind(learner);
-    learner.recordMany = async (key, attempts) => {
-      merges++;
-      await merge(key, attempts);
-    };
+    const store = new QuizStore(join(dir, 'sessions.json'));
     const service = new QuizService(
-      new QuizStore(join(dir, 'sessions.json')),
+      store,
       () => true,
       undefined,
       undefined,
       undefined,
-      undefined,
-      async (entries) => {
-        batches++;
-        assert.equal(entries.length, 2000);
-        if (batches === 1) throw new Error('temporary failure');
-        await learner.recordGrades(entries);
-      },
+      learner,
     );
     await service.listSessions();
-    assert.equal(service.learnerRecordingDiagnostics().pending, 2000);
-    const repaired = await service.reconcileLearner('history');
-    assert.equal(repaired.pending, 0);
-    assert.equal(repaired.failures, 0);
-    assert.equal(batches, 2);
-    assert.equal(merges, 1);
-    const before = await stat(join(dir, 'learner.json'));
-    await service.reconcileLearner('history');
-    await service.reconcileLearner('history');
-    assert.equal(batches, 2);
-    assert.equal(merges, 1);
+    const manifest = await readFile(join(dir, 'sessions.json'), 'utf8');
+    for (let i = 0; i < 10; i++) await service.reconcileLearner('history');
+    assert.equal(
+      await readFile(join(dir, 'sessions.json'), 'utf8'),
+      manifest,
+      'learner reads must not write',
+    );
     const attempts = await learner.attempts(learnerScopeKey(scope));
     assert.equal(attempts.length, 2000);
-    assert.ok(attempts.every((a) => a.at === at));
-    // Even a fresh process replay should leave an identical derived file untouched.
+    assert.ok(attempts.every((attempt) => attempt.at === at));
     const fresh = new LearnerStore(join(dir, 'learner.json'));
-    await fresh.recordMany(learnerScopeKey(scope), attempts);
-    const after = await stat(join(dir, 'learner.json'));
-    assert.equal(after.ino, before.ino);
-    assert.equal(after.mtimeMs, before.mtimeMs);
-    await fresh.recordMany(learnerScopeKey(scope), [
-      { ...attempts[0], verdict: 'partial' },
-    ]);
-    assert.equal(
-      (await fresh.attempts(learnerScopeKey(scope))).filter(
-        (a) => a.id === attempts[0].id,
-      ).length,
-      1,
-    );
-    assert.equal(
-      (await fresh.attempts(learnerScopeKey(scope))).find(
-        (a) => a.id === attempts[0].id,
-      )?.verdict,
-      'partial',
-    );
+    await fresh.connect(new QuizStore(join(dir, 'sessions.json')));
+    assert.deepEqual(await fresh.attempts(learnerScopeKey(scope)), attempts);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('legacy learner facts import once, retain deleted-session evidence, and ignore later legacy edits', async () => {
+  const f = await fixture();
+  try {
+    const path = join(f.dir, 'legacy.json');
+    const attempt = {
+      id: 'legacy-question',
+      sessionId: 'deleted',
+      scopeSignature: 'old',
+      at: '2026-01-01T00:00:00.000Z',
+      concepts: ['loops'],
+      level: 'recall',
+      support: 'independent',
+      verdict: 'incorrect',
+    };
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        scopes: { [learnerScopeKey(scope)]: { attempts: [attempt] } },
+      }),
+    );
+    const store = new QuizStore(join(f.dir, 'import.json'));
+    const learner = new LearnerStore(path);
+    await learner.connect(store);
+    assert.deepEqual(await learner.attempts(learnerScopeKey(scope)), [attempt]);
+    await writeFile(path, 'corrupted after successful import');
+    const reopened = new LearnerStore(path);
+    await reopened.connect(new QuizStore(join(f.dir, 'import.json')));
+    assert.deepEqual(await reopened.attempts(learnerScopeKey(scope)), [
+      attempt,
+    ]);
+  } finally {
+    await f.cleanup();
   }
 });

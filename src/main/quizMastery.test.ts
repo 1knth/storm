@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { QuizDeletionBlocked, QuizService } from './quizService';
+import { QuizService } from './quizService';
 import { QuizStore } from './quizStore';
 import { LearnerStore, learnerScopeKey } from './learnerStore';
 import { createHash } from 'node:crypto';
@@ -44,18 +44,9 @@ async function fixture(
     undefined,
     undefined,
     undefined,
-    options.learner
-      ? (session, question) => learnerStore.recordQuestion(session, question)
-      : undefined,
-    options.learner
-      ? (entries) => learnerStore.recordGrades(entries)
-      : undefined,
-    undefined,
-    options.learner
-      ? (session) =>
-          learnerStore.attempts(learnerScopeKey(session.scope, session.id))
-      : options.learnerAttempts,
+    learnerStore,
   );
+  if (options.learnerAttempts) store.attempts = options.learnerAttempts;
   const cleanup = () => rm(dir, { recursive: true, force: true });
   return {
     ...(await session(service)),
@@ -884,13 +875,13 @@ describe('mastery evidence', () => {
       const claimer = await session(f.service);
       await master(f);
       // Hold the claimer's saved-evidence read, then miss in f and delete it.
-      const original = f.learnerStore.attempts.bind(f.learnerStore);
+      const original = f.store.attempts.bind(f.store);
       let release!: () => void;
       const released = new Promise<void>((resolve) => (release = resolve));
       let reached!: () => void;
       const reading = new Promise<void>((resolve) => (reached = resolve));
-      f.learnerStore.attempts = async (key: string) => {
-        f.learnerStore.attempts = original;
+      f.store.attempts = async (key: string) => {
+        f.store.attempts = original;
         const attempts = await original(key);
         reached();
         await released;
@@ -956,15 +947,17 @@ describe('mastery evidence', () => {
     }
   });
 
-  test('a quiz whose grades are not saved yet cannot be deleted', async () => {
+  test('deleting a quiz retains its atomically committed attempt facts', async () => {
     const f = await fixture({ learner: true });
     try {
-      f.learnerStore.recordGrades = async () => {
-        throw new Error('disk full');
-      };
-      await f.item('Missed while recording fails', { verdict: 'incorrect' });
-      await assert.rejects(f.service.deleteSession(f.id), QuizDeletionBlocked);
-      assert.ok(await f.store.get(f.id));
+      await f.item('Missed before deletion', { verdict: 'incorrect' });
+      const before = await f.learnerStore.attempts(learnerScopeKey(vault));
+      await f.service.deleteSession(f.id);
+      assert.equal(await f.store.get(f.id), undefined);
+      assert.deepEqual(
+        await f.learnerStore.attempts(learnerScopeKey(vault)),
+        before,
+      );
     } finally {
       await f.cleanup();
     }

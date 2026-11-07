@@ -1,9 +1,6 @@
-import { mkdir, readFile, rename, writeFile, stat, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { KeyedQueue } from '../shared/asyncQueue';
+import { readFile, stat } from 'node:fs/promises';
+import type { QuizStore } from './quizStore';
 import {
-  LEARNER_LIMITS,
   computeLearnerState,
   type LearnerAttempt,
   type LearnerState,
@@ -74,12 +71,18 @@ export function learnerAttempt(
 }
 
 export class LearnerStore {
-  private readonly queue = new KeyedQueue();
   private cache?: { signature: string; data: LearnerDatabase };
   constructor(
     private readonly file: string,
     private readonly now = () => new Date(),
   ) {}
+
+  private source?: QuizStore;
+  async connect(source: QuizStore): Promise<void> {
+    if (!(await source.hasLearnerImport()))
+      await source.importLearner((await this.load()).scopes);
+    this.source = source;
+  }
 
   private async load(): Promise<LearnerDatabase> {
     try {
@@ -100,72 +103,8 @@ export class LearnerStore {
     }
   }
 
-  /** Idempotent by question ID; a batch performs one load, comparison and write. */
-  async recordMany(
-    scopeKey: string,
-    attempts: LearnerAttempt[],
-  ): Promise<void> {
-    if (!attempts.length) return;
-    await this.queue.run('store', async () => {
-      const original = await this.load();
-      const previous = original.scopes[scopeKey]?.attempts ?? [];
-      const merged = new Map(previous.map((attempt) => [attempt.id, attempt]));
-      for (const attempt of attempts) merged.set(attempt.id, attempt);
-      const next = [...merged.values()]
-        .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
-        .slice(-LEARNER_LIMITS.attemptsPerScope);
-      if (JSON.stringify(previous) === JSON.stringify(next)) return;
-      const data = structuredClone(original);
-      data.scopes[scopeKey] = { attempts: structuredClone(next) };
-      await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
-      const temporary = `${this.file}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(temporary, JSON.stringify(data), { mode: 0o600 });
-        await rename(temporary, this.file);
-      } finally {
-        await rm(temporary, { force: true });
-      }
-      this.cache = undefined;
-    });
-  }
-
-  async record(scopeKey: string, attempt: LearnerAttempt): Promise<void> {
-    await this.recordMany(scopeKey, [attempt]);
-  }
-
-  /** Group a full replay across sessions into one merge per learning pool. */
-  async recordGrades(
-    entries: Array<{
-      session: Pick<
-        QuizSession,
-        'id' | 'scope' | 'updatedAt' | 'practiceTestLog'
-      >;
-      question: QuizQuestion;
-    }>,
-  ): Promise<void> {
-    const scopes = new Map<string, LearnerAttempt[]>();
-    for (const { session, question } of entries) {
-      const attempt = learnerAttempt(session, question);
-      if (!attempt) continue;
-      const key = learnerScopeKey(session.scope, session.id);
-      const attempts = scopes.get(key) ?? [];
-      attempts.push(attempt);
-      scopes.set(key, attempts);
-    }
-    for (const [key, attempts] of scopes) await this.recordMany(key, attempts);
-  }
-
-  async recordQuestion(
-    session: Pick<
-      QuizSession,
-      'id' | 'scope' | 'updatedAt' | 'practiceTestLog'
-    >,
-    question: QuizQuestion,
-  ): Promise<void> {
-    await this.recordGrades([{ session, question }]);
-  }
-
   async attempts(scopeKey: string): Promise<LearnerAttempt[]> {
+    if (this.source) return this.source.attempts(scopeKey);
     return structuredClone(
       (await this.load()).scopes[scopeKey]?.attempts ?? [],
     );

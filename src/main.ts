@@ -17,7 +17,7 @@ import { readLastVault } from './vault/vaultPreferences';
 import { VaultRegistry } from './vault/vaultRegistry';
 import { QuizStore } from './main/quizStore';
 import { QuizDeletionBlocked, QuizService } from './main/quizService';
-import { LearnerStore, learnerScopeKey } from './main/learnerStore';
+import { LearnerStore } from './main/learnerStore';
 import { isQuizConfidence } from './shared/quizProtocol';
 import { StudyContextService } from './main/studyContextService';
 import { StudyContextStore } from './main/studyContextStore';
@@ -152,15 +152,12 @@ const quizService = new QuizService(
       `pending:${sessionId}:${operationId}`,
       revision,
     ),
-  (session, question) => learnerStore.recordQuestion(session, question),
-  (entries) => learnerStore.recordGrades(entries),
+  learnerStore,
   createTutorNotesFile({
     vaults: async () => (await vaultRegistry.list()).vaults,
     exclusive: (root, operation) =>
       runVaultLifecycleExclusive(root, () => vaultWriteBarrier.run(operation)),
   }),
-  (session) =>
-    learnerStore.attempts(learnerScopeKey(session.scope, session.id)),
 );
 let shutdownAllowed = false;
 let quitConfirmationInFlight = false;

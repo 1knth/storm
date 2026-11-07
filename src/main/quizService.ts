@@ -33,10 +33,14 @@ import type { LearnerAttempt } from '../shared/learnerModel';
 import {
   masteryEvidence,
   masteryShortfall,
-  questionFingerprintSource,
   type MasteryExposure,
 } from '../shared/mastery';
-import { learnerAttempt, learnerScopeKey } from './learnerStore';
+import { learnerScopeKey, type LearnerStore } from './learnerStore';
+import {
+  gradedQuestions,
+  fingerprintOf,
+  sessionEvidence,
+} from './quizEvidence';
 import { QuizStore } from './quizStore';
 import type { TutorNotesFile } from './tutorNotesFile';
 import {
@@ -65,72 +69,6 @@ function isValidScope(scope: QuizScope): boolean {
     (scope.notePath === null && hasFolder && noSelection) ||
     (scope.notePath === null && scope.folderPath === null && hasSelected)
   );
-}
-
-/** Every graded question in a session, rebuilt from its durable transcript. */
-function gradedQuestions(session: QuizSession): QuizQuestion[] {
-  const questions = new Map<string, QuizQuestion>();
-  for (const message of session.transcript) {
-    const question = message.question;
-    if (!question?.verdict) continue;
-    questions.set(question.id, {
-      ...question,
-      gradedAt: question.gradedAt ?? message.createdAt,
-      status: 'feedback',
-      selectedChoiceId: null,
-      reasoningDraft: '',
-      feedback: message.text,
-    });
-  }
-  const current = session.currentQuestion;
-  if (current?.verdict && !questions.has(current.id))
-    questions.set(current.id, {
-      ...current,
-      gradedAt: current.gradedAt ?? session.updatedAt,
-    });
-  return [...questions.values()];
-}
-
-/** Fingerprint only what the learner is shown for the item's kind. */
-const fingerprintOf = (
-  question: Parameters<typeof questionFingerprintSource>[0],
-) => {
-  const kind = question.kind ?? 'multiple-choice';
-  return createHash('sha256')
-    .update(
-      questionFingerprintSource({
-        kind,
-        prompt: question.prompt,
-        choices: kind === 'multiple-choice' ? question.choices : [],
-        ...(kind === 'matching'
-          ? { leftItems: question.leftItems, rightItems: question.rightItems }
-          : {}),
-      }),
-    )
-    .digest('hex');
-};
-
-/** A session's graded attempts and every item it showed the learner. */
-function sessionEvidence(session: QuizSession): {
-  attempts: LearnerAttempt[];
-  exposures: MasteryExposure[];
-} {
-  const attempts = gradedQuestions(session).flatMap(
-    (question) => learnerAttempt(session, question) ?? [],
-  );
-  const exposures = session.transcript.flatMap((message) =>
-    message.kind === 'question' && message.question
-      ? [
-          {
-            id: message.question.id,
-            at: message.createdAt,
-            fingerprint:
-              message.question.fingerprint ?? fingerprintOf(message.question),
-          },
-        ]
-      : [],
-  );
-  return { attempts, exposures };
 }
 
 /**
@@ -234,11 +172,6 @@ export class QuizService {
   readonly imageRegistry = new QuizImageRegistry();
   private attachQueue: Promise<void> = Promise.resolve();
   private readonly startupRecovery: Promise<void>;
-  private reconciliationQueue: Promise<unknown> = Promise.resolve();
-  private readonly recordingFailures = new Map<string, string>();
-  private readonly recordedGrades = new Map<string, string>();
-  private readonly recordingFailureCounts = new Map<string, number>();
-  private readonly unmodelledQuestions = new Map<string, string>();
 
   constructor(
     private readonly store: QuizStore,
@@ -257,19 +190,8 @@ export class QuizService {
       operationId: string,
       revision: number,
     ) => Promise<void>,
-    /** Records graded answers after their durable feedback commit. Must be idempotent by question ID. */
-    private readonly recordAttempt?: (
-      session: QuizSession,
-      question: QuizQuestion,
-    ) => Promise<void>,
-    private readonly recordAttempts?: (
-      entries: Array<{ session: QuizSession; question: QuizQuestion }>,
-    ) => Promise<void>,
+    private readonly learning?: LearnerStore,
     private readonly tutorNotesFile?: TutorNotesFile,
-    /** Persisted attempts in the session's learning pool, for mastery evidence. */
-    private readonly learnerAttempts?: (
-      session: QuizSession,
-    ) => Promise<LearnerAttempt[]>,
   ) {
     // A persisted connected state belongs to a prior process. Recover it once,
     // before any new operation can attach or observe a session.
@@ -277,136 +199,18 @@ export class QuizService {
   }
 
   private async recoverConnectedSessions(): Promise<void> {
-    const sessions = await this.store.recoverConnections(this.now());
-    // Transcripts are durable and unbounded. Replay repairs crashes between the
-    // feedback commit and derived-model recording, including legacy questions.
-    await this.reconcileSessions(sessions);
+    await this.learning?.connect(this.store);
+    await this.store.recoverConnections(this.now());
   }
 
-  private gradeFingerprint(
-    session: QuizSession,
-    question: QuizQuestion,
-  ): string {
-    return JSON.stringify([
-      session.scope,
-      question.id,
-      question.gradedAt ?? session.updatedAt,
-      question.learning,
-      question.suppliedSupport,
-      question.verdict,
-      question.confidence,
-      question.fingerprint,
-      question.testId,
-      !!question.testId &&
-        !!session.practiceTestLog?.completed.includes(question.testId),
-      question.reasoning,
-    ]);
-  }
-
-  private async recordGradedQuestions(
-    entries: Array<{ session: QuizSession; question: QuizQuestion }>,
-  ): Promise<void> {
-    const pending = entries.filter(({ session, question }) => {
-      if (!question.verdict) return false;
-      if (!question.learning)
-        this.unmodelledQuestions.set(question.id, session.id);
-      return (
-        (this.recordAttempt || this.recordAttempts) &&
-        (question.learning || question.confidence !== undefined) &&
-        this.recordedGrades.get(`${session.id}:${question.id}`) !==
-          this.gradeFingerprint(session, question)
-      );
-    });
-    const save = async (batch: typeof pending) => {
-      try {
-        if (this.recordAttempts) await this.recordAttempts(batch);
-        else
-          for (const { session, question } of batch)
-            await this.recordAttempt!(session, question);
-        for (const { session, question } of batch) {
-          this.recordedGrades.set(
-            `${session.id}:${question.id}`,
-            this.gradeFingerprint(session, question),
-          );
-          this.recordingFailures.delete(question.id);
-        }
-        const failedSessions = new Set(this.recordingFailures.values());
-        for (const { session } of batch) {
-          if (!failedSessions.has(session.id))
-            this.recordingFailureCounts.delete(session.id);
-        }
-      } catch {
-        for (const { session, question } of batch) {
-          this.recordingFailures.set(question.id, session.id);
-          this.recordingFailureCounts.set(
-            session.id,
-            (this.recordingFailureCounts.get(session.id) ?? 0) + 1,
-          );
-        }
-      }
-    };
-    if (!pending.length) return;
-    if (this.recordAttempts) await save(pending);
-    else for (const entry of pending) await save([entry]);
-  }
-
-  private async recordGradedQuestion(
-    session: QuizSession,
-    question: QuizQuestion,
-  ): Promise<void> {
-    await this.recordGradedQuestions([{ session, question }]);
-  }
-
-  private async reconcileSessions(sessions: QuizSession[]): Promise<void> {
-    const entries: Array<{ session: QuizSession; question: QuizQuestion }> = [];
-    for (const session of sessions)
-      for (const question of gradedQuestions(session))
-        entries.push({ session, question });
-    await this.recordGradedQuestions(entries);
-  }
-
-  /** Retry durable grades before serving model state, serializing concurrent reads. */
-  async reconcileLearner(sessionId: string) {
+  /** Compatibility diagnostic surface; facts commit atomically with feedback. */
+  async reconcileLearner(_sessionId: string) {
     await this.startupRecovery;
-    const operation = this.reconciliationQueue.then(async () => {
-      const current = await this.store.get(sessionId);
-      const scopeSessions = new Set<string>([sessionId]);
-      if (current) {
-        const sessions = await this.store.list({ includeDrafts: true });
-        const relevant = sessions.filter((session) =>
-          current.scope
-            ? session.scope?.vaultId === current.scope.vaultId
-            : session.id === sessionId,
-        );
-        for (const session of relevant) scopeSessions.add(session.id);
-        await this.reconcileSessions(relevant);
-      }
-      return this.learnerRecordingDiagnostics(scopeSessions);
-    });
-    this.reconciliationQueue = operation.catch(() => {});
-    return operation;
+    return this.learnerRecordingDiagnostics(new Set([_sessionId]));
   }
 
-  learnerRecordingDiagnostics(sessionIds?: ReadonlySet<string>): {
-    pending: number;
-    failures: number;
-    unmodelled: number;
-    lastError?: string;
-  } {
-    const included = (id: string) => !sessionIds || sessionIds.has(id);
-    const pending = [...this.recordingFailures.values()].filter(
-      included,
-    ).length;
-    return {
-      pending,
-      failures: [...this.recordingFailureCounts].reduce(
-        (total, [id, count]) => total + (included(id) ? count : 0),
-        0,
-      ),
-      unmodelled: [...this.unmodelledQuestions.values()].filter(included)
-        .length,
-      ...(pending ? { lastError: 'LEARNER_RECORDING_RETRY_PENDING' } : {}),
-    };
+  learnerRecordingDiagnostics(_sessionIds?: ReadonlySet<string>) {
+    return this.store.recordingDiagnostics(_sessionIds);
   }
 
   async createSession(scope?: QuizScope): Promise<QuizResult<QuizSession>> {
@@ -483,16 +287,6 @@ export class QuizService {
     sessionId: string,
   ): Promise<{ id: string; deleted: true }> {
     await this.startupRecovery;
-    // Deletion is intentionally idempotent and only affects app-local quiz data.
-    // Record its grades first so mastery evidence outlives the transcript.
-    const session = await this.store.get(sessionId);
-    if (session) {
-      await this.reconcileSessions([session]);
-      // Refuse rather than lose grades (including misses) the learner model
-      // has not saved: the transcript is then their only record.
-      if ([...this.recordingFailures.values()].includes(sessionId))
-        throw new QuizDeletionBlocked();
-    }
     await this.store.deleteSession(sessionId);
     this.imageRegistry.purgeSession(sessionId);
     return { id: sessionId, deleted: true };
@@ -640,7 +434,9 @@ export class QuizService {
   /** Saved learner-model attempts; an unreadable store falls back to transcripts alone. */
   private async savedAttempts(session: QuizSession): Promise<LearnerAttempt[]> {
     try {
-      return this.learnerAttempts ? await this.learnerAttempts(session) : [];
+      return await this.store.attempts(
+        learnerScopeKey(session.scope, session.id),
+      );
     } catch {
       return [];
     }
@@ -752,7 +548,6 @@ export class QuizService {
       reason = message;
       return 'invalid-input';
     };
-    let ended = false;
     const result = await this.store.transactMetadata(
       request.sessionId,
       request.agentToken,
@@ -847,18 +642,9 @@ export class QuizService {
           return fail(
             `The test has no graded item yet for: ${uncovered.join(', ')}. Pose one for each, or cancel the test.`,
           );
-        ended = true;
         return commit(undefined, [...log.completed, test.id]);
       },
     );
-    // Completing the test turns its graded items into recorded test evidence.
-    if (ended && result && typeof result !== 'string')
-      await this.recordGradedQuestions(
-        gradedQuestions(result).map((question) => ({
-          session: result,
-          question,
-        })),
-      );
     return metadataResult(result, reason);
   }
 
@@ -1041,7 +827,6 @@ export class QuizService {
         fingerprint,
       );
       if (prior) {
-        if (request.type === 'feedback') await this.reconcileSessions([prior]);
         return { ok: true, value: prior };
       }
     } catch {
@@ -1710,8 +1495,7 @@ export class QuizService {
         },
       );
       if (updated.transcript.length > 0) await this.store.promote(updated.id);
-      if (request.type === 'feedback' && updated.currentQuestion)
-        await this.recordGradedQuestion(updated, updated.currentQuestion);
+
       return { ok: true, value: updated };
     } catch (error) {
       return {

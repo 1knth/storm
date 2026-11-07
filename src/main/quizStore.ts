@@ -16,10 +16,14 @@ import type {
   QuizSessionSummary,
 } from '../shared/quizProtocol';
 import { quizAgentEvent } from '../shared/quizAgentContext';
+import { sessionEvidence } from './quizEvidence';
+import type { LearnerAttempt } from '../shared/learnerModel';
 import { learnerScopeKey } from './learnerStore';
 
 export type QuizDatabase = {
   version: 1;
+  facts?: Record<string, ReturnType<typeof sessionEvidence>>;
+  learning?: { imported: boolean; scopes: Record<string, LearnerAttempt[]> };
   sessions: QuizSession[];
   events: Record<string, QuizEvent[]>;
   idempotency: Record<
@@ -29,6 +33,7 @@ export type QuizDatabase = {
 };
 type Manifest = {
   version: 2;
+  learning?: string;
   sessions: Record<string, { history: string; transient: string }>;
 };
 
@@ -37,6 +42,7 @@ function copyDatabase(db: QuizDatabase): QuizDatabase {
     ...db,
     sessions: [...db.sessions],
     events: { ...db.events },
+    facts: { ...db.facts },
     idempotency: db.idempotency,
   };
 }
@@ -205,7 +211,7 @@ export class QuizStore {
   private manifest?: Manifest;
   constructor(private readonly filePath: string) {}
 
-  private async atomicWrite(path: string, value: unknown): Promise<void> {
+  protected async atomicWrite(path: string, value: unknown): Promise<void> {
     await mkdir(dirname(path), { recursive: true });
     const temporary = `${path}.${crypto.randomUUID()}.tmp`;
     try {
@@ -252,9 +258,18 @@ export class QuizStore {
               ? { currentQuestion: { ...session.currentQuestion, ...question } }
               : {}),
           });
+          (db.facts ??= {})[id] =
+            history.facts ?? sessionEvidence(db.sessions.at(-1)!);
           db.events[id] = history.events;
           Object.assign(db.idempotency, history.idempotency);
         }
+        if (manifest.learning)
+          db.learning = JSON.parse(
+            await readFile(
+              join(`${this.filePath}.sessions`, manifest.learning),
+              'utf8',
+            ),
+          );
         this.manifest = manifest;
         value = db;
       } else this.manifest = undefined;
@@ -303,6 +318,12 @@ export class QuizStore {
                 },
           ];
         }),
+      );
+      database.facts ??= Object.fromEntries(
+        database.sessions.map((session) => [
+          session.id,
+          sessionEvidence(session),
+        ]),
       );
       database.events ??= {};
       // Older versions persisted entire requests in event.data, including the
@@ -368,6 +389,8 @@ export class QuizStore {
           session: parts.history,
           events: database.events[session.id] ?? [],
           idempotency: receipts,
+          facts: ((database.facts ??= {})[session.id] =
+            sessionEvidence(session)),
         });
       }
       await this.atomicWrite(join(root, transientFile), parts.transient);
@@ -375,6 +398,17 @@ export class QuizStore {
         history: historyFile,
         transient: transientFile,
       };
+    }
+    if (database.learning) {
+      if (this.manifest?.learning && previous?.learning === database.learning)
+        manifest.learning = this.manifest.learning;
+      else {
+        manifest.learning = `${crypto.randomUUID()}.learning.json`;
+        await this.atomicWrite(
+          join(root, manifest.learning),
+          database.learning,
+        );
+      }
     }
     if (!this.manifest && previous) {
       // Keep the original bytes for rollback; interrupted imports can safely retry.
@@ -399,6 +433,11 @@ export class QuizStore {
         transient,
       ]),
     );
+    if (manifest.learning) live.add(manifest.learning);
+    if (oldManifest?.learning && !live.has(oldManifest.learning))
+      await rm(join(root, oldManifest.learning), { force: true }).catch(
+        () => {},
+      );
     // Only remove files superseded by this successful commit. Failed writes leave
     // unreachable files, never a manifest referencing partially written state.
     for (const files of Object.values(oldManifest?.sessions ?? {})) {
@@ -480,6 +519,74 @@ export class QuizStore {
       if (changed) await this.write(db);
       return structuredClone(db.sessions);
     });
+  }
+
+  recordingDiagnostics(sessionIds?: ReadonlySet<string>) {
+    const sessions = [
+      ...(this.cache?.database.sessions ?? []),
+      ...[...this.drafts.values()].map((draft) => draft.session),
+    ];
+    return {
+      pending: 0,
+      failures: 0,
+      unmodelled: sessions
+        .filter((session) => !sessionIds || sessionIds.has(session.id))
+        .reduce(
+          (total, session) =>
+            total +
+            (
+              this.cache?.database.facts?.[session.id] ??
+              sessionEvidence(session)
+            ).unmodelled,
+          0,
+        ),
+    };
+  }
+
+  async hasLearnerImport(): Promise<boolean> {
+    await this.queue;
+    return !!(await this.read()).learning?.imported;
+  }
+
+  async importLearner(
+    scopes: Record<string, { attempts: LearnerAttempt[] }>,
+  ): Promise<void> {
+    return this.serialize(async () => {
+      const db = copyDatabase(await this.read());
+      if (db.learning?.imported) return;
+      const currentIds = new Set(db.sessions.map((session) => session.id));
+      const previous = db.learning?.scopes ?? {};
+      db.learning = { imported: true, scopes: { ...previous } };
+      for (const [key, value] of Object.entries(scopes)) {
+        db.learning.scopes[key] = [
+          ...(previous[key] ?? []),
+          ...value.attempts.filter(
+            (attempt) => !currentIds.has(attempt.sessionId),
+          ),
+        ];
+      }
+      await this.write(db);
+    });
+  }
+
+  async attempts(scopeKey: string): Promise<LearnerAttempt[]> {
+    await this.queue;
+    const db = await this.read();
+    const attempts = new Map(
+      (db.learning?.scopes[scopeKey] ?? []).map((attempt) => [
+        attempt.id,
+        attempt,
+      ]),
+    );
+    for (const session of this.sessionsIn(db)) {
+      if (learnerScopeKey(session.scope, session.id) !== scopeKey) continue;
+      for (const attempt of (this.drafts.has(session.id)
+        ? sessionEvidence(session)
+        : db.facts?.[session.id]
+      )?.attempts ?? [])
+        attempts.set(attempt.id, attempt);
+    }
+    return structuredClone([...attempts.values()]);
   }
 
   async list(
@@ -612,6 +719,22 @@ export class QuizStore {
       this.deletionCount++;
       if (this.drafts.delete(id)) return;
       const db = copyDatabase(await this.read());
+      const removed = db.sessions.find((session) => session.id === id);
+      if (removed) {
+        const key = learnerScopeKey(removed.scope, removed.id);
+        const learning = db.learning ?? { imported: false, scopes: {} };
+        db.learning = {
+          ...learning,
+          scopes: {
+            ...learning.scopes,
+            [key]: [
+              ...(learning.scopes[key] ?? []),
+              ...(db.facts?.[id]?.attempts ?? []),
+            ],
+          },
+        };
+      }
+      delete db.facts?.[id];
       db.sessions = db.sessions.filter((session) => session.id !== id);
       delete db.events[id];
       db.idempotency = Object.fromEntries(

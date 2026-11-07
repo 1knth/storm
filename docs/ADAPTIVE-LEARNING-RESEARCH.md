@@ -17,8 +17,9 @@ computed (due reviews appear in learner recommendations) but has no dedicated
 - Model: `src/shared/learnerModel.ts` replays attempts into per-concept Elo
   ability (independent and assisted), FSRS-style stability with fixed default
   weights, zones, recommendations, and calibration.
-- Storage: `LearnerStore` persists attempts only, per vault, idempotent by
-  question ID. Unscoped sessions are isolated by session ID; rated untagged
+- Storage: `QuizStore` commits attempt facts with feedback, per vault, idempotent by
+  question ID. `LearnerStore` computes state from these facts and imports legacy
+  `learner-model.json` once. Unscoped sessions are isolated by session ID; rated untagged
   grades are calibration-only evidence with unknown support.
 - Agent surface: `storm quiz learner SESSION_ID --token TOKEN` and the Pi
   `storm` `learner` action; Tutor prompts carry the session policy below.
@@ -40,9 +41,9 @@ Calibration exposes absolute confidence error as well as signed bias, and counts
 independent, assisted, and unknown support. Pattern commentary requires at least
 20 rated attempts and an absolute bias of at least 15 percentage points; these
 are tunable defaults, not validated diagnostic thresholds. Tutor discusses these
-patterns supportively at most once per session unless asked. Durable grades are
-reconciled on startup and before learner reads so a failed derived-record write
-can be retried without duplicating an attempt or changing its grading time.
+patterns supportively at most once per session unless asked. Durable grades and attempts commit together. A failed publication accepts neither;
+retrying the feedback request cannot duplicate an attempt or change an accepted
+grading time.
 
 ## Recommendation
 
@@ -254,10 +255,9 @@ confidence values, session IDs, or network telemetry; clearing local storage
 resets them. Compare these observations with usability feedback before changing
 the required-rating interaction or adopting a smaller set of confidence options.
 
-Grade replay merges all missing/changed grades by learning pool in a single
-load/compare/write per pool. Successful grade fingerprints are remembered for
-the process lifetime, while failures remain retryable; unchanged learner reads
-avoid re-recording the full history. The durable transcript remains the source
-for recovery after a restart. `recording.failures` counts failures still associated
-with unresolved work and clears after successful recovery; `pending` determines
-whether evidence is incomplete.
+Learner reads consume canonical facts without transcript replay or writes. Legacy
+transcripts import once when a session history has no facts, and the legacy
+learner file imports once under a durable marker. Grades in existing sessions
+supersede legacy copies; deleted-session facts remain in the learning archive.
+The compatibility recording diagnostic reports zero pending work and failures:
+there is no second recording transaction to repair.
