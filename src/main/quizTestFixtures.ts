@@ -86,12 +86,14 @@ export const quizScope: QuizScope = {
 
 export class FailingQuizStore extends QuizStore {
   fail = false;
+  writtenBytes = 0;
   constructor(readonly path: string) {
     super(path);
   }
   protected override async atomicWrite(path: string, value: unknown) {
     if (this.fail && path === this.path) throw new Error('disk unavailable');
-    return super.atomicWrite(path, value);
+    await super.atomicWrite(path, value);
+    this.writtenBytes += Buffer.byteLength(JSON.stringify(value));
   }
 }
 

@@ -573,7 +573,10 @@ test('large legacy transcript import is bounded and repeated learner reads perfo
       }),
     );
     const learner = new LearnerStore(join(dir, 'learner.json'));
-    const store = new QuizStore(join(dir, 'sessions.json'));
+    const legacyBytes = Buffer.byteLength(
+      await readFile(join(dir, 'sessions.json')),
+    );
+    const store = new FailingQuizStore(join(dir, 'sessions.json'));
     const service = new QuizService(
       store,
       () => true,
@@ -583,18 +586,31 @@ test('large legacy transcript import is bounded and repeated learner reads perfo
       learner,
     );
     await service.listSessions();
-    const manifest = await readFile(join(dir, 'sessions.json'), 'utf8');
-    for (let i = 0; i < 10; i++) await service.reconcileLearner('history');
+    assert.ok(
+      store.writtenBytes <= legacyBytes * 4 + 65536,
+      'import writes must grow linearly with the legacy input',
+    );
+    const beforeReads = store.writtenBytes;
+    for (let i = 0; i < 10; i++) {
+      await service.reconcileLearner('history');
+      await learner.state(scope, 'history');
+    }
     assert.equal(
-      await readFile(join(dir, 'sessions.json'), 'utf8'),
-      manifest,
+      store.writtenBytes,
+      beforeReads,
       'learner reads must not write',
     );
     const attempts = await learner.attempts(learnerScopeKey(scope));
     assert.equal(attempts.length, 2000);
     assert.ok(attempts.every((attempt) => attempt.at === at));
     const fresh = new LearnerStore(join(dir, 'learner.json'));
-    await fresh.connect(new QuizStore(join(dir, 'sessions.json')));
+    const reopened = new FailingQuizStore(join(dir, 'sessions.json'));
+    await fresh.connect(reopened);
+    assert.equal(
+      reopened.writtenBytes,
+      0,
+      'restart must not repeat an imported history',
+    );
     assert.deepEqual(await fresh.attempts(learnerScopeKey(scope)), attempts);
   } finally {
     await rm(dir, { recursive: true, force: true });
