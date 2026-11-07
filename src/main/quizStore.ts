@@ -477,24 +477,26 @@ export class QuizStore {
   }
 
   async learnerDiagnostics(sessionId: string) {
-    await this.queue;
-    const sessions = this.sessionsIn(await this.read());
-    const current = sessions.find((session) => session.id === sessionId);
-    const scope = current && learnerScopeKey(current.scope, current.id);
-    const ids = new Set(
-      sessions
-        .filter(
-          (session) =>
-            scope && learnerScopeKey(session.scope, session.id) === scope,
-        )
-        .map((session) => session.id),
-    );
-    return this.recordingDiagnostics(ids);
+    return this.serialize(async () => {
+      const sessions = this.sessionsIn(await this.read());
+      const current = sessions.find((session) => session.id === sessionId);
+      const scope = current && learnerScopeKey(current.scope, current.id);
+      const ids = new Set(
+        sessions
+          .filter(
+            (session) =>
+              scope && learnerScopeKey(session.scope, session.id) === scope,
+          )
+          .map((session) => session.id),
+      );
+      return this.recordingDiagnostics(ids);
+    });
   }
 
   async hasLearnerImport(): Promise<boolean> {
-    await this.queue;
-    return !!(await this.read()).learning?.imported;
+    return this.serialize(async () => {
+      return !!(await this.read()).learning?.imported;
+    });
   }
 
   async importLearner(
@@ -521,9 +523,10 @@ export class QuizStore {
   }
 
   async attempts(scopeKey: string): Promise<LearnerAttempt[]> {
-    await this.queue;
-    const db = await this.read();
-    return structuredClone(this.evidenceIn(db).scope(scopeKey).attempts);
+    return this.serialize(async () => {
+      const db = await this.read();
+      return structuredClone(this.evidenceIn(db).scope(scopeKey).attempts);
+    });
   }
 
   private evidenceIn(db: QuizDatabase): QuizEvidenceIndex {
@@ -535,46 +538,50 @@ export class QuizStore {
   async list(
     options: { includeDrafts?: boolean } = {},
   ): Promise<QuizSession[]> {
-    await this.queue;
-    const sessions = structuredClone((await this.read()).sessions);
-    return options.includeDrafts
-      ? [
-          ...sessions,
-          ...[...this.drafts.values()].map((draft) => draft.session),
-        ]
-      : sessions;
+    return this.serialize(async () => {
+      const sessions = structuredClone((await this.read()).sessions);
+      return options.includeDrafts
+        ? [
+            ...sessions,
+            ...[...this.drafts.values()].map((draft) => draft.session),
+          ]
+        : sessions;
+    });
   }
   async get(id: string): Promise<QuizSession | undefined> {
-    await this.queue;
-    return (
-      this.drafts.get(id)?.session ??
-      structuredClone(
-        (await this.read()).sessions.find((session) => session.id === id),
-      )
-    );
+    return this.serialize(async () => {
+      return (
+        this.drafts.get(id)?.session ??
+        structuredClone(
+          (await this.read()).sessions.find((session) => session.id === id),
+        )
+      );
+    });
   }
   async listSummaries(): Promise<QuizSessionSummary[]> {
-    await this.queue;
-    return structuredClone(
-      (await this.read()).sessions.map(
-        ({ id, name, scope, status, createdAt, updatedAt }) => ({
-          id,
-          name,
-          scope,
-          status,
-          createdAt,
-          updatedAt,
-        }),
-      ),
-    );
+    return this.serialize(async () => {
+      return structuredClone(
+        (await this.read()).sessions.map(
+          ({ id, name, scope, status, createdAt, updatedAt }) => ({
+            id,
+            name,
+            scope,
+            status,
+            createdAt,
+            updatedAt,
+          }),
+        ),
+      );
+    });
   }
   async getAgentState(id: string): Promise<QuizSession | undefined> {
-    await this.queue;
-    const session =
-      this.drafts.get(id)?.session ??
-      (await this.read()).sessions.find((item) => item.id === id);
-    if (!session) return undefined;
-    return structuredClone({ ...session, transcript: [], freeChatDraft: '' });
+    return this.serialize(async () => {
+      const session =
+        this.drafts.get(id)?.session ??
+        (await this.read()).sessions.find((item) => item.id === id);
+      if (!session) return undefined;
+      return structuredClone({ ...session, transcript: [], freeChatDraft: '' });
+    });
   }
 
   async createDraft(session: QuizSession): Promise<void> {
@@ -609,40 +616,42 @@ export class QuizStore {
     });
   }
   async events(id: string, after = 0): Promise<QuizEvent[]> {
-    await this.queue;
-    if (this.drafts.has(id))
-      return this.drafts
-        .get(id)!
-        .events.filter((event) => event.cursor > after)
-        .map(sanitizeEvent);
-    return (
-      (await this.read()).events[id]
-        ?.filter((event) => event.cursor > after)
-        .map(sanitizeEvent) ?? []
-    );
+    return this.serialize(async () => {
+      if (this.drafts.has(id))
+        return this.drafts
+          .get(id)!
+          .events.filter((event) => event.cursor > after)
+          .map(sanitizeEvent);
+      return (
+        (await this.read()).events[id]
+          ?.filter((event) => event.cursor > after)
+          .map(sanitizeEvent) ?? []
+      );
+    });
   }
   async idempotent(
     key: string,
     fingerprint: string,
   ): Promise<QuizSession | undefined> {
-    await this.queue;
-    for (const draft of this.drafts.values()) {
-      const receipt = draft.idempotency[key];
-      if (receipt) {
-        if (receipt.fingerprint !== fingerprint)
-          throw new Error('Idempotency key reused');
-        return draft.session;
+    return this.serialize(async () => {
+      for (const draft of this.drafts.values()) {
+        const receipt = draft.idempotency[key];
+        if (receipt) {
+          if (receipt.fingerprint !== fingerprint)
+            throw new Error('Idempotency key reused');
+          return draft.session;
+        }
       }
-    }
-    const prior = (await this.read()).idempotency[key];
-    if (!prior) return undefined;
-    if (prior.fingerprint !== fingerprint)
-      throw new Error('Idempotency key reused');
-    // Receipts acknowledge the original action, not a historical session snapshot.
-    // Return the latest session so retries remain successful after later updates.
-    return (await this.read()).sessions.find(
-      (session) => session.id === prior.sessionId,
-    );
+      const prior = (await this.read()).idempotency[key];
+      if (!prior) return undefined;
+      if (prior.fingerprint !== fingerprint)
+        throw new Error('Idempotency key reused');
+      // Receipts acknowledge the original action, not a historical session snapshot.
+      // Return the latest session so retries remain successful after later updates.
+      return (await this.read()).sessions.find(
+        (session) => session.id === prior.sessionId,
+      );
+    });
   }
   async create(session: QuizSession): Promise<void> {
     return this.serialize(async () => {
@@ -787,6 +796,17 @@ export class QuizStore {
           db.idempotency = receipts;
           durableChanged = true;
         }
+      }
+      const promotion = pendingDrafts.get(id);
+      if (guard.event && promotion?.session.transcript.length) {
+        // First learner/agent content becomes durable in this same transaction,
+        // including its facts and receipt. A failed publish leaves the draft untouched.
+        db.sessions.push(promotion.session);
+        (db.facts ??= {})[id] = promotion.facts;
+        db.events[id] = promotion.events;
+        db.idempotency = { ...db.idempotency, ...promotion.idempotency };
+        pendingDrafts.delete(id);
+        durableChanged = true;
       }
       // Publish disk state before touching any in-memory draft, including pooled updates.
       if (durableChanged) await this.write(db);

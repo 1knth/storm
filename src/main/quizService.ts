@@ -1387,7 +1387,6 @@ export class QuizService {
           });
         },
       );
-      if (updated.transcript.length > 0) await this.store.promote(updated.id);
 
       return { ok: true, value: updated };
     } catch (error) {

@@ -684,3 +684,42 @@ test('learner diagnostics cover the learning pool and isolate unscoped quizzes',
     await f.cleanup();
   }
 });
+
+test('first content promotion and its receipt are atomic when manifest publication fails', async () => {
+  const f = await fixture();
+  try {
+    const current = (await f.store.get(f.sessionId))!;
+    const request = {
+      type: 'pose-question' as const,
+      kind: 'short-answer' as const,
+      sessionId: f.sessionId,
+      agentToken: f.agentToken,
+      expectedRevision: current.revision,
+      idempotencyKey: 'first-content',
+      question: 'Recall the rule',
+      concepts: ['loops'],
+      level: 'recall' as const,
+    };
+    f.store.fail = true;
+    assert.equal((await f.service.request(request)).ok, false);
+    assert.equal((await f.store.get(f.sessionId))?.currentQuestion, null);
+    assert.equal((await f.store.list()).length, 0);
+    f.store.fail = false;
+    const accepted = quizValue(await f.service.request(request));
+    const retried = quizValue(await f.service.request(request));
+    assert.equal(retried.currentQuestion?.id, accepted.currentQuestion?.id);
+    const reopened = new QuizStore(join(f.dir, 'sessions.json'));
+    assert.equal(
+      (await reopened.get(f.sessionId))?.currentQuestion?.id,
+      accepted.currentQuestion?.id,
+    );
+    assert.equal(
+      (await reopened.events(f.sessionId)).filter(
+        (event) => event.type === 'pose-question',
+      ).length,
+      1,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});

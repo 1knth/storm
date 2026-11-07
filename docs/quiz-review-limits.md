@@ -206,3 +206,14 @@ evidence reads and the mutation share store serialization. Expected semantic
 revision and idempotency checks remain. Posing still rejects a changed open test
 because its conditions were validated before any asynchronous source preparation;
 source-bound questions also reject a scope change during that preparation.
+
+First-content promotion now publishes the session, its attempt/exposure facts,
+events, and receipts in the same transaction; a failed publish leaves the
+memory-only draft untouched. Manifest reads share serialization with writes so
+cleanup cannot remove files while an overlapping cold read is using them.
+
+After all consolidation changes, a final run of the same five-sample experiment
+measured mean draft writes of 0.8, 1.0, and 2.7 ms for 10, 100, and 500 sessions;
+mean activity writes were 0.7, 1.1, and 2.4 ms. The largest draft range was
+2.2–4.0 ms. Cold summary timings including one-time import were 36.3, 261.6,
+and 1,318.4 ms. The same synthetic-fixture and sample-size limitations apply.
