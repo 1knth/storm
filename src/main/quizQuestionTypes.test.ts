@@ -1,107 +1,53 @@
 import { describe, it as test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { QuizService } from './quizService';
+import {
+  quizFixture,
+  quizVariantCases,
+  invalidQuizVariantCases,
+} from './quizTestFixtures';
 import { QuizStore } from './quizStore';
 
 async function fixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'storm-question-types-'));
-  const store = new QuizStore(join(dir, 'quiz.json'));
-  const service = new QuizService(store, () => true);
-  const created = await service.createSession();
-  assert.equal(created.ok, true);
-  if (!created.ok) throw Error('creation failed');
-  const { id, agentToken } = created.value;
+  const { dir, store, service, session, driver } = await quizFixture();
+  const { id, agentToken } = session;
   const agent = (type: string, revision: number, key: string, fields = {}) =>
-    service.request({
-      type,
-      sessionId: id,
-      agentToken,
-      expectedRevision: revision,
-      idempotencyKey: key,
-      ...fields,
-    } as never);
+    driver.agentInput(
+      { type, ...fields },
+      { expectedRevision: revision, idempotencyKey: key },
+    );
   const learner = (revision: number, key: string, fields = {}) =>
-    service.learnerRequest({
-      type: 'answer',
-      sessionId: id,
-      expectedRevision: revision,
-      idempotencyKey: key,
-      ...fields,
-    } as never);
-  return { dir, store, service, id, agentToken, agent, learner };
+    driver.learnerInput(
+      { type: 'answer', ...fields },
+      { expectedRevision: revision, idempotencyKey: key },
+    );
+  return { dir, store, service, id, agentToken, agent, learner, driver };
 }
 
 describe('quiz question types', () => {
   test('all four variants complete pose, learner answer, feedback, continue without leaking capability', async () => {
-    const cases = [
-      {
-        pose: {
-          question: 'Pick',
-          choices: [
-            { id: 'a', text: 'Alpha' },
-            { id: 'b', text: 'Beta' },
-          ],
-        },
-        answer: { choiceId: 'b', reasoning: 'because' },
-      },
-      {
-        pose: {
-          kind: 'matching',
-          question: 'Pair',
-          leftItems: [
-            { id: 'l1', text: 'L1' },
-            { id: 'l2', text: 'L2' },
-          ],
-          rightItems: [
-            { id: 'r1', text: 'R1' },
-            { id: 'r2', text: 'R2' },
-          ],
-        },
-        answer: { matches: { l1: 'r2', l2: 'r1' } },
-      },
-      {
-        pose: { kind: 'short-answer', question: 'Brief' },
-        answer: { answer: '  café\n答え  ' },
-      },
-      {
-        pose: { kind: 'long-answer', question: 'Explain' },
-        answer: { answer: 'Line one\nLine two — 🧠' },
-      },
-    ];
-    for (const [i, item] of cases.entries()) {
+    const cases = quizVariantCases;
+    for (const item of cases) {
       const f = await fixture();
       try {
-        assert.equal((await f.agent('attach', 0, 'attach')).ok, true);
-        assert.equal(
-          (await f.agent('pose-question', 1, 'pose', item.pose)).ok,
-          true,
-        );
-        assert.equal((await f.learner(2, 'answer', item.answer)).ok, true);
+        assert.equal((await f.driver.agent({ type: 'attach' })).ok, true);
+        assert.equal((await f.driver.agent(item.pose)).ok, true);
+        assert.equal((await f.driver.learner(item.answer)).ok, true);
         const snapshot = await f.service.getSnapshot(f.id);
         assert.equal(snapshot?.session.currentQuestion?.status, 'answered');
-        assert.deepEqual(snapshot?.events.at(-1)?.data, item.answer);
+        const { type: _type, ...answerData } = item.answer;
+        assert.deepEqual(snapshot?.events.at(-1)?.data, answerData);
         assert.equal(
           JSON.stringify(snapshot?.events).includes(f.agentToken),
           false,
         );
         assert.equal(
-          (await f.agent('feedback', 3, 'feedback', { text: 'Review' })).ok,
+          (await f.driver.agent({ type: 'feedback', text: 'Review' })).ok,
           true,
         );
-        assert.equal(
-          (
-            await f.service.learnerRequest({
-              type: 'continue',
-              sessionId: f.id,
-              expectedRevision: 4,
-              idempotencyKey: `continue-${i}`,
-            })
-          ).ok,
-          true,
-        );
+        assert.equal((await f.driver.learner({ type: 'continue' })).ok, true);
         assert.equal(
           (await f.service.getSnapshot(f.id))?.session.currentQuestion,
           null,
@@ -111,6 +57,24 @@ describe('quiz question types', () => {
       }
     }
   });
+
+  for (const { name, pose } of invalidQuizVariantCases) {
+    test(`rejects ${name} without committing a question`, async () => {
+      const f = await fixture();
+      try {
+        await f.driver.agent({ type: 'attach' });
+        assert.deepEqual(await f.driver.agentInput(pose), {
+          ok: false,
+          error: 'invalid-input',
+        });
+        const snapshot = await f.service.getSnapshot(f.id);
+        assert.equal(snapshot?.session.revision, 1);
+        assert.equal(snapshot?.session.transcript.length, 0);
+      } finally {
+        await rm(f.dir, { recursive: true, force: true });
+      }
+    });
+  }
 
   test('validates choice bounds and exact matching bijection', async () => {
     const f = await fixture();

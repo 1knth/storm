@@ -188,5 +188,32 @@ format and must not be compared with the old database's total bytes.
 Draft/activity updates copy the small database containers and the current session,
 reuse unchanged history files, and keep the cache coherent after commit. Semantic
 updates still rewrite the affected session history; transcripts remain unbounded.
-The learner projection, transcript replay, and serialized mastery policies described
-elsewhere remain in place.
+Attempt facts commit in each session history file with feedback and receipts.
+Legacy learner facts and facts retained after quiz deletion live in a learning
+archive referenced by the same manifest. Learner reads do not replay transcripts
+or write a second projection.
+
+Mastery and test freshness now read a transaction-local index of canonical
+attempts and exposures. Each pool is materialized once per transaction, including
+archived facts for deleted quizzes. Skipped-item exposures survive deletion and
+restart. Feedback, practice-test completion, and scope changes advance the
+canonical facts directly; normal learner reads and metadata operations do not
+reconstruct transcripts. Legacy session histories without the canonical test
+membership index import once on load.
+
+Deletion-counter and pre-read learner-pool race checks are unnecessary because
+evidence reads and the mutation share store serialization. Expected semantic
+revision and idempotency checks remain. Posing still rejects a changed open test
+because its conditions were validated before any asynchronous source preparation;
+source-bound questions also reject a scope change during that preparation.
+
+First-content promotion now publishes the session, its attempt/exposure facts,
+events, and receipts in the same transaction; a failed publish leaves the
+memory-only draft untouched. Manifest reads share serialization with writes so
+cleanup cannot remove files while an overlapping cold read is using them.
+
+After all consolidation changes, a final run of the same five-sample experiment
+measured mean draft writes of 0.8, 1.0, and 2.7 ms for 10, 100, and 500 sessions;
+mean activity writes were 0.7, 1.1, and 2.4 ms. The largest draft range was
+2.2–4.0 ms. Cold summary timings including one-time import were 36.3, 261.6,
+and 1,318.4 ms. The same synthetic-fixture and sample-size limitations apply.

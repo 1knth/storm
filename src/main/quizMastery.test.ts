@@ -1,100 +1,66 @@
 import { describe, it as test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { QuizDeletionBlocked, QuizService } from './quizService';
+import {
+  QuizSessionDriver,
+  quizValue as value,
+  quizScope as vault,
+  quizFixture,
+} from './quizTestFixtures';
+import { QuizService } from './quizService';
+import { quizRevisionChange } from './quizOperations';
 import { QuizStore } from './quizStore';
-import { LearnerStore, learnerScopeKey } from './learnerStore';
+import { learnerScopeKey } from './learnerStore';
 import { createHash } from 'node:crypto';
 import type { LearnerAttempt } from '../shared/learnerModel';
 import { questionFingerprintSource } from '../shared/mastery';
 import {
   QUIZ_PRACTICE_TEST_MAX_TRANSITIONS,
-  type QuizResult,
   type QuizSession,
 } from '../shared/quizProtocol';
-
-const value = (result: QuizResult<QuizSession>) => {
-  assert.equal(result.ok, true, JSON.stringify(result));
-  return (result as { value: QuizSession }).value;
-};
-
-const vault = {
-  vaultId: 'vault',
-  notePath: 'loops.md',
-  selectedNotePaths: [],
-  folderPath: null,
-};
 
 /** A connected session with a two-node map, driven through the public service API. */
 async function fixture(
   options: {
-    learnerAttempts?: () => Promise<LearnerAttempt[]>;
+    attempts?: LearnerAttempt[];
     /** Record grades in a real learner store, as the app does. */
     learner?: boolean;
   } = {},
 ) {
-  const dir = await mkdtemp(join(tmpdir(), 'storm-mastery-'));
-  const store = new QuizStore(join(dir, 'quiz.json'));
-  const learnerStore = new LearnerStore(join(dir, 'learner.json'));
-  const service = new QuizService(
-    store,
-    () => true,
-    undefined,
-    undefined,
-    undefined,
-    options.learner
-      ? (session, question) => learnerStore.recordQuestion(session, question)
-      : undefined,
-    options.learner
-      ? (entries) => learnerStore.recordGrades(entries)
-      : undefined,
-    undefined,
-    options.learner
-      ? (session) =>
-          learnerStore.attempts(learnerScopeKey(session.scope, session.id))
-      : options.learnerAttempts,
-  );
-  const cleanup = () => rm(dir, { recursive: true, force: true });
+  const shared = await quizFixture({
+    scope: vault,
+    learning: true,
+    beforeService: async (store) => {
+      if (options.attempts)
+        await store.importLearner({
+          [learnerScopeKey(vault)]: { attempts: options.attempts },
+        });
+    },
+  });
   return {
-    ...(await session(service)),
-    store,
-    service,
-    learnerStore,
-    cleanup,
+    ...(await session(shared.service, vault, shared.session)),
+    store: shared.store,
+    service: shared.service,
+    learnerStore: shared.learner,
+    dir: shared.dir,
+    cleanup: shared.cleanup,
   };
 }
 
 /** Another connected quiz in the same vault, sharing its learning pool. */
-async function session(service: QuizService, scope = vault) {
-  const created = value(await service.createSession(scope));
-  const { id, agentToken } = created;
-  let revision = created.revision;
-  let key = 0;
-  const agent = async (type: string, fields = {}) => {
-    const result = await service.request({
-      type,
-      sessionId: id,
-      agentToken,
-      expectedRevision: revision,
-      idempotencyKey: `k${++key}`,
-      ...fields,
-    } as never);
-    if (result.ok) revision = result.value.revision;
-    return result;
-  };
-  const learner = async (type: string, fields = {}) => {
-    const result = await service.learnerRequest({
-      type,
-      sessionId: id,
-      expectedRevision: revision,
-      idempotencyKey: `k${++key}`,
-      ...fields,
-    } as never);
-    if (result.ok) revision = result.value.revision;
-    return result;
-  };
+async function session(
+  service: QuizService,
+  scope = vault,
+  initial?: QuizSession,
+) {
+  const created = initial ?? value(await service.createSession(scope));
+  const { id } = created;
+  const driver = new QuizSessionDriver(service, created);
+  const agent = (type: string, fields = {}) =>
+    driver.agentInput({ type, ...fields });
+  const learner = (type: string, fields = {}) =>
+    driver.learnerInput({ type, ...fields });
   value(await agent('attach'));
   value(
     await agent('lesson-map', {
@@ -426,7 +392,10 @@ describe('mastery evidence', () => {
       );
       // Commit a semantic update built from the snapshot read before the test.
       const committed = await f.store.update(
-        { ...before, revision: before.revision + 1 },
+        quizRevisionChange(before, {
+          ...before,
+          revision: before.revision + 1,
+        }),
         before.revision,
         {
           cursor: before.eventCursor + 1,
@@ -519,13 +488,13 @@ describe('mastery evidence', () => {
     }
   });
 
-  test('an unreadable learner store falls back to transcript evidence', async () => {
-    const f = await fixture({
-      learnerAttempts: async () => {
-        throw new Error('LEARNER_STORE_INVALID');
-      },
-    });
+  test('canonical mastery evidence stays available after the legacy learner file becomes unreadable', async () => {
+    const f = await fixture();
     try {
+      await writeFile(
+        join(f.dir, 'learner.json'),
+        'invalid legacy JSON after import',
+      );
       await f.item('Explain it', { level: 'explain', reasoning: 'sound' });
       value(
         await f.agent('practice-test', {
@@ -543,6 +512,25 @@ describe('mastery evidence', () => {
       await f.cleanup();
     }
   });
+
+  const holdNextMetadata = (store: QuizStore) => {
+    const original = store.transactMetadata.bind(store);
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    store.transactMetadata = async (...args) => {
+      store.transactMetadata = original;
+      reached();
+      await released;
+      return original(...args);
+    };
+    return { waiting, release };
+  };
 
   /** Holds the next store.update until released, to interleave a competing request. */
   const holdNextUpdate = (store: QuizStore) => {
@@ -637,7 +625,7 @@ describe('mastery evidence', () => {
       )
       .digest('hex');
     const f = await fixture({
-      learnerAttempts: async () => [
+      attempts: [
         {
           id: 'old',
           sessionId: 'deleted',
@@ -760,7 +748,12 @@ describe('mastery evidence', () => {
       // The other quiz commits the same wording while this one is held.
       value(await other.agent('pose-question', item));
       hold.release();
-      assert.deepEqual(await first, { ok: false, error: 'stale-revision' });
+      const rejected = await first;
+      assert.equal(rejected.ok, false);
+      assert.match(
+        (rejected as { message?: string }).message ?? '',
+        /already seen this item/,
+      );
     } finally {
       await f.cleanup();
     }
@@ -788,27 +781,22 @@ describe('mastery evidence', () => {
     }
   });
 
-  test('a scope change during a mastery claim rejects it instead of mixing pools', async () => {
-    let release!: () => void;
-    const released = new Promise<void>((resolve) => (release = resolve));
-    let reached!: () => void;
-    const reading = new Promise<void>((resolve) => (reached = resolve));
-    const f = await fixture({
-      learnerAttempts: async () => {
-        reached();
-        await released;
-        return [];
-      },
-    });
+  test('a scope change before a mastery transaction uses the new pool evidence', async () => {
+    const f = await fixture();
     try {
+      await master(f);
+      const hold = holdNextMetadata(f.store);
       const claim = f.status('mastered');
-      await reading;
+      await hold.waiting;
       value(await f.service.setScope(f.id, { ...vault, vaultId: 'other' }));
-      release();
-      assert.match(
-        ((await claim) as { message?: string }).message ?? '',
-        /scope changed/,
+      hold.release();
+      const result = await claim;
+      assert.equal(
+        result.ok,
+        true,
+        'the moved quiz carries its own committed evidence into the new pool',
       );
+      assert.equal((await f.store.get(f.id))?.scope?.vaultId, 'other');
     } finally {
       await f.cleanup();
     }
@@ -878,37 +866,19 @@ describe('mastery evidence', () => {
     }
   });
 
-  test('a quiz deleted during a mastery claim rejects the claim, and its miss still counts', async () => {
+  test('a deletion before a mastery transaction retains the archived miss', async () => {
     const f = await fixture({ learner: true });
     try {
       const claimer = await session(f.service);
       await master(f);
-      // Hold the claimer's saved-evidence read, then miss in f and delete it.
-      const original = f.learnerStore.attempts.bind(f.learnerStore);
-      let release!: () => void;
-      const released = new Promise<void>((resolve) => (release = resolve));
-      let reached!: () => void;
-      const reading = new Promise<void>((resolve) => (reached = resolve));
-      f.learnerStore.attempts = async (key: string) => {
-        f.learnerStore.attempts = original;
-        const attempts = await original(key);
-        reached();
-        await released;
-        return attempts;
-      };
+      const hold = holdNextMetadata(f.store);
       const claim = claimer.status('mastered');
-      await reading;
+      await hold.waiting;
       await f.item('Missed before deletion', { verdict: 'incorrect' });
       await f.service.deleteSession(f.id);
-      release();
+      hold.release();
       assert.match(
         ((await claim) as { message?: string }).message ?? '',
-        /deleted during the request/,
-      );
-      // The retry sees the deleted quiz's miss through the learner store.
-      assert.match(
-        ((await claimer.status('mastered')) as { message?: string }).message ??
-          '',
         /since the latest independent miss/,
       );
     } finally {
@@ -956,15 +926,94 @@ describe('mastery evidence', () => {
     }
   });
 
-  test('a quiz whose grades are not saved yet cannot be deleted', async () => {
+  test('mastery reads canonical facts after restart without reconstructing transcript evidence', async () => {
+    const f = await fixture();
+    try {
+      await master(f);
+      value(await f.status('independent'));
+      const path = join(f.dir, 'quiz.json');
+      const manifest = JSON.parse(await readFile(path, 'utf8'));
+      const historyPath = join(
+        `${path}.sessions`,
+        manifest.sessions[f.id].history,
+      );
+      const history = JSON.parse(await readFile(historyPath, 'utf8'));
+      history.session.transcript = [];
+      await writeFile(historyPath, JSON.stringify(history));
+      const restarted = new QuizService(new QuizStore(path), () => true);
+      const attached = await restarted.attachSession(f.id);
+      assert.ok(attached.ok);
+      if (!attached.ok) return;
+      const result = await restarted.request({
+        type: 'lesson-map',
+        sessionId: f.id,
+        agentToken: attached.value.agentToken,
+        expectedRevision: 0,
+        idempotencyKey: 'canonical-claim',
+        map: { statuses: { loops: 'mastered' } },
+      });
+      assert.ok(result.ok, JSON.stringify(result));
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test('deleting a skipped item retains its exposure across restart for test freshness', async () => {
+    const f = await fixture();
+    try {
+      const posed = value(
+        await f.agent('pose-question', {
+          question: 'Seen but never graded',
+          kind: 'short-answer',
+          concepts: ['loops'],
+          level: 'apply',
+        }),
+      );
+      value(
+        await f.agent('skip-question', {
+          questionId: posed.currentQuestion!.id,
+          text: 'We will return to this.',
+        }),
+      );
+      await f.service.deleteSession(f.id);
+      const restarted = new QuizService(
+        new QuizStore(join(f.dir, 'quiz.json')),
+        () => true,
+      );
+      const other = await session(restarted);
+      value(
+        await other.agent('practice-test', {
+          action: 'start',
+          concepts: ['loops'],
+        }),
+      );
+      const result = await other.agent('pose-question', {
+        question: 'Seen but never graded',
+        kind: 'short-answer',
+        concepts: ['loops'],
+        level: 'apply',
+      });
+      assert.equal(result.ok, false);
+      assert.match(
+        (result as { message?: string }).message ?? '',
+        /already seen this item/,
+      );
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test('deleting a quiz retains its atomically committed attempt facts', async () => {
     const f = await fixture({ learner: true });
     try {
-      f.learnerStore.recordGrades = async () => {
-        throw new Error('disk full');
-      };
-      await f.item('Missed while recording fails', { verdict: 'incorrect' });
-      await assert.rejects(f.service.deleteSession(f.id), QuizDeletionBlocked);
-      assert.ok(await f.store.get(f.id));
+      await f.item('Missed before deletion', { verdict: 'incorrect' });
+      const before = await f.learnerStore.attempts(learnerScopeKey(vault));
+      await f.service.deleteSession(f.id);
+      assert.equal(await f.store.get(f.id), undefined);
+      assert.deepEqual(
+        await f.learnerStore.attempts(learnerScopeKey(vault)),
+        before,
+      );
     } finally {
       await f.cleanup();
     }

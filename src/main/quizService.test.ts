@@ -1,40 +1,38 @@
 import { describe, it as test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { QuizService } from './quizService';
 import { QuizStore } from './quizStore';
+import {
+  quizFixture,
+  QuizSessionDriver,
+  quizVariantCases,
+  invalidQuizVariantCases,
+} from './quizTestFixtures';
 import { quizAgentSession } from '../shared/quizAgentContext';
 
 async function fixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'storm-quiz-'));
-  const store = new QuizStore(join(dir, 'sessions.json'));
-  const service = new QuizService(store, (scope) => scope.vaultId === 'vault');
-  const created = await service.createSession({
-    vaultId: 'vault',
-    notePath: 'a.md',
-    selectedNotePaths: [],
-    folderPath: null,
+  const { dir, store, service, session, driver } = await quizFixture({
+    fileName: 'sessions.json',
+    scope: {
+      vaultId: 'vault',
+      notePath: 'a.md',
+      selectedNotePaths: [],
+      folderPath: null,
+    },
+    authorizeScope: (scope) => scope.vaultId === 'vault',
   });
-  assert.equal(created.ok, true);
-  if (!created.ok) throw new Error('session create failed');
-  const agentToken = created.value.agentToken;
+  const agentToken = session.agentToken;
   const request = (
     type: 'attach' | 'pose-question' | 'answer' | 'feedback' | 'continue',
     expectedRevision: number,
     idempotencyKey: string,
     extra = {},
   ) =>
-    service.request({
-      type,
-      sessionId: created.value.id,
-      agentToken,
-      expectedRevision,
-      idempotencyKey,
-      ...extra,
-    } as never);
-  return { dir, store, service, session: created.value, agentToken, request };
+    driver.agentInput({ type, ...extra }, { expectedRevision, idempotencyKey });
+  return { dir, store, service, session, agentToken, request };
 }
 
 describe('QuizService', () => {
@@ -652,27 +650,7 @@ describe('QuizService', () => {
   });
 
   test('pose-question validates and stores all supported question variants', async () => {
-    const variants = [
-      {
-        kind: 'multiple-choice',
-        question: 'Choose one',
-        choices: [{ id: 'a', text: 'A' }],
-      },
-      {
-        kind: 'matching',
-        question: 'Match these',
-        leftItems: [
-          { id: 'l1', text: 'Left 1' },
-          { id: 'l2', text: 'Left 2' },
-        ],
-        rightItems: [
-          { id: 'r1', text: 'Right 1' },
-          { id: 'r2', text: 'Right 2' },
-        ],
-      },
-      { kind: 'short-answer', question: 'Briefly explain' },
-      { kind: 'long-answer', question: 'Explain in detail' },
-    ];
+    const variants = quizVariantCases.map((item) => item.pose);
     for (const [index, variant] of variants.entries()) {
       const f = await fixture();
       try {
@@ -732,44 +710,7 @@ describe('QuizService', () => {
         legacy.value.transcript.at(-1)?.question?.kind,
         'multiple-choice',
       );
-      const invalid = [
-        { kind: 'multiple-choice', question: 'Q', choices: [] },
-        {
-          kind: 'multiple-choice',
-          question: 'Q',
-          choices: Array.from({ length: 7 }, (_, i) => ({
-            id: String(i),
-            text: 'x',
-          })),
-        },
-        {
-          kind: 'matching',
-          question: 'Q',
-          leftItems: [
-            { id: 'x', text: 'X' },
-            { id: 'x', text: 'Y' },
-          ],
-          rightItems: [
-            { id: 'z', text: 'Z' },
-            { id: 'w', text: 'W' },
-          ],
-        },
-        {
-          kind: 'matching',
-          question: 'Q',
-          leftItems: [
-            { id: 'x', text: 'X' },
-            { id: 'y', text: 'Y' },
-          ],
-          rightItems: [{ id: 'z', text: 'Z' }],
-        },
-        {
-          kind: 'short-answer',
-          question: 'Q',
-          choices: [{ id: 'a', text: 'hidden answer' }],
-        },
-        { kind: 'long-answer', question: '   ' },
-      ];
+      const invalid = invalidQuizVariantCases;
       assert.equal(invalid.length, 6);
       assert.equal(
         legacy.value.transcript.filter((entry) => entry.kind === 'question')
@@ -779,35 +720,30 @@ describe('QuizService', () => {
       const rejected = await f.service.createSession();
       assert.equal(rejected.ok, true);
       if (!rejected.ok) return;
+      const invalidDriver = new QuizSessionDriver(f.service, rejected.value);
       const invalidFixture = {
-        ...f,
-        session: rejected.value,
         request: (
-          type: 'attach' | 'pose-question' | 'answer' | 'feedback' | 'continue',
+          type: string,
           expectedRevision: number,
           key: string,
           extra = {},
         ) =>
-          f.service.request({
-            type,
-            sessionId: rejected.value.id,
-            agentToken: rejected.value.agentToken,
-            expectedRevision,
-            idempotencyKey: key,
-            ...extra,
-          } as never),
+          invalidDriver.agentInput(
+            { type, ...extra },
+            { expectedRevision, idempotencyKey: key },
+          ),
       };
       await invalidFixture.request('attach', 0, 'invalid-attach');
-      for (const [index, payload] of invalid.entries())
+      for (const [index, { name, pose }] of invalid.entries())
         assert.deepEqual(
           await invalidFixture.request(
             'pose-question',
             1,
             `invalid-${index}`,
-            payload,
+            pose,
           ),
           { ok: false, error: 'invalid-input' },
-          `invalid payload index ${index}`,
+          name,
         );
       const saved = await f.service.getSnapshot(rejected.value.id);
       assert.equal(saved?.session.transcript.length, 0);

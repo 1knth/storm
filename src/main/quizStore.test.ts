@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { QuizSession } from '../shared/quizProtocol';
+import { quizRevisionChange } from './quizOperations';
 import { QuizStore } from './quizStore';
 
 const session = (): QuizSession => ({
@@ -51,10 +52,10 @@ describe('QuizStore storage regressions', () => {
       await store.create({ ...session(), id: 'other' });
       const path = join(dir, 'sessions.json');
       const before = JSON.parse(await readFile(path, 'utf8'));
-      await store.updateDraft(
-        { ...first, freeChatDraft: 'private response' },
-        0,
-      );
+      await store.updateDraft(first.id, 0, (current) => ({
+        ...current,
+        freeChatDraft: 'private response',
+      }));
       await store.updateActivity(first.id, first.agentToken!, {
         state: 'thinking',
         updatedAt: first.updatedAt,
@@ -128,7 +129,13 @@ describe('QuizStore storage regressions', () => {
         [draft.id],
       );
       const revised = { ...draft, revision: 1, eventCursor: 1 };
-      await store.update(revised, 0, event(1), 'draft-receipt', 'draft-fp');
+      await store.update(
+        quizRevisionChange(draft, revised),
+        0,
+        event(1),
+        'draft-receipt',
+        'draft-fp',
+      );
       assert.deepEqual(await store.events(draft.id), [event(1)]);
       await assert.rejects(stat(path), { code: 'ENOENT' });
       await store.promote(draft.id);
@@ -182,7 +189,7 @@ describe('QuizStore storage regressions', () => {
             ],
           };
           await store.update(
-            current,
+            quizRevisionChange((await store.get(current.id))!, current),
             revision - 1,
             event(revision),
             `key-${revision}`,
@@ -219,14 +226,14 @@ describe('QuizStore storage regressions', () => {
       await store.create(first);
       await store.create(second);
       await store.update(
-        { ...first, revision: 1, eventCursor: 1 },
+        quizRevisionChange(first, { ...first, revision: 1, eventCursor: 1 }),
         0,
         event(1),
         'session-1:key',
         'fp',
       );
       await store.update(
-        { ...second, revision: 1, eventCursor: 1 },
+        quizRevisionChange(second, { ...second, revision: 1, eventCursor: 1 }),
         0,
         event(1),
         'session-2:key',
@@ -257,7 +264,7 @@ describe('QuizStore storage regressions', () => {
       await store.create(initial);
       const removal = store.deleteSession(initial.id);
       const update = store.update(
-        { ...initial, revision: 1 },
+        quizRevisionChange(initial, { ...initial, revision: 1 }),
         0,
         event(1),
         'late-receipt',
@@ -289,7 +296,7 @@ describe('QuizStore storage regressions', () => {
       await store.rename(initial.id, 'Renamed session');
 
       const committed = await store.update(
-        inFlight,
+        quizRevisionChange(initial, inFlight),
         0,
         event(1),
         'concurrent-update',

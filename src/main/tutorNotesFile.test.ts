@@ -117,7 +117,6 @@ describe('tutor notes file', () => {
         undefined,
         undefined,
         undefined,
-        undefined,
         f.file,
       );
       const created = await service.createSession(
