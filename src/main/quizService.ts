@@ -41,6 +41,7 @@ import {
   fingerprintOf,
   sessionEvidence,
 } from './quizEvidence';
+import { quizRevisionChange } from './quizOperations';
 import { QuizStore } from './quizStore';
 import type { TutorNotesFile } from './tutorNotesFile';
 import {
@@ -410,7 +411,7 @@ export class QuizService {
     };
     try {
       const saved = await this.store.update(
-        next,
+        quizRevisionChange(current, next),
         current.revision,
         event,
         `${sessionId}:attach:${next.revision}`,
@@ -1430,7 +1431,7 @@ export class QuizService {
     };
     try {
       const updated = await this.store.update(
-        next,
+        quizRevisionChange(current, next),
         current.revision,
         event,
         `${request.sessionId}:${request.idempotencyKey}`,
@@ -1563,7 +1564,16 @@ export class QuizService {
     try {
       return {
         ok: true,
-        value: await this.store.updateDraft(next, current.revision),
+        value: await this.store.updateDraft(
+          next.id,
+          current.revision,
+          (live) => ({
+            ...live,
+            freeChatDraft: next.freeChatDraft,
+            currentPrompt: next.currentPrompt,
+            currentQuestion: next.currentQuestion,
+          }),
+        ),
       };
     } catch {
       return { ok: false, error: 'stale-revision' };
@@ -1625,7 +1635,7 @@ export class QuizService {
       return {
         ok: true,
         value: await this.store.update(
-          next,
+          quizRevisionChange(current, next),
           current.revision,
           {
             cursor: next.eventCursor,
@@ -1672,7 +1682,7 @@ export class QuizService {
       return {
         ok: true,
         value: await this.store.update(
-          next,
+          quizRevisionChange(current, next),
           current.revision,
           event,
           `${sessionId}:disconnect:${next.revision}`,

@@ -16,6 +16,11 @@ import type {
   QuizSessionSummary,
 } from '../shared/quizProtocol';
 import { quizAgentEvent } from '../shared/quizAgentContext';
+import {
+  changeQuizScope,
+  applyQuizRevision,
+  type QuizRevisionChange,
+} from './quizOperations';
 import { sessionEvidence } from './quizEvidence';
 import type { LearnerAttempt } from '../shared/learnerModel';
 import { learnerScopeKey } from './learnerStore';
@@ -79,79 +84,6 @@ function splitSession(session: QuizSession) {
 
 function sanitizeEvent(event: QuizEvent): QuizEvent {
   return { ...event, data: quizAgentEvent(event).data ?? {} };
-}
-
-function preserveSessionMetadata(
-  current: QuizSession,
-  incoming: QuizSession,
-): QuizSession {
-  const { activity: _activity, scope: _scope, ...next } = incoming;
-  // A posted agent response ends the phase it reported. Without this, a
-  // missed idle report leaves "Drafting" up while the learner has the turn.
-  const agentResponded =
-    incoming.eventCursor > current.eventCursor && !incoming.awaitingAgent;
-  const activity =
-    incoming.status === 'connected' && !agentResponded
-      ? current.activity
-      : undefined;
-  return {
-    ...next,
-    ...(activity ? { activity } : {}),
-    ...(current.name !== undefined ? { name: current.name } : {}),
-    // Scope is learner-owned metadata; an in-flight agent write must not revert it.
-    ...(current.scope ? { scope: current.scope } : {}),
-    // Keep whichever lesson map is newer (map updates commit outside revisions).
-    ...((current.lessonMap?.version ?? 0) > (incoming.lessonMap?.version ?? 0)
-      ? { lessonMap: current.lessonMap }
-      : {}),
-    ...((current.tutorNotes?.version ?? 0) > (incoming.tutorNotes?.version ?? 0)
-      ? { tutorNotes: current.tutorNotes }
-      : {}),
-  };
-}
-
-/**
- * Resets mastered/retained nodes (all, or only `concepts`) to independent so
- * the tutor reclaims them against current evidence. Returns the same object
- * when nothing changes.
- */
-function withdrawClaims(
-  session: QuizSession,
-  concepts: Set<string> | undefined,
-  at: string,
-): QuizSession {
-  const map = session.lessonMap;
-  if (!map) return session;
-  const claimed = Object.keys(map.statuses).filter(
-    (id) =>
-      (map.statuses[id] === 'mastered' || map.statuses[id] === 'retained') &&
-      (!concepts || concepts.has(id)),
-  );
-  if (!claimed.length) return session;
-  const statuses = { ...map.statuses };
-  for (const id of claimed) statuses[id] = 'independent';
-  return {
-    ...session,
-    lessonMap: { ...map, statuses, version: map.version + 1, updatedAt: at },
-  };
-}
-
-/** Practice-test state commits outside revisions too; an older write must not reopen or drop a test. */
-function preservePracticeTest(
-  current: QuizSession,
-  incoming: QuizSession,
-): QuizSession {
-  if (
-    (current.practiceTestLog?.version ?? 0) <=
-    (incoming.practiceTestLog?.version ?? 0)
-  )
-    return incoming;
-  const { practiceTest: _stale, ...rest } = incoming;
-  return {
-    ...rest,
-    ...(current.practiceTest ? { practiceTest: current.practiceTest } : {}),
-    practiceTestLog: current.practiceTestLog,
-  };
 }
 
 function mergeDraftFields(
@@ -453,22 +385,6 @@ export class QuizStore {
     };
   }
 
-  /** Writes other sessions into `db` or the draft map; true when `db` changed. */
-  private applyOthers(db: QuizDatabase, others: QuizSession[]): boolean {
-    let changed = false;
-    for (const other of others) {
-      const draft = this.drafts.get(other.id);
-      if (draft) {
-        draft.session = other;
-        continue;
-      }
-      const index = db.sessions.findIndex((item) => item.id === other.id);
-      if (index < 0) continue;
-      db.sessions[index] = other;
-      changed = true;
-    }
-    return changed;
-  }
   /** Every session, saved and draft, as seen inside a serialized operation. */
   private sessionsIn(db: QuizDatabase): QuizSession[] {
     return [
@@ -746,101 +662,119 @@ export class QuizStore {
     });
   }
 
-  async rename(id: string, name: string): Promise<QuizSession | undefined> {
+  /** One commit engine for saved sessions and memory-only drafts. */
+  private async transact(
+    id: string,
+    operation: (
+      current: QuizSession,
+      sessions: QuizSession[],
+    ) => { session: QuizSession; others?: QuizSession[] } | string | undefined,
+    guard: {
+      token?: string;
+      revision?: number;
+      event?: QuizEvent;
+      receipt?: { key: string; fingerprint: string };
+    } = {},
+  ): Promise<QuizSession | string | undefined> {
     return this.serialize(async () => {
-      const draft = this.drafts.get(id);
-      if (draft) {
-        draft.session = { ...draft.session, name };
-        return draft.session;
-      }
       const db = copyDatabase(await this.read());
-      const session = db.sessions.find((item) => item.id === id);
-      if (!session) return undefined;
-      const renamed = { ...session, name };
-      db.sessions[db.sessions.indexOf(session)] = renamed;
-      await this.write(db);
-      return renamed;
+      const draft = this.drafts.get(id);
+      const current =
+        draft?.session ?? db.sessions.find((session) => session.id === id);
+      if (
+        !current ||
+        (guard.token !== undefined && current.agentToken !== guard.token)
+      )
+        return undefined;
+      const receipt = guard.receipt;
+      const prior =
+        receipt && (draft?.idempotency ?? db.idempotency)[receipt.key];
+      if (prior) {
+        if (prior.fingerprint !== receipt!.fingerprint)
+          throw new Error('Idempotency key reused');
+        return current;
+      }
+      if (guard.revision !== undefined && current.revision !== guard.revision)
+        throw new Error('Stale quiz revision');
+      const result = operation(current, this.sessionsIn(db));
+      if (!result || typeof result === 'string') return result;
+      const pendingDrafts = new Map(this.drafts);
+      let durableChanged = false;
+      for (const session of [result.session, ...(result.others ?? [])]) {
+        const memory = pendingDrafts.get(session.id);
+        if (memory) pendingDrafts.set(session.id, { ...memory, session });
+        else {
+          const index = db.sessions.findIndex((item) => item.id === session.id);
+          if (index < 0) throw new Error('Quiz session disappeared');
+          if (db.sessions[index] !== session) durableChanged = true;
+          db.sessions[index] = session;
+        }
+      }
+      if (guard.event || receipt) {
+        const memory = pendingDrafts.get(id);
+        const events = [
+          ...(memory?.events ?? db.events[id] ?? []),
+          ...(guard.event ? [sanitizeEvent(guard.event)] : []),
+        ];
+        const receipts = {
+          ...(memory?.idempotency ?? db.idempotency),
+          ...(receipt
+            ? {
+                [receipt.key]: {
+                  fingerprint: receipt.fingerprint,
+                  sessionId: id,
+                  revision: result.session.revision,
+                },
+              }
+            : {}),
+        };
+        if (memory)
+          pendingDrafts.set(id, { ...memory, events, idempotency: receipts });
+        else {
+          db.events[id] = events;
+          db.idempotency = receipts;
+          durableChanged = true;
+        }
+      }
+      // Publish disk state before touching any in-memory draft, including pooled updates.
+      if (durableChanged) await this.write(db);
+      this.drafts = pendingDrafts;
+      return result.session;
     });
   }
 
-  /** Metadata-only scope change; leaves revisions and events untouched like rename. */
+  async rename(id: string, name: string): Promise<QuizSession | undefined> {
+    return (await this.transact(id, (current) => ({
+      session: { ...current, name },
+    }))) as QuizSession | undefined;
+  }
+
   async setScope(
     id: string,
     scope: QuizScope | undefined,
+    at = new Date().toISOString(),
   ): Promise<QuizSession | undefined> {
-    return this.serialize(async () => {
-      const db = copyDatabase(await this.read());
-      const draft = this.drafts.get(id);
-      const index = db.sessions.findIndex((item) => item.id === id);
-      const current = draft?.session ?? db.sessions[index];
-      if (!current) return undefined;
-      const { scope: _previous, ...rest } = current;
-      let moved: QuizSession = scope
-        ? { ...rest, scope: structuredClone(scope) }
-        : rest;
-      const from = learnerScopeKey(current.scope, current.id);
-      const to = learnerScopeKey(moved.scope, moved.id);
-      const at = new Date().toISOString();
-      if (from !== to) {
-        // Mastery was shown with the old pool's evidence, so the moved quiz
-        // must claim it again in the new pool.
-        moved = withdrawClaims(moved, undefined, at);
-        // The quiz's grades leave one pool and join the other, so claims on
-        // those concepts elsewhere may no longer rest on the same evidence.
-        const concepts = new Set(
-          current.transcript.flatMap((message) =>
-            message.question?.verdict
-              ? (message.question.learning?.concepts ?? [])
-              : [],
-          ),
-        );
-        if (concepts.size)
-          this.applyOthers(
-            db,
-            this.sessionsIn(db).flatMap((other) => {
-              const pool = learnerScopeKey(other.scope, other.id);
-              if (other.id === id || (pool !== from && pool !== to)) return [];
-              const withdrawn = withdrawClaims(other, concepts, at);
-              return withdrawn === other ? [] : [withdrawn];
-            }),
-          );
-      }
-      if (draft) draft.session = moved;
-      else db.sessions[index] = moved;
-      await this.write(db);
-      return moved;
-    });
+    return (await this.transact(id, (current, sessions) =>
+      changeQuizScope(current, scope, sessions, at),
+    )) as QuizSession | undefined;
   }
 
-  /** Metadata-only write (lesson map, tutor notes) by the attached agent. */
   async transactMetadata(
     id: string,
     agentToken: string,
-    /** `sessions` is every session at commit time, for checks that span the learning pool. */
     update: (
       current: QuizSession,
       sessions: QuizSession[],
     ) => QuizSession | string,
   ): Promise<QuizSession | string | undefined> {
-    return this.serialize(async () => {
-      const draft = this.drafts.get(id);
-      if (draft) {
-        if (draft.session.agentToken !== agentToken) return undefined;
-        const next = update(draft.session, this.sessionsIn(await this.read()));
-        if (typeof next === 'string') return next;
-        draft.session = next;
-        return next;
-      }
-      const db = copyDatabase(await this.read());
-      const index = db.sessions.findIndex((item) => item.id === id);
-      if (index < 0 || db.sessions[index]!.agentToken !== agentToken)
-        return undefined;
-      const next = update(db.sessions[index]!, this.sessionsIn(db));
-      if (typeof next === 'string') return next;
-      db.sessions[index] = next;
-      await this.write(db);
-      return next;
-    });
+    return this.transact(
+      id,
+      (current, sessions) => {
+        const next = update(current, sessions);
+        return typeof next === 'string' ? next : { session: next };
+      },
+      { token: agentToken },
+    );
   }
 
   async updateActivity(
@@ -848,135 +782,61 @@ export class QuizStore {
     agentToken: string,
     activity: NonNullable<QuizSession['activity']>,
   ): Promise<QuizSession | undefined> {
-    return this.serialize(async () => {
-      const draft = this.drafts.get(sessionId);
-      if (draft) {
-        if (draft.session.agentToken !== agentToken) return undefined;
-        draft.session = { ...draft.session, activity };
-        return draft.session;
-      }
-      const db = copyDatabase(await this.read());
-      const index = db.sessions.findIndex((item) => item.id === sessionId);
-      if (index < 0 || db.sessions[index]!.agentToken !== agentToken)
-        return undefined;
-      db.sessions[index] = { ...db.sessions[index]!, activity };
-      await this.write(db);
-      return db.sessions[index];
-    });
+    return (await this.transact(
+      sessionId,
+      (current) => ({ session: { ...current, activity } }),
+      { token: agentToken },
+    )) as QuizSession | undefined;
   }
 
   async updateDraft(
-    session: QuizSession,
+    id: string,
     expectedRevision: number,
+    update: (current: QuizSession) => QuizSession,
   ): Promise<QuizSession> {
-    return this.serialize(async () => {
-      const draft = this.drafts.get(session.id);
-      if (draft) {
-        if (draft.session.revision !== expectedRevision)
-          throw new Error('Stale quiz revision');
-        draft.session = mergeDraftFields(draft.session, session);
-        return draft.session;
-      }
-      const db = copyDatabase(await this.read());
-      const index = db.sessions.findIndex((item) => item.id === session.id);
-      if (index < 0) throw new Error('Quiz session disappeared');
-      const current = db.sessions[index]!;
-      if (current.revision !== expectedRevision)
-        throw new Error('Stale quiz revision');
-      const updated = mergeDraftFields(current, session);
-      db.sessions[index] = updated;
-      await this.write(db);
-      return updated;
-    });
+    const result = await this.transact(
+      id,
+      (current) => ({ session: mergeDraftFields(current, update(current)) }),
+      { revision: expectedRevision },
+    );
+    if (!result || typeof result === 'string')
+      throw new Error('Quiz session disappeared');
+    return result;
   }
 
   async update(
-    session: QuizSession,
+    operation: QuizRevisionChange,
     expectedRevision: number,
     event: QuizEvent,
     key: string,
     fingerprint: string,
-    /**
-     * Runs on the merged session inside the serialized commit, so it sees
-     * metadata written after the caller's snapshot. Throw to abort the commit.
-     */
-    atCommit: (merged: QuizSession, sessions: QuizSession[]) => QuizSession = (
-      merged,
-    ) => merged,
-    /** Other sessions to rewrite in the same commit (for example, pooled map statuses). */
+    atCommit: (current: QuizSession, sessions: QuizSession[]) => QuizSession = (
+      current,
+    ) => current,
     alsoCommit: (
-      merged: QuizSession,
+      current: QuizSession,
       sessions: QuizSession[],
     ) => QuizSession[] = () => [],
   ): Promise<QuizSession> {
-    return this.serialize(async () => {
-      const draft = this.drafts.get(session.id);
-      if (draft) {
-        const prior = draft.idempotency[key];
-        if (prior) {
-          if (prior.fingerprint !== fingerprint)
-            throw new Error('Idempotency key reused');
-          return draft.session;
-        }
-        if (draft.session.revision !== expectedRevision)
-          throw new Error('Stale quiz revision');
-        const db = copyDatabase(await this.read());
-        const sessions = this.sessionsIn(db);
-        draft.session = atCommit(
-          preservePracticeTest(
-            draft.session,
-            preserveSessionMetadata(draft.session, session),
-          ),
+    const result = await this.transact(
+      operation.id,
+      (current, sessions) => {
+        const session = atCommit(
+          applyQuizRevision(current, operation.changes),
           sessions,
         );
-        if (this.applyOthers(db, alsoCommit(draft.session, sessions)))
-          await this.write(db);
-        draft.events.push(sanitizeEvent(event));
-        draft.idempotency[key] = {
-          fingerprint,
-          sessionId: session.id,
-          revision: session.revision,
+        return {
+          session,
+          others: alsoCommit(
+            session,
+            sessions.map((item) => (item.id === session.id ? session : item)),
+          ),
         };
-        return draft.session;
-      }
-      const db = copyDatabase(await this.read());
-      const index = db.sessions.findIndex((item) => item.id === session.id);
-      if (index < 0) throw new Error('Quiz session disappeared');
-      const prior = db.idempotency[key];
-      if (prior) {
-        if (prior.fingerprint !== fingerprint)
-          throw new Error('Idempotency key reused');
-        // A matching receipt means the action already committed. Acknowledge it
-        // with the latest state rather than reapplying it or retaining old snapshots.
-        return (
-          db.sessions.find((item) => item.id === prior.sessionId) ?? session
-        );
-      }
-      if (db.sessions[index].revision !== expectedRevision)
-        throw new Error('Stale quiz revision');
-      // Keep metadata-only edits (such as a session rename) made after the
-      // caller read its snapshot when committing a semantic revision update.
-      const updatedSession = atCommit(
-        preservePracticeTest(
-          db.sessions[index],
-          preserveSessionMetadata(db.sessions[index], session),
-        ),
-        this.sessionsIn(db),
-      );
-      db.sessions[index] = updatedSession;
-      this.applyOthers(db, alsoCommit(updatedSession, this.sessionsIn(db)));
-      db.events[session.id] = [
-        ...(db.events[session.id] ?? []),
-        sanitizeEvent(event),
-      ];
-      db.idempotency = { ...db.idempotency };
-      db.idempotency[key] = {
-        fingerprint,
-        sessionId: session.id,
-        revision: session.revision,
-      };
-      await this.write(db);
-      return updatedSession;
-    });
+      },
+      { revision: expectedRevision, event, receipt: { key, fingerprint } },
+    );
+    if (!result || typeof result === 'string')
+      throw new Error('Quiz session disappeared');
+    return result;
   }
 }

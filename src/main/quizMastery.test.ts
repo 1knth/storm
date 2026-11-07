@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QuizService } from './quizService';
+import { quizRevisionChange } from './quizOperations';
 import { QuizStore } from './quizStore';
 import { LearnerStore, learnerScopeKey } from './learnerStore';
 import { createHash } from 'node:crypto';
@@ -417,7 +418,10 @@ describe('mastery evidence', () => {
       );
       // Commit a semantic update built from the snapshot read before the test.
       const committed = await f.store.update(
-        { ...before, revision: before.revision + 1 },
+        quizRevisionChange(before, {
+          ...before,
+          revision: before.revision + 1,
+        }),
         before.revision,
         {
           cursor: before.eventCursor + 1,

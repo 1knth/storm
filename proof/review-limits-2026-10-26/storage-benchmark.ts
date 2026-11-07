@@ -104,7 +104,14 @@ try {
       activityTimes: number[] = [];
     for (let i = 0; i < 5; i++) {
       session = { ...session, freeChatDraft: `draft-${i}` };
-      draftTimes.push(await timing(() => store.updateDraft(session, 200)));
+      draftTimes.push(
+        await timing(() =>
+          store.updateDraft(session.id, 200, (current) => ({
+            ...current,
+            freeChatDraft: session.freeChatDraft,
+          })),
+        ),
+      );
       activityTimes.push(
         await timing(() =>
           store.updateActivity('session-0', 'test-only', {
