@@ -1,5 +1,13 @@
-import { mkdir, readFile, rename, writeFile, stat } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import {
+  mkdir,
+  readFile,
+  rename,
+  writeFile,
+  stat,
+  copyFile,
+  rm,
+} from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import type {
   QuizEvent,
@@ -19,6 +27,50 @@ export type QuizDatabase = {
     { fingerprint: string; sessionId: string; revision: number }
   >;
 };
+type Manifest = {
+  version: 2;
+  sessions: Record<string, { history: string; transient: string }>;
+};
+
+function copyDatabase(db: QuizDatabase): QuizDatabase {
+  return {
+    ...db,
+    sessions: [...db.sessions],
+    events: { ...db.events },
+    idempotency: db.idempotency,
+  };
+}
+
+function splitSession(session: QuizSession) {
+  const { activity, freeChatDraft, currentPrompt, currentQuestion, ...rest } =
+    session;
+  const {
+    selectedChoiceId: promptChoice,
+    detailDraft,
+    ...prompt
+  } = currentPrompt ?? {};
+  const {
+    selectedChoiceId,
+    reasoningDraft,
+    matchesDraft,
+    textDraft,
+    ...question
+  } = currentQuestion ?? {};
+  return {
+    history: {
+      ...rest,
+      currentPrompt: currentPrompt ? prompt : currentPrompt,
+      currentQuestion: currentQuestion ? question : currentQuestion,
+    },
+    transient: {
+      activity,
+      freeChatDraft,
+      prompt: { selectedChoiceId: promptChoice, detailDraft },
+      question: { selectedChoiceId, reasoningDraft, matchesDraft, textDraft },
+    },
+  };
+}
+
 function sanitizeEvent(event: QuizEvent): QuizEvent {
   return { ...event, data: quizAgentEvent(event).data ?? {} };
 }
@@ -138,7 +190,7 @@ const emptyDatabase = (): QuizDatabase => ({
   idempotency: {},
 });
 
-/** Small versioned JSON store; each replacement is written beside the target then atomically renamed. */
+/** Per-session immutable files, published together by an atomic versioned manifest. */
 export class QuizStore {
   private queue: Promise<unknown> = Promise.resolve();
   private cache?: { signature: string; database: QuizDatabase };
@@ -150,14 +202,62 @@ export class QuizStore {
       idempotency: QuizDatabase['idempotency'];
     }
   >();
+  private manifest?: Manifest;
   constructor(private readonly filePath: string) {}
 
+  private async atomicWrite(path: string, value: unknown): Promise<void> {
+    await mkdir(dirname(path), { recursive: true });
+    const temporary = `${path}.${crypto.randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify(value), {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      await rename(temporary, path);
+    } finally {
+      await import('node:fs/promises').then(({ rm }) =>
+        rm(temporary, { force: true }),
+      );
+    }
+  }
+
   private async read(): Promise<QuizDatabase> {
+    let manifestExists = false;
     try {
       const info = await stat(this.filePath);
+      manifestExists = true;
       const signature = `${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
       if (this.cache?.signature === signature) return this.cache.database;
-      const value: unknown = JSON.parse(await readFile(this.filePath, 'utf8'));
+      let value: unknown = JSON.parse(await readFile(this.filePath, 'utf8'));
+      if ((value as Manifest).version === 2) {
+        const manifest = value as Manifest;
+        const db = emptyDatabase();
+        for (const [id, files] of Object.entries(manifest.sessions)) {
+          const root = `${this.filePath}.sessions`;
+          const history = JSON.parse(
+            await readFile(join(root, files.history), 'utf8'),
+          );
+          const transient = JSON.parse(
+            await readFile(join(root, files.transient), 'utf8'),
+          );
+          const session = history.session;
+          const { prompt, question, ...draftFields } = transient;
+          db.sessions.push({
+            ...session,
+            ...draftFields,
+            ...(session.currentPrompt
+              ? { currentPrompt: { ...session.currentPrompt, ...prompt } }
+              : {}),
+            ...(session.currentQuestion
+              ? { currentQuestion: { ...session.currentQuestion, ...question } }
+              : {}),
+          });
+          db.events[id] = history.events;
+          Object.assign(db.idempotency, history.idempotency);
+        }
+        this.manifest = manifest;
+        value = db;
+      } else this.manifest = undefined;
       if (
         !value ||
         typeof value !== 'object' ||
@@ -214,32 +314,104 @@ export class QuizStore {
           events.map(sanitizeEvent),
         ]),
       );
-      if (legacyReceipts) await this.write(database);
-      else this.cache = { signature, database };
+      this.cache = { signature, database };
+      if (legacyReceipts || !this.manifest) await this.write(database);
       return database;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+      if (!manifestExists && (error as NodeJS.ErrnoException).code === 'ENOENT')
         return emptyDatabase();
       throw error;
     }
   }
 
   private async write(database: QuizDatabase): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    const temporary = `${this.filePath}.${crypto.randomUUID()}.tmp`;
-    try {
-      await writeFile(temporary, JSON.stringify(database), {
-        encoding: 'utf8',
-        mode: 0o600,
-      });
-      await rename(temporary, this.filePath);
-      this.cache = undefined;
-    } catch (error) {
-      await import('node:fs/promises').then(({ unlink }) =>
-        unlink(temporary).catch(() => {}),
-      );
-      throw error;
+    const previous = this.cache?.database;
+    const manifest: Manifest = { version: 2, sessions: {} };
+    const root = `${this.filePath}.sessions`;
+    let receiptsBySession: Map<string, QuizDatabase['idempotency']> | undefined;
+    for (const session of database.sessions) {
+      const old = previous?.sessions.find((item) => item.id === session.id);
+      const files = this.manifest?.sessions[session.id];
+      if (
+        files &&
+        old === session &&
+        previous?.events[session.id] === database.events[session.id]
+      ) {
+        manifest.sessions[session.id] = files;
+        continue;
+      }
+      const parts = splitSession(session);
+      const oldParts = old && splitSession(old);
+      const historyUnchanged =
+        files &&
+        oldParts &&
+        JSON.stringify(parts.history) === JSON.stringify(oldParts.history) &&
+        previous?.events[session.id] === database.events[session.id];
+      const historyFile = historyUnchanged
+        ? files.history
+        : `${crypto.randomUUID()}.history.json`;
+      const transientFile = `${crypto.randomUUID()}.transient.json`;
+      if (!historyUnchanged) {
+        if (!receiptsBySession) {
+          receiptsBySession = new Map();
+          for (const [key, receipt] of Object.entries(database.idempotency)) {
+            let group = receiptsBySession.get(receipt.sessionId);
+            if (!group) {
+              group = {};
+              receiptsBySession.set(receipt.sessionId, group);
+            }
+            group[key] = receipt;
+          }
+        }
+        const receipts = receiptsBySession.get(session.id) ?? {};
+        await this.atomicWrite(join(root, historyFile), {
+          session: parts.history,
+          events: database.events[session.id] ?? [],
+          idempotency: receipts,
+        });
+      }
+      await this.atomicWrite(join(root, transientFile), parts.transient);
+      manifest.sessions[session.id] = {
+        history: historyFile,
+        transient: transientFile,
+      };
     }
+    if (!this.manifest && previous) {
+      // Keep the original bytes for rollback; interrupted imports can safely retry.
+      try {
+        await copyFile(this.filePath, `${this.filePath}.v1-backup`, 1);
+      } catch (error) {
+        if (
+          !['EEXIST', 'ENOENT'].includes(
+            (error as NodeJS.ErrnoException).code ?? '',
+          )
+        )
+          throw error;
+      }
+    }
+    const oldManifest = this.manifest;
+    // The manifest is the commit point, including changes spanning multiple sessions.
+    await this.atomicWrite(this.filePath, manifest);
+    this.manifest = manifest;
+    const live = new Set(
+      Object.values(manifest.sessions).flatMap(({ history, transient }) => [
+        history,
+        transient,
+      ]),
+    );
+    // Only remove files superseded by this successful commit. Failed writes leave
+    // unreachable files, never a manifest referencing partially written state.
+    for (const files of Object.values(oldManifest?.sessions ?? {})) {
+      for (const name of [files.history, files.transient]) {
+        if (!live.has(name))
+          await rm(join(root, name), { force: true }).catch(() => {});
+      }
+    }
+    const info = await stat(this.filePath);
+    this.cache = {
+      signature: `${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`,
+      database,
+    };
   }
 
   /** Writes other sessions into `db` or the draft map; true when `db` changed. */
@@ -270,6 +442,46 @@ export class QuizStore {
     this.queue = result.catch(() => {});
     return result;
   }
+  /** Recover prior-process connections in one atomic manifest commit. */
+  async recoverConnections(at: string): Promise<QuizSession[]> {
+    return this.serialize(async () => {
+      const db = copyDatabase(await this.read());
+      db.idempotency = { ...db.idempotency };
+      let changed = false;
+      db.sessions = db.sessions.map((session) => {
+        if (session.status !== 'connected') return session;
+        changed = true;
+        const next: QuizSession = {
+          ...session,
+          status: 'disconnected',
+          activity: undefined,
+          awaitingAgent: false,
+          revision: session.revision + 1,
+          eventCursor: session.eventCursor + 1,
+          updatedAt: at,
+        };
+        db.events[session.id] = [
+          ...(db.events[session.id] ?? []),
+          {
+            cursor: next.eventCursor,
+            revision: next.revision,
+            type: 'disconnect',
+            data: {},
+            createdAt: at,
+          },
+        ];
+        db.idempotency[`${session.id}:disconnect:${next.revision}`] = {
+          fingerprint: JSON.stringify([session.id, next.revision]),
+          sessionId: session.id,
+          revision: next.revision,
+        };
+        return next;
+      });
+      if (changed) await this.write(db);
+      return structuredClone(db.sessions);
+    });
+  }
+
   async list(
     options: { includeDrafts?: boolean } = {},
   ): Promise<QuizSession[]> {
@@ -317,7 +529,7 @@ export class QuizStore {
 
   async createDraft(session: QuizSession): Promise<void> {
     return this.serialize(async () => {
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       if (
         db.sessions.some((item) => item.id === session.id) ||
         this.drafts.has(session.id)
@@ -330,12 +542,12 @@ export class QuizStore {
     return this.serialize(async () => {
       const draft = this.drafts.get(id);
       if (!draft) return;
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       if (db.sessions.some((item) => item.id === id))
         throw new Error('Duplicate quiz session');
       db.sessions.push(draft.session);
       db.events[id] = draft.events;
-      Object.assign(db.idempotency, draft.idempotency);
+      db.idempotency = { ...db.idempotency, ...draft.idempotency };
       await this.write(db);
       this.drafts.delete(id);
     });
@@ -378,7 +590,7 @@ export class QuizStore {
   }
   async create(session: QuizSession): Promise<void> {
     return this.serialize(async () => {
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       if (db.sessions.some((item) => item.id === session.id))
         throw new Error('Duplicate quiz session');
       db.sessions.push(session);
@@ -399,7 +611,7 @@ export class QuizStore {
     return this.serialize(async () => {
       this.deletionCount++;
       if (this.drafts.delete(id)) return;
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       db.sessions = db.sessions.filter((session) => session.id !== id);
       delete db.events[id];
       db.idempotency = Object.fromEntries(
@@ -418,12 +630,13 @@ export class QuizStore {
         draft.session = { ...draft.session, name };
         return draft.session;
       }
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       const session = db.sessions.find((item) => item.id === id);
       if (!session) return undefined;
-      session.name = name;
+      const renamed = { ...session, name };
+      db.sessions[db.sessions.indexOf(session)] = renamed;
       await this.write(db);
-      return session;
+      return renamed;
     });
   }
 
@@ -433,7 +646,7 @@ export class QuizStore {
     scope: QuizScope | undefined,
   ): Promise<QuizSession | undefined> {
     return this.serialize(async () => {
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       const draft = this.drafts.get(id);
       const index = db.sessions.findIndex((item) => item.id === id);
       const current = draft?.session ?? db.sessions[index];
@@ -477,7 +690,7 @@ export class QuizStore {
   }
 
   /** Metadata-only write (lesson map, tutor notes) by the attached agent. */
-  async setLessonMap(
+  async transactMetadata(
     id: string,
     agentToken: string,
     /** `sessions` is every session at commit time, for checks that span the learning pool. */
@@ -495,7 +708,7 @@ export class QuizStore {
         draft.session = next;
         return next;
       }
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       const index = db.sessions.findIndex((item) => item.id === id);
       if (index < 0 || db.sessions[index]!.agentToken !== agentToken)
         return undefined;
@@ -519,7 +732,7 @@ export class QuizStore {
         draft.session = { ...draft.session, activity };
         return draft.session;
       }
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       const index = db.sessions.findIndex((item) => item.id === sessionId);
       if (index < 0 || db.sessions[index]!.agentToken !== agentToken)
         return undefined;
@@ -541,7 +754,7 @@ export class QuizStore {
         draft.session = mergeDraftFields(draft.session, session);
         return draft.session;
       }
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       const index = db.sessions.findIndex((item) => item.id === session.id);
       if (index < 0) throw new Error('Quiz session disappeared');
       const current = db.sessions[index]!;
@@ -584,7 +797,7 @@ export class QuizStore {
         }
         if (draft.session.revision !== expectedRevision)
           throw new Error('Stale quiz revision');
-        const db = structuredClone(await this.read());
+        const db = copyDatabase(await this.read());
         const sessions = this.sessionsIn(db);
         draft.session = atCommit(
           preservePracticeTest(
@@ -603,7 +816,7 @@ export class QuizStore {
         };
         return draft.session;
       }
-      const db = structuredClone(await this.read());
+      const db = copyDatabase(await this.read());
       const index = db.sessions.findIndex((item) => item.id === session.id);
       if (index < 0) throw new Error('Quiz session disappeared');
       const prior = db.idempotency[key];
@@ -629,7 +842,11 @@ export class QuizStore {
       );
       db.sessions[index] = updatedSession;
       this.applyOthers(db, alsoCommit(updatedSession, this.sessionsIn(db)));
-      (db.events[session.id] ??= []).push(sanitizeEvent(event));
+      db.events[session.id] = [
+        ...(db.events[session.id] ?? []),
+        sanitizeEvent(event),
+      ];
+      db.idempotency = { ...db.idempotency };
       db.idempotency[key] = {
         fingerprint,
         sessionId: session.id,

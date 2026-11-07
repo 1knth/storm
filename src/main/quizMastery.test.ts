@@ -714,16 +714,16 @@ describe('mastery evidence', () => {
       value(await f.agent('practice-test', { action: 'end' }));
       const other = await session(f.service);
       // Hold the other quiz's claim inside its read, then commit a miss here.
-      const original = f.store.setLessonMap.bind(f.store);
+      const original = f.store.transactMetadata.bind(f.store);
       let release!: () => void;
       const released = new Promise<void>((resolve) => (release = resolve));
-      f.store.setLessonMap = (async (
-        ...args: Parameters<QuizStore['setLessonMap']>
+      f.store.transactMetadata = (async (
+        ...args: Parameters<QuizStore['transactMetadata']>
       ) => {
-        f.store.setLessonMap = original;
+        f.store.transactMetadata = original;
         await released;
         return original(...args);
-      }) as QuizStore['setLessonMap'];
+      }) as QuizStore['transactMetadata'];
       const claim = other.status('mastered');
       await f.item('Later item', { verdict: 'incorrect' });
       release();
