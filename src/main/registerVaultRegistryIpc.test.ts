@@ -276,7 +276,7 @@ test('forwards a registered group-member vault root drop through sidebar IPC', a
   assert.deepEqual(calls, [['moveSidebarItem', request]]);
 });
 
-test('persists renderer-serialized image and PDF layouts through the tab-layout IPC handler', async () => {
+test('persists one renderer-serialized layout through the tab-layout IPC handler', async () => {
   const temp = await temporaryVaultRoot();
   try {
     const vaultPath = path.join(temp, 'vault');

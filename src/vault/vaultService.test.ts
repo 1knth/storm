@@ -2,6 +2,7 @@ import { temporaryVaultRoot } from './testing/tempVault';
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import {
+  mkdtemp,
   readFile,
   readdir,
   rm,
