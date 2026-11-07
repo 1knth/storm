@@ -1,3 +1,4 @@
+import { enumerateStudyScope } from './main/studyContextEnumeration';
 import {
   app,
   BrowserWindow,
@@ -224,14 +225,15 @@ const studyStartup = quizStore
 void studyStartup.catch(() => {});
 const studyContext = new StudyContextService(studyStore, {
   vaults: async () => (await vaultRegistry.list()).vaults,
-  entries: async (root) => {
-    const service = new VaultService();
-    await service.selectVault(root);
-    return service.listNotes({
-      previews: false,
-      limit: STUDY_LIMITS.entries + 1,
-    });
-  },
+  entries: async (root, scope) =>
+    enumerateStudyScope(root, scope, async (folder) => {
+      const service = new VaultService();
+      await service.selectVault(folder);
+      return service.listNotes({
+        previews: false,
+        limit: STUDY_LIMITS.entries + 1,
+      });
+    }),
   live: async (vaultId, relativePath) => {
     const result = await agentTransport.dispatch({
       type: 'inspect',

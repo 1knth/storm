@@ -266,32 +266,56 @@ test('capture shares mutation serialization and fails honestly when rename wins 
   }
 });
 
-test('tree pagination detects changed metadata and retrieval explicitly pages more than 64 notes', async () => {
+test('whole-scope ranking finds content beyond note 64 and rejects stale ranked cursors', async () => {
   const f = await fixture();
   try {
-    for (let i = 0; i < 65; i++)
+    for (let i = 0; i < 70; i++)
       await writeFile(
         join(f.root, 'Course', `item-${String(i).padStart(3, '0')}.md`),
-        `# Item\n${i === 64 ? 'zebraword' : 'ordinary content'}\n`,
+        `# Item\n${i >= 64 ? 'zebraword' : 'ordinary content'}\n`,
       );
-    await assert.rejects(
-      f.service.execute({
-        action: 'tree',
-        studyId: f.opened.studyId,
-        indexRevision: f.opened.indexRevision,
-      }),
-      /STUDY_INDEX_CHANGED/,
-    );
     const page = await f.retrieve('zebraword');
-    assert.equal(page.incomplete, true);
-    assert.equal(page.nextScanOffset, 64);
+    assert.ok(page.chunks.some((c) => c.text.includes('zebraword')));
+    assert.ok(page.nextScanOffset);
     const next = (await f.service.execute({
       action: 'retrieve',
       studyId: f.opened.studyId,
       query: 'zebraword',
       offset: page.nextScanOffset!,
     })) as StudyPacket;
-    assert.ok(next.chunks.some((c) => c.text.includes('zebraword')));
+    assert.ok(next.chunks.length);
+    assert.ok(
+      next.chunks.every((c) => !page.chunks.some((p) => p.id === c.id)),
+    );
+    await writeFile(join(f.root, 'Course', 'new.md'), 'zebraword');
+    await assert.rejects(
+      f.service.execute({
+        action: 'retrieve',
+        studyId: f.opened.studyId,
+        query: 'zebraword',
+        offset: page.nextScanOffset!,
+      }),
+      /STUDY_CURSOR_STALE/,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('content outranks filenames and scope folder names do not qualify passages', async () => {
+  const f = await fixture();
+  try {
+    await writeFile(
+      join(f.root, 'Course', 'zebraword.md'),
+      'irrelevant material',
+    );
+    await writeFile(
+      join(f.root, 'Course', 'Relevant.md'),
+      'zebraword explains the principle',
+    );
+    const packet = await f.retrieve('zebraword');
+    assert.equal(packet.sources[0].path, 'Course/Relevant.md');
+    assert.equal((await f.retrieve('Course')).chunks.length, 0);
   } finally {
     await f.cleanup();
   }

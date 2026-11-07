@@ -1,4 +1,6 @@
-import { realpath } from 'node:fs/promises';
+import { randomInt } from 'node:crypto';
+import path from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
 import type { QuizScope } from '../shared/quizProtocol';
 import type { VaultEntry } from '../shared/types';
 import {
@@ -20,7 +22,7 @@ import { StudyContextStore } from './studyContextStore';
 
 export interface StudyContextPorts {
   vaults(): Promise<Array<{ id: string; path: string }>>;
-  entries(root: string): Promise<VaultEntry[]>;
+  entries(root: string, scope?: QuizScope): Promise<VaultEntry[]>;
   live(
     vaultId: string,
     relativePath: string,
@@ -50,9 +52,22 @@ const publicSource = ({
     ),
 });
 
+type StudyIndexEntry = {
+  revision: string;
+  cost: number;
+  indexed: ReturnType<typeof indexStudySource>;
+  frequencies: Map<string, number>[];
+};
+
 /** Shared read context; never owns editor text, quiz state, or a model executor. */
 export class StudyContextService {
-  private cache = new Map<string, ReturnType<typeof indexStudySource>>();
+  private cache = new Map<string, StudyIndexEntry>();
+  private namespaceRevisions = new WeakMap<VaultEntry[], string>();
+  private cursors = new Map<
+    number,
+    { studyId: string; query: string; revision: string; offset: number }
+  >();
+  private cursorSequence = randomInt(1, 2 ** 40);
   private cacheBytes = 0;
   constructor(
     private readonly store: StudyContextStore,
@@ -84,20 +99,28 @@ export class StudyContextService {
   }
   private async listing(studyId: string) {
     const { scope, root } = await this.binding(studyId);
-    const all = await this.ports.entries(root);
-    const partial = all.length > STUDY_LIMITS.entries;
-    const entries = all
-      .slice(0, STUDY_LIMITS.entries)
-      .filter((e) => studyContains(scope, e.path.replace(/\\/g, '/')));
+    const all = await this.ports.entries(root, scope);
+    const scoped = all.filter((e) =>
+      studyContains(scope, e.path.replace(/\\/g, '/')),
+    );
+    const partial = scoped.length > STUDY_LIMITS.entries;
+    const entries = scoped.slice(0, STUDY_LIMITS.entries);
     const sources: StudySource[] = entries.map((e) => ({
       id: studyHash(`${scope.vaultId}:${e.path}`),
       path: e.path.replace(/\\/g, '/'),
       kind: e.kind,
       role: 'unclassified',
     }));
-    const indexRevision = studyHash(
-      JSON.stringify({ sources, namespace: all.map((e) => [e.path, e.kind]) }),
-    );
+    let indexRevision = this.namespaceRevisions.get(all);
+    if (!indexRevision) {
+      indexRevision = studyHash(
+        JSON.stringify({
+          sources,
+          namespace: all.map((e) => [e.path, e.kind]),
+        }),
+      );
+      this.namespaceRevisions.set(all, indexRevision);
+    }
     return { scope, root, all, sources, indexRevision, partial };
   }
   async execute(request: StudyRequest): Promise<StudyValue> {
@@ -267,17 +290,138 @@ export class StudyContextService {
       .filter((s) => s.kind !== 'note' && s.kind !== 'directory')
       .slice(0, 20)
       .map((s) => ({ path: s.path, reason: 'reader-unavailable' }));
-    const terms = query.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-    const notes = info.sources
-      .filter((s) => s.kind === 'note')
-      .sort((a, b) => {
-        const score = (s: StudySource) =>
-          terms.filter((t) => s.path.toLocaleLowerCase().includes(t)).length;
-        return score(b) - score(a) || a.path.localeCompare(b.path);
-      });
-    const selected = notes.slice(offset, offset + STUDY_LIMITS.scanNotes);
+    const tokenize = (text: string) =>
+      text.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+    const terms = [...new Set(tokenize(query))];
+    const notes = info.sources.filter((s) => s.kind === 'note');
+    const documents: Array<{
+      source: StudySource;
+      entry: StudyIndexEntry;
+    }> = [];
+    let scopeBytes = 0;
+    for (const source of notes) {
+      try {
+        // Metadata invalidates disk entries; live buffers are checked on every request.
+        const live = await this.ports.live(info.scope.vaultId, source.path);
+        const metadata = live
+          ? null
+          : await stat(path.join(info.root, source.path));
+        const revision = live
+          ? studyHash(live.text)
+          : `${metadata!.ino}:${metadata!.size}:${metadata!.mtimeMs}:${metadata!.ctimeMs}`;
+        const key = `${info.root}:${source.id}`;
+        let entry = this.cache.get(key);
+        if (!entry || entry.revision !== revision) {
+          const text =
+            live?.text ?? (await this.ports.read(info.root, source.path));
+          if (Buffer.byteLength(text) > STUDY_LIMITS.sourceBytes)
+            throw new Error('STUDY_SOURCE_TOO_LARGE');
+          const indexed = indexStudySource(source.id, text);
+          const frequencies = indexed.chunks.map((chunk) => {
+            const counts = new Map<string, number>();
+            for (const term of tokenize(chunk.text))
+              counts.set(term, (counts.get(term) ?? 0) + 1);
+            return counts;
+          });
+          const cost = bytes(indexed) + bytes(frequencies.map((f) => [...f]));
+          if (entry) {
+            this.cacheBytes -= entry.cost;
+            this.cache.delete(key);
+          }
+          entry = { revision, indexed, frequencies, cost };
+          this.cache.set(key, entry);
+          this.cacheBytes += cost;
+          while (
+            this.cacheBytes > STUDY_LIMITS.storeBytes ||
+            this.cache.size > STUDY_LIMITS.entries
+          ) {
+            const oldest = this.cache.keys().next().value!;
+            this.cacheBytes -= this.cache.get(oldest)!.cost;
+            this.cache.delete(oldest);
+          }
+        }
+        scopeBytes += entry.cost;
+        if (scopeBytes > STUDY_LIMITS.storeBytes)
+          throw new Error('STUDY_INDEX_LIMIT');
+        documents.push({ source, entry });
+      } catch (error) {
+        if ((error as Error).message === 'STUDY_INDEX_LIMIT') throw error;
+        issues.push({
+          path: source.path,
+          reason: (error as Error).message.startsWith('STUDY_')
+            ? (error as Error).message
+            : 'source-unavailable',
+        });
+      }
+    }
+    const revision = studyHash(
+      JSON.stringify([
+        info.indexRevision,
+        documents.map((d) => [d.source.id, d.entry.revision]),
+      ]),
+    );
+    let rankOffset = 0;
+    if (offset) {
+      const cursor = this.cursors.get(offset);
+      if (
+        !cursor ||
+        cursor.studyId !== studyId ||
+        cursor.query !== query ||
+        cursor.revision !== revision
+      )
+        throw new Error('STUDY_CURSOR_STALE');
+      rankOffset = cursor.offset;
+    }
+    const chunkCount = documents.reduce(
+      (n, d) => n + d.entry.indexed.chunks.length,
+      0,
+    );
+    const df = new Map(
+      terms.map((term) => [
+        term,
+        documents.reduce(
+          (n, d) => n + d.entry.frequencies.filter((f) => f.has(term)).length,
+          0,
+        ),
+      ]),
+    );
+    const candidates = documents
+      .flatMap(({ source, entry }) => {
+        const names = new Set(
+          tokenize(path.posix.basename(source.path, '.md')),
+        );
+        return entry.indexed.chunks.map((chunk, i) => {
+          const frequencies = entry.frequencies[i];
+          let score = 0;
+          for (const term of terms) {
+            const tf = frequencies.get(term) ?? 0;
+            if (tf)
+              score +=
+                (Math.log(1 + (chunkCount + 1) / ((df.get(term) ?? 0) + 1)) *
+                  tf) /
+                (tf + 0.5);
+          }
+          // A basename helps break content ties; it cannot manufacture content hits.
+          if (score > 0)
+            score += terms.filter((t) => names.has(t)).length * 0.05;
+          return { chunk, score, source };
+        });
+      })
+      .filter((c) => c.score > 0)
+      .sort(
+        (a, b) => b.score - a.score || a.chunk.id.localeCompare(b.chunk.id),
+      );
+    const remaining = candidates.slice(rankOffset);
+    const selectedIds = [...new Set(remaining.map((c) => c.source.id))].slice(
+      0,
+      4,
+    );
+    const selected = notes.filter((s) => selectedIds.includes(s.id));
     const reads = await this.captured(info.scope, info.root, selected);
     const captured: StudyCapturedSource[] = [];
+    const notePaths = info.all
+      .filter((e) => e.kind === 'note')
+      .map((e) => e.path);
     for (const read of reads) {
       if (read.issue || read.text === undefined) {
         issues.push({
@@ -287,22 +431,15 @@ export class StudyContextService {
         continue;
       }
       const contentHash = studyHash(read.text);
-      const key = read.source.id + contentHash;
-      let indexed = this.cache.get(key);
-      if (!indexed) {
-        indexed = indexStudySource(read.source.id, read.text);
-        this.cache.set(key, indexed);
-        this.cacheBytes += Buffer.byteLength(read.text);
-        while (
-          this.cache.size > 128 ||
-          this.cacheBytes > STUDY_LIMITS.scanBytes
-        ) {
-          const oldest = this.cache.keys().next().value!;
-          this.cacheBytes -= this.cache
-            .get(oldest)!
-            .chunks.reduce((n, c) => n + Buffer.byteLength(c.text), 0);
-          this.cache.delete(oldest);
-        }
+      const indexed = indexStudySource(read.source.id, read.text);
+      const expected = documents.find((d) => d.source.id === read.source.id);
+      if (
+        !expected ||
+        expected.entry.indexed.chunks[0]?.contentHash !==
+          indexed.chunks[0]?.contentHash
+      ) {
+        issues.push({ path: read.source.path, reason: 'STUDY_SOURCE_BUSY' });
+        continue;
       }
       const links: StudyCapturedSource['links'] = [];
       for (const target of indexed.links) {
@@ -315,7 +452,7 @@ export class StudyContextService {
             info.root,
             read.source.path,
             target,
-            info.all.filter((e) => e.kind === 'note').map((e) => e.path),
+            notePaths,
           );
           links.push(
             studyContains(info.scope, resolved)
@@ -336,31 +473,12 @@ export class StudyContextService {
         links,
       });
     }
-    const rank = (c: StudyCapturedSource['chunks'][number]) =>
-      terms.reduce(
-        (n, t) =>
-          n +
-          (c.text.toLocaleLowerCase().includes(t) ? 1 : 0) +
-          (c.heading.toLocaleLowerCase().includes(t) ? 2 : 0) +
-          (captured
-            .find((s) => s.id === c.sourceId)!
-            .path.toLocaleLowerCase()
-            .includes(t)
-            ? 2
-            : 0),
-        0,
-      );
-    const ranked = captured
-      .flatMap((s) => s.chunks)
-      .filter((c) => rank(c) > 0)
-      .sort((a, b) => rank(b) - rank(a) || a.id.localeCompare(b.id));
-    const sourceIds = [...new Set(ranked.map((c) => c.sourceId))].slice(0, 4);
-    if (ranked.some((c) => !sourceIds.includes(c.sourceId)))
-      issues.push({
-        path: '',
-        reason: 'additional-matching-sources; narrow query using a note name',
-      });
-    const sources = captured.filter((s) => sourceIds.includes(s.id));
+    const capturedIds = new Set(captured.map((s) => s.id));
+    const ranked = remaining
+      .filter((c) => capturedIds.has(c.source.id))
+      .map((c) => c.chunk);
+    const sourceIds = selectedIds;
+    const sources = captured;
     const snapshot: StudySnapshot = {
       schemaVersion: 1,
       id: studyHash(
@@ -385,16 +503,21 @@ export class StudyContextService {
     );
     // Retrieval is ranked; read pages use source order. Resume full-source context at zero.
     if (packet.nextOffset !== null) packet.nextOffset = 0;
-    const consumed =
-      reads.length - (reads.at(-1)?.issue === 'STUDY_SCAN_LIMIT' ? 1 : 0);
-    packet.scannedNotes = consumed;
-    packet.nextScanOffset =
-      offset + consumed < notes.length ? offset + consumed : null;
+    packet.scannedNotes = notes.length;
+    const delivered = new Set(packet.chunks.map((c) => c.id));
+    let next = rankOffset;
+    while (next < candidates.length && delivered.has(candidates[next].chunk.id))
+      next++;
+    packet.nextScanOffset = null;
+    if (next < candidates.length && next > rankOffset) {
+      const token = ++this.cursorSequence;
+      this.cursors.set(token, { studyId, query, revision, offset: next });
+      while (this.cursors.size > 128)
+        this.cursors.delete(this.cursors.keys().next().value!);
+      packet.nextScanOffset = token;
+    }
     packet.incomplete ||=
-      info.partial ||
-      packet.nextScanOffset !== null ||
-      issues.length > 0 ||
-      ranked.some((c) => !sourceIds.includes(c.sourceId));
+      info.partial || next < candidates.length || issues.length > 0;
     return packet;
   }
   private packet(
