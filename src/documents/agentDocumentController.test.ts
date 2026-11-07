@@ -4,7 +4,6 @@ import { EditorState } from '@codemirror/state';
 import {
   AgentDocumentController,
   classifyEditInsertions,
-  classifySingleInsertion,
 } from './agentDocumentController';
 
 describe('agent reveal classification', () => {
@@ -72,21 +71,6 @@ describe('agent reveal classification', () => {
     assert.equal(writing.state.doc.toString(), 'agent text');
     assert.equal(writing.revision, 'old');
   });
-  it('classifies exact insertion ranges in UTF-16 coordinates and rejects corrections', () => {
-    assert.deepEqual(classifySingleInsertion('A🙂B', 'A🙂newB'), {
-      from: 3,
-      to: 6,
-    });
-    assert.deepEqual(classifySingleInsertion('abc', 'abc\n'), {
-      from: 3,
-      to: 4,
-    });
-    assert.equal(classifySingleInsertion('abc', 'axc'), null);
-    assert.equal(classifySingleInsertion('abc', 'ac'), null);
-    assert.equal(classifySingleInsertion('abc', 'aXbYc'), null);
-    assert.equal(classifySingleInsertion('same', 'same'), null);
-  });
-
   it('handles large pure insertion runs linearly and anchors repeated content', () => {
     const old = Array.from({ length: 5000 }, (_, i) => `line${i}`).join('\n');
     const lastStart = old.lastIndexOf('\n') + 1;

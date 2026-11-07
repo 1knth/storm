@@ -31,46 +31,6 @@ describe('agent document host', () => {
     return { host, published, statuses, statusEvents };
   }
 
-  it('exposes the adapter lookup used by tab closing for managed and unmanaged notes', () => {
-    const adapter = {
-      vaultId: 'vault',
-      path: 'notes/a.md',
-      writing: false,
-      onStateChange: () => {},
-      flush: async () => true,
-    };
-    const options = {
-      lookupDocument: () => undefined,
-      openDocument: async () => ({
-        key: 'vault:notes/a.md',
-        vaultId: 'vault',
-        absolutePath: '/vault/notes/a.md',
-        vaultPath: '/vault',
-        path: 'notes/a.md',
-        state: EditorState.create({ doc: 'start' }),
-        revision: 'r1',
-      }),
-      publishDocument: () => {},
-      publishStatus: () => {},
-      saveNote: async () => ({ revision: 'r2' }),
-      getAdapterFor: (vaultId: string, path: string) =>
-        vaultId === 'vault' && path === 'notes/a.md' ? adapter : undefined,
-    };
-    const host = createAgentDocumentHost(options);
-    const closeCaller = {
-      getAdapterFor: host.getAdapterFor,
-    } satisfies Pick<
-      ReturnType<typeof createAgentDocumentHost>,
-      'getAdapterFor'
-    >;
-    assert.equal(closeCaller.getAdapterFor('vault', 'notes/a.md'), adapter);
-    assert.equal(
-      closeCaller.getAdapterFor('vault', 'notes/ordinary.md'),
-      undefined,
-    );
-    host.dispose();
-  });
-
   it('serves context without attaching documents, creating sessions, or publishing changes', async () => {
     let lookups = 0;
     let opens = 0;

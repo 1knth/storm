@@ -80,6 +80,19 @@ export type AgentDocument = {
 };
 
 /** Renderer-side per-document owner. Persistence is injected; no view or global selection is owned here. */
+export class AgentDocumentError extends Error {
+  constructor(
+    public readonly code:
+      | 'SESSION_CLOSED'
+      | 'STALE_VERSION'
+      | 'INVALID_EDIT'
+      | 'SAVE_FAILED',
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export class AgentDocumentController {
   private readonly documents = new Map<string, AgentDocument>();
   private readonly listeners = new Set<(document: AgentDocument) => void>();
@@ -234,7 +247,7 @@ export class AgentDocumentController {
     plan: AgentEditPlan,
   ): AgentEditPreview {
     if (document.acceptedVersion !== expectedVersion)
-      throw new Error('Stale document version');
+      throw new AgentDocumentError('STALE_VERSION', 'Stale document version');
     const original = document.state.doc.toString();
     if (plan.type === 'replace')
       return {
@@ -243,17 +256,25 @@ export class AgentDocumentController {
         edits: [],
       };
     const matches = plan.replacements.map(({ find }) => {
-      if (!find) throw new Error('Find text must not be empty');
+      if (!find)
+        throw new AgentDocumentError(
+          'INVALID_EDIT',
+          'Find text must not be empty',
+        );
       const first = original.indexOf(find);
-      if (first < 0) throw new Error('Find text not found');
+      if (first < 0)
+        throw new AgentDocumentError('INVALID_EDIT', 'Find text not found');
       if (original.indexOf(find, first + 1) >= 0)
-        throw new Error('Find text is ambiguous');
+        throw new AgentDocumentError('INVALID_EDIT', 'Find text is ambiguous');
       return { from: first, to: first + find.length };
     });
     const ordered = [...matches].sort((a, b) => a.from - b.from);
     for (let index = 1; index < ordered.length; index++)
       if (ordered[index].from < ordered[index - 1].to)
-        throw new Error('Replacement targets overlap');
+        throw new AgentDocumentError(
+          'INVALID_EDIT',
+          'Replacement targets overlap',
+        );
     const edits = matches.map((range, index) => {
       const position = lineAndColumn(original, range.from);
       const lineStart = original.lastIndexOf('\n', range.from - 1) + 1;
@@ -311,9 +332,12 @@ export class AgentDocumentController {
         actual.baseFingerprint !== expectedFingerprints.baseFingerprint ||
         actual.resultFingerprint !== expectedFingerprints.resultFingerprint
       )
-        throw new Error('Patch preview fingerprint mismatch');
+        throw new AgentDocumentError(
+          'STALE_VERSION',
+          'Patch preview fingerprint mismatch',
+        );
       if (document.acceptedVersion !== expectedVersion)
-        throw new Error('Stale document version');
+        throw new AgentDocumentError('STALE_VERSION', 'Stale document version');
     }
     if (
       document.closed ||
@@ -321,13 +345,12 @@ export class AgentDocumentController {
       document.status === 'stopped' ||
       document.status === 'disconnected'
     )
-      throw new Error('Agent session is closed');
+      throw new AgentDocumentError('SESSION_CLOSED', 'Agent session is closed');
     if (preview.changed) {
       const before = document.state.doc.toString();
       const insertions = classifyEditInsertions(before, preview.content);
       const revealRanges =
-        plan.type === 'replace' &&
-        isSubstantialRewrite(before, preview.content, insertions)
+        plan.type === 'replace' && isSubstantialRewrite(before, preview.content)
           ? [{ from: 0, to: preview.content.length }]
           : insertions;
       document.state = document.state.update({
@@ -353,7 +376,11 @@ export class AgentDocumentController {
     const acceptedGeneration = document.generation;
     await document.pending;
     const saved = await this.flush(document);
-    if (!saved) throw new Error('Could not save document edit');
+    if (!saved)
+      throw new AgentDocumentError(
+        'SAVE_FAILED',
+        'Could not save document edit',
+      );
     if (
       document.generation !== acceptedGeneration ||
       document.persistedContent !== preview.content
@@ -372,7 +399,7 @@ export class AgentDocumentController {
       document.status === 'stopped' ||
       document.status === 'disconnected'
     )
-      throw new Error('Agent session is closed');
+      throw new AgentDocumentError('SESSION_CLOSED', 'Agent session is closed');
     document.activity = activity ?? undefined;
   }
 
@@ -383,7 +410,9 @@ export class AgentDocumentController {
       document.status === 'stopped' ||
       document.status === 'disconnected'
     )
-      return Promise.reject(new Error('Agent session is closed'));
+      return Promise.reject(
+        new AgentDocumentError('SESSION_CLOSED', 'Agent session is closed'),
+      );
     document.activity = undefined;
     document.appendCount++;
     document.status = 'writing';
@@ -506,30 +535,10 @@ export class AgentDocumentController {
   get(key: string): AgentDocument | undefined {
     return this.documents.get(key);
   }
-  getDocument(key: string): AgentDocument | undefined {
-    return this.get(key);
-  }
-}
-
-/** Legacy focused helper: returns a range only for a single exact insertion. */
-export function classifySingleInsertion(
-  before: string,
-  after: string,
-): { from: number; to: number } | null {
-  if (before === after) return null;
-  const prefix = commonPrefixLength(before, after);
-  const suffix = commonSuffixLength(before, after, prefix);
-  return before.length === prefix + suffix
-    ? { from: prefix, to: after.length - suffix }
-    : null;
 }
 
 /** A guarded whole-note replacement can present a genuinely new draft coherently. */
-function isSubstantialRewrite(
-  before: string,
-  after: string,
-  _insertions: Array<{ from: number; to: number }>,
-): boolean {
+function isSubstantialRewrite(before: string, after: string): boolean {
   if (!before || !after) return false;
   const prefix = commonPrefixLength(before, after);
   const suffix = commonSuffixLength(before, after, prefix);

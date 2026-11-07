@@ -9,7 +9,10 @@ import type {
   AgentDocument,
   AgentDocumentStatus,
 } from './agentDocumentController';
-import { AgentDocumentController } from './agentDocumentController';
+import {
+  AgentDocumentError,
+  AgentDocumentController,
+} from './agentDocumentController';
 import type { AgentEditorAdapter } from '../components/Editor/agentEditorAdapter';
 import type { SaveNote } from './agentDocumentController';
 
@@ -46,13 +49,22 @@ export interface AgentDocumentHostOptions {
 /** Bridges transport requests to per-document ownership; it deliberately owns no UI or transport. */
 export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
   const controller = new AgentDocumentController(options.saveNote);
-  const sessions = new Map<string, AgentDocument>();
-  const activitySequences = new Map<string, number>();
-  const identities = new Map<string, { vaultId: string; path: string }>();
+  const sessions = new Map<
+    string,
+    { document: AgentDocument; activitySequence: number }
+  >();
+  const documentSessions = new Map<AgentDocument, Set<string>>();
+  function removeSession(id: string) {
+    const record = sessions.get(id);
+    if (!record) return;
+    sessions.delete(id);
+    const ids = documentSessions.get(record.document);
+    ids?.delete(id);
+    if (!ids?.size) documentSessions.delete(record.document);
+  }
   const unsubscribe = controller.subscribe((document) => {
     options.publishDocument(document);
-    for (const [sessionId, owned] of sessions) {
-      if (owned !== document) continue;
+    for (const sessionId of documentSessions.get(document) ?? []) {
       options.publishStatus({ session: toSessionStatus(sessionId, document) });
     }
   });
@@ -117,12 +129,8 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
         if (previous?.status === 'finished') {
           if (!controller.resetFinished(opened.key))
             throw new Error('Finished agent session is not ready to reconnect');
-          for (const [oldSessionId, owned] of sessions) {
-            if (owned !== previous) continue;
-            sessions.delete(oldSessionId);
-            activitySequences.delete(oldSessionId);
-            identities.delete(oldSessionId);
-          }
+          for (const id of documentSessions.get(previous) ?? [])
+            removeSession(id);
         }
         const document = controller.attach(
           opened.key,
@@ -132,15 +140,14 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           opened.revision,
         );
         const sessionId = request.sessionId;
-        sessions.set(sessionId, document);
-        activitySequences.set(sessionId, 0);
+        removeSession(sessionId);
+        sessions.set(sessionId, { document, activitySequence: 0 });
+        const ids = documentSessions.get(document) ?? new Set<string>();
+        ids.add(sessionId);
+        documentSessions.set(document, ids);
         document.vaultId = opened.vaultId;
         document.absolutePath = opened.absolutePath;
         options.publishDocument(document);
-        identities.set(sessionId, {
-          vaultId: opened.vaultId,
-          path: opened.path,
-        });
         options.publishStatus({
           session: toSessionStatus(sessionId, document),
         });
@@ -152,7 +159,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
         };
       }
       if (request.type === 'activity') {
-        const document = sessions.get(request.sessionId);
+        const document = sessions.get(request.sessionId)?.document;
         if (!document || document.closed)
           return {
             ok: false,
@@ -160,7 +167,9 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
             message: 'Session is not open',
           };
         const sequence = request.activitySequence;
-        const currentSequence = activitySequences.get(request.sessionId) ?? 0;
+        const currentSequence = sessions.get(
+          request.sessionId,
+        )!.activitySequence;
         if (
           (request.documentVersion !== undefined &&
             request.documentVersion !== document.acceptedVersion) ||
@@ -175,7 +184,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
             diskRevision: document.revision,
           };
         if (sequence !== undefined)
-          activitySequences.set(request.sessionId, sequence);
+          sessions.get(request.sessionId)!.activitySequence = sequence;
         controller.setActivity(document, request.activity);
         options.publishStatus({
           session: toSessionStatus(request.sessionId, document),
@@ -187,9 +196,8 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
         };
       }
       if (request.type === 'append') {
-        const document = sessions.get(request.sessionId);
-        const identity = identities.get(request.sessionId);
-        if (!document || !identity || document.closed)
+        const document = sessions.get(request.sessionId)?.document;
+        if (!document || document.closed)
           return {
             ok: false,
             code: 'SESSION_CLOSED',
@@ -203,9 +211,8 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           saveState: document.dirty ? 'pending' : 'saved',
         };
       }
-      const document = sessions.get(request.sessionId);
-      const identity = identities.get(request.sessionId);
-      if (!document || !identity || document.closed)
+      const document = sessions.get(request.sessionId)?.document;
+      if (!document || document.closed)
         return {
           ok: false,
           code: 'SESSION_CLOSED',
@@ -248,7 +255,7 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
       }
       if (request.type === 'finish') {
         controller.finish(document);
-        const adapter = options.getAdapterFor(identity.vaultId, identity.path);
+        const adapter = options.getAdapterFor(document.vaultId!, document.path);
         const flushed = await controller.flush(document);
         const viewFlushed = await adapter?.flush();
         return flushed && viewFlushed !== false
@@ -285,27 +292,9 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const code = /closed/i.test(message)
-        ? 'SESSION_CLOSED'
-        : /stale document version/i.test(message)
-          ? 'STALE_VERSION'
-          : /find text|replacement targets overlap/i.test(message)
-            ? 'INVALID_EDIT'
-            : /fingerprint mismatch/i.test(message)
-              ? 'STALE_VERSION'
-              : 'SAVE_FAILED';
+      const code =
+        error instanceof AgentDocumentError ? error.code : 'SAVE_FAILED';
       return { ok: false, code, message };
-    }
-  }
-
-  function onCancelled(sessionId: string, reason: string): void {
-    const document = sessions.get(sessionId);
-    if (document && !document.closed) {
-      controller.stop(document);
-      options.publishStatus({
-        session: toSessionStatus(sessionId, document),
-        reason,
-      });
     }
   }
 
@@ -314,8 +303,8 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
     getAdapterFor: options.getAdapterFor,
     invalidateFinishedDocuments(paths: string[]): void {
       const affected = paths.map((path) => path.replace(/\\/g, '/'));
-      for (const [sessionId, identity] of identities) {
-        const path = identity.path.replace(/\\/g, '/');
+      for (const [sessionId, { document }] of sessions) {
+        const path = document.path.replace(/\\/g, '/');
         if (
           !affected.some(
             (candidate) =>
@@ -323,19 +312,16 @@ export function createAgentDocumentHost(options: AgentDocumentHostOptions) {
           )
         )
           continue;
-        const document = sessions.get(sessionId);
         if (
           document?.status === 'finished' &&
           controller.resetFinished(document.key)
         ) {
-          sessions.delete(sessionId);
-          identities.delete(sessionId);
+          removeSession(sessionId);
         }
       }
     },
     lookupDocument,
     handleRequest,
-    onCancelled,
     subscribe: controller.subscribe.bind(controller),
     dispose: unsubscribe,
   };
