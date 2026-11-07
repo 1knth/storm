@@ -1,6 +1,6 @@
 import { describe, it as test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QuizService } from './quizService';
@@ -31,7 +31,7 @@ const vault = {
 /** A connected session with a two-node map, driven through the public service API. */
 async function fixture(
   options: {
-    learnerAttempts?: () => Promise<LearnerAttempt[]>;
+    attempts?: LearnerAttempt[];
     /** Record grades in a real learner store, as the app does. */
     learner?: boolean;
   } = {},
@@ -39,6 +39,10 @@ async function fixture(
   const dir = await mkdtemp(join(tmpdir(), 'storm-mastery-'));
   const store = new QuizStore(join(dir, 'quiz.json'));
   const learnerStore = new LearnerStore(join(dir, 'learner.json'));
+  if (options.attempts)
+    await store.importLearner({
+      [learnerScopeKey(vault)]: { attempts: options.attempts },
+    });
   const service = new QuizService(
     store,
     () => true,
@@ -47,13 +51,14 @@ async function fixture(
     undefined,
     learnerStore,
   );
-  if (options.learnerAttempts) store.attempts = options.learnerAttempts;
+
   const cleanup = () => rm(dir, { recursive: true, force: true });
   return {
     ...(await session(service)),
     store,
     service,
     learnerStore,
+    dir,
     cleanup,
   };
 }
@@ -514,13 +519,13 @@ describe('mastery evidence', () => {
     }
   });
 
-  test('an unreadable learner store falls back to transcript evidence', async () => {
-    const f = await fixture({
-      learnerAttempts: async () => {
-        throw new Error('LEARNER_STORE_INVALID');
-      },
-    });
+  test('canonical mastery evidence stays available after the legacy learner file becomes unreadable', async () => {
+    const f = await fixture();
     try {
+      await writeFile(
+        join(f.dir, 'learner.json'),
+        'invalid legacy JSON after import',
+      );
       await f.item('Explain it', { level: 'explain', reasoning: 'sound' });
       value(
         await f.agent('practice-test', {
@@ -538,6 +543,25 @@ describe('mastery evidence', () => {
       await f.cleanup();
     }
   });
+
+  const holdNextMetadata = (store: QuizStore) => {
+    const original = store.transactMetadata.bind(store);
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    store.transactMetadata = async (...args) => {
+      store.transactMetadata = original;
+      reached();
+      await released;
+      return original(...args);
+    };
+    return { waiting, release };
+  };
 
   /** Holds the next store.update until released, to interleave a competing request. */
   const holdNextUpdate = (store: QuizStore) => {
@@ -632,7 +656,7 @@ describe('mastery evidence', () => {
       )
       .digest('hex');
     const f = await fixture({
-      learnerAttempts: async () => [
+      attempts: [
         {
           id: 'old',
           sessionId: 'deleted',
@@ -755,7 +779,12 @@ describe('mastery evidence', () => {
       // The other quiz commits the same wording while this one is held.
       value(await other.agent('pose-question', item));
       hold.release();
-      assert.deepEqual(await first, { ok: false, error: 'stale-revision' });
+      const rejected = await first;
+      assert.equal(rejected.ok, false);
+      assert.match(
+        (rejected as { message?: string }).message ?? '',
+        /already seen this item/,
+      );
     } finally {
       await f.cleanup();
     }
@@ -783,27 +812,22 @@ describe('mastery evidence', () => {
     }
   });
 
-  test('a scope change during a mastery claim rejects it instead of mixing pools', async () => {
-    let release!: () => void;
-    const released = new Promise<void>((resolve) => (release = resolve));
-    let reached!: () => void;
-    const reading = new Promise<void>((resolve) => (reached = resolve));
-    const f = await fixture({
-      learnerAttempts: async () => {
-        reached();
-        await released;
-        return [];
-      },
-    });
+  test('a scope change before a mastery transaction uses the new pool evidence', async () => {
+    const f = await fixture();
     try {
+      await master(f);
+      const hold = holdNextMetadata(f.store);
       const claim = f.status('mastered');
-      await reading;
+      await hold.waiting;
       value(await f.service.setScope(f.id, { ...vault, vaultId: 'other' }));
-      release();
-      assert.match(
-        ((await claim) as { message?: string }).message ?? '',
-        /scope changed/,
+      hold.release();
+      const result = await claim;
+      assert.equal(
+        result.ok,
+        true,
+        'the moved quiz carries its own committed evidence into the new pool',
       );
+      assert.equal((await f.store.get(f.id))?.scope?.vaultId, 'other');
     } finally {
       await f.cleanup();
     }
@@ -873,37 +897,19 @@ describe('mastery evidence', () => {
     }
   });
 
-  test('a quiz deleted during a mastery claim rejects the claim, and its miss still counts', async () => {
+  test('a deletion before a mastery transaction retains the archived miss', async () => {
     const f = await fixture({ learner: true });
     try {
       const claimer = await session(f.service);
       await master(f);
-      // Hold the claimer's saved-evidence read, then miss in f and delete it.
-      const original = f.store.attempts.bind(f.store);
-      let release!: () => void;
-      const released = new Promise<void>((resolve) => (release = resolve));
-      let reached!: () => void;
-      const reading = new Promise<void>((resolve) => (reached = resolve));
-      f.store.attempts = async (key: string) => {
-        f.store.attempts = original;
-        const attempts = await original(key);
-        reached();
-        await released;
-        return attempts;
-      };
+      const hold = holdNextMetadata(f.store);
       const claim = claimer.status('mastered');
-      await reading;
+      await hold.waiting;
       await f.item('Missed before deletion', { verdict: 'incorrect' });
       await f.service.deleteSession(f.id);
-      release();
+      hold.release();
       assert.match(
         ((await claim) as { message?: string }).message ?? '',
-        /deleted during the request/,
-      );
-      // The retry sees the deleted quiz's miss through the learner store.
-      assert.match(
-        ((await claimer.status('mastered')) as { message?: string }).message ??
-          '',
         /since the latest independent miss/,
       );
     } finally {
@@ -946,6 +952,83 @@ describe('mastery evidence', () => {
         'independent',
       );
       assert.equal((await borrower.status('mastered')).ok, false);
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test('mastery reads canonical facts after restart without reconstructing transcript evidence', async () => {
+    const f = await fixture();
+    try {
+      await master(f);
+      value(await f.status('independent'));
+      const path = join(f.dir, 'quiz.json');
+      const manifest = JSON.parse(await readFile(path, 'utf8'));
+      const historyPath = join(
+        `${path}.sessions`,
+        manifest.sessions[f.id].history,
+      );
+      const history = JSON.parse(await readFile(historyPath, 'utf8'));
+      history.session.transcript = [];
+      await writeFile(historyPath, JSON.stringify(history));
+      const restarted = new QuizService(new QuizStore(path), () => true);
+      const attached = await restarted.attachSession(f.id);
+      assert.ok(attached.ok);
+      if (!attached.ok) return;
+      const result = await restarted.request({
+        type: 'lesson-map',
+        sessionId: f.id,
+        agentToken: attached.value.agentToken,
+        expectedRevision: 0,
+        idempotencyKey: 'canonical-claim',
+        map: { statuses: { loops: 'mastered' } },
+      });
+      assert.ok(result.ok, JSON.stringify(result));
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test('deleting a skipped item retains its exposure across restart for test freshness', async () => {
+    const f = await fixture();
+    try {
+      const posed = value(
+        await f.agent('pose-question', {
+          question: 'Seen but never graded',
+          kind: 'short-answer',
+          concepts: ['loops'],
+          level: 'apply',
+        }),
+      );
+      value(
+        await f.agent('skip-question', {
+          questionId: posed.currentQuestion!.id,
+          text: 'We will return to this.',
+        }),
+      );
+      await f.service.deleteSession(f.id);
+      const restarted = new QuizService(
+        new QuizStore(join(f.dir, 'quiz.json')),
+        () => true,
+      );
+      const other = await session(restarted);
+      value(
+        await other.agent('practice-test', {
+          action: 'start',
+          concepts: ['loops'],
+        }),
+      );
+      const result = await other.agent('pose-question', {
+        question: 'Seen but never graded',
+        kind: 'short-answer',
+        concepts: ['loops'],
+        level: 'apply',
+      });
+      assert.equal(result.ok, false);
+      assert.match(
+        (result as { message?: string }).message ?? '',
+        /already seen this item/,
+      );
     } finally {
       await f.cleanup();
     }

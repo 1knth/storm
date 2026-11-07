@@ -21,14 +21,24 @@ import {
   applyQuizRevision,
   type QuizRevisionChange,
 } from './quizOperations';
-import { sessionEvidence } from './quizEvidence';
+import {
+  advanceQuizFacts,
+  QuizEvidenceIndex,
+  type QuizFacts,
+  sessionEvidence,
+} from './quizEvidence';
+import type { MasteryExposure } from '../shared/mastery';
 import type { LearnerAttempt } from '../shared/learnerModel';
 import { learnerScopeKey } from './learnerStore';
 
 export type QuizDatabase = {
   version: 1;
   facts?: Record<string, ReturnType<typeof sessionEvidence>>;
-  learning?: { imported: boolean; scopes: Record<string, LearnerAttempt[]> };
+  learning?: {
+    imported: boolean;
+    scopes: Record<string, LearnerAttempt[]>;
+    exposures?: Record<string, MasteryExposure[]>;
+  };
   sessions: QuizSession[];
   events: Record<string, QuizEvent[]>;
   idempotency: Record<
@@ -136,11 +146,13 @@ export class QuizStore {
     string,
     {
       session: QuizSession;
+      facts: QuizFacts;
       events: QuizEvent[];
       idempotency: QuizDatabase['idempotency'];
     }
   >();
   private manifest?: Manifest;
+  private migrateFacts = new Set<string>();
   constructor(private readonly filePath: string) {}
 
   protected async atomicWrite(path: string, value: unknown): Promise<void> {
@@ -190,8 +202,10 @@ export class QuizStore {
               ? { currentQuestion: { ...session.currentQuestion, ...question } }
               : {}),
           });
-          (db.facts ??= {})[id] =
-            history.facts ?? sessionEvidence(db.sessions.at(-1)!);
+          (db.facts ??= {})[id] = history.facts?.tests
+            ? history.facts
+            : sessionEvidence(db.sessions.at(-1)!);
+          if (!history.facts?.tests) this.migrateFacts.add(id);
           db.events[id] = history.events;
           Object.assign(db.idempotency, history.idempotency);
         }
@@ -268,7 +282,8 @@ export class QuizStore {
         ]),
       );
       this.cache = { signature, database };
-      if (legacyReceipts || !this.manifest) await this.write(database);
+      if (legacyReceipts || !this.manifest || this.migrateFacts.size)
+        await this.write(database);
       return database;
     } catch (error) {
       if (!manifestExists && (error as NodeJS.ErrnoException).code === 'ENOENT')
@@ -287,6 +302,7 @@ export class QuizStore {
       const files = this.manifest?.sessions[session.id];
       if (
         files &&
+        !this.migrateFacts.has(session.id) &&
         old === session &&
         previous?.events[session.id] === database.events[session.id]
       ) {
@@ -296,6 +312,7 @@ export class QuizStore {
       const parts = splitSession(session);
       const oldParts = old && splitSession(old);
       const historyUnchanged =
+        !this.migrateFacts.has(session.id) &&
         files &&
         oldParts &&
         JSON.stringify(parts.history) === JSON.stringify(oldParts.history) &&
@@ -321,8 +338,7 @@ export class QuizStore {
           session: parts.history,
           events: database.events[session.id] ?? [],
           idempotency: receipts,
-          facts: ((database.facts ??= {})[session.id] =
-            sessionEvidence(session)),
+          facts: database.facts![session.id],
         });
       }
       await this.atomicWrite(join(root, transientFile), parts.transient);
@@ -359,6 +375,7 @@ export class QuizStore {
     // The manifest is the commit point, including changes spanning multiple sessions.
     await this.atomicWrite(this.filePath, manifest);
     this.manifest = manifest;
+    this.migrateFacts.clear();
     const live = new Set(
       Object.values(manifest.sessions).flatMap(({ history, transient }) => [
         history,
@@ -450,10 +467,10 @@ export class QuizStore {
         .reduce(
           (total, session) =>
             total +
-            (
-              this.cache?.database.facts?.[session.id] ??
-              sessionEvidence(session)
-            ).unmodelled,
+            ((
+              this.drafts.get(session.id)?.facts ??
+              this.cache?.database.facts?.[session.id]
+            )?.unmodelled ?? 0),
           0,
         ),
     };
@@ -470,15 +487,17 @@ export class QuizStore {
     return this.serialize(async () => {
       const db = copyDatabase(await this.read());
       if (db.learning?.imported) return;
-      const currentIds = new Set(db.sessions.map((session) => session.id));
+      const currentIds = new Set(
+        Object.values(db.facts ?? {}).flatMap((facts) =>
+          facts.attempts.map((attempt) => attempt.id),
+        ),
+      );
       const previous = db.learning?.scopes ?? {};
-      db.learning = { imported: true, scopes: { ...previous } };
+      db.learning = { ...db.learning, imported: true, scopes: { ...previous } };
       for (const [key, value] of Object.entries(scopes)) {
         db.learning.scopes[key] = [
           ...(previous[key] ?? []),
-          ...value.attempts.filter(
-            (attempt) => !currentIds.has(attempt.sessionId),
-          ),
+          ...value.attempts.filter((attempt) => !currentIds.has(attempt.id)),
         ];
       }
       await this.write(db);
@@ -488,21 +507,13 @@ export class QuizStore {
   async attempts(scopeKey: string): Promise<LearnerAttempt[]> {
     await this.queue;
     const db = await this.read();
-    const attempts = new Map(
-      (db.learning?.scopes[scopeKey] ?? []).map((attempt) => [
-        attempt.id,
-        attempt,
-      ]),
-    );
-    for (const session of this.sessionsIn(db)) {
-      if (learnerScopeKey(session.scope, session.id) !== scopeKey) continue;
-      for (const attempt of (this.drafts.has(session.id)
-        ? sessionEvidence(session)
-        : db.facts?.[session.id]
-      )?.attempts ?? [])
-        attempts.set(attempt.id, attempt);
-    }
-    return structuredClone([...attempts.values()]);
+    return structuredClone(this.evidenceIn(db).scope(scopeKey).attempts);
+  }
+
+  private evidenceIn(db: QuizDatabase): QuizEvidenceIndex {
+    const facts = { ...db.facts };
+    for (const [id, draft] of this.drafts) facts[id] = draft.facts;
+    return new QuizEvidenceIndex(this.sessionsIn(db), facts, db.learning);
   }
 
   async list(
@@ -558,7 +569,12 @@ export class QuizStore {
         this.drafts.has(session.id)
       )
         throw new Error('Duplicate quiz session');
-      this.drafts.set(session.id, { session, events: [], idempotency: {} });
+      this.drafts.set(session.id, {
+        session,
+        facts: sessionEvidence(session),
+        events: [],
+        idempotency: {},
+      });
     });
   }
   async promote(id: string): Promise<void> {
@@ -569,6 +585,7 @@ export class QuizStore {
       if (db.sessions.some((item) => item.id === id))
         throw new Error('Duplicate quiz session');
       db.sessions.push(draft.session);
+      (db.facts ??= {})[id] = draft.facts;
       db.events[id] = draft.events;
       db.idempotency = { ...db.idempotency, ...draft.idempotency };
       await this.write(db);
@@ -617,22 +634,13 @@ export class QuizStore {
       if (db.sessions.some((item) => item.id === session.id))
         throw new Error('Duplicate quiz session');
       db.sessions.push(session);
+      (db.facts ??= {})[session.id] = sessionEvidence(session);
       db.events[session.id] = [];
       await this.write(db);
     });
   }
-  /**
-   * Counts deletions. Evidence read outside serialization is only trusted at
-   * commit if no quiz was deleted in between (its transcript would be gone).
-   */
-  get deletions(): number {
-    return this.deletionCount;
-  }
-  private deletionCount = 0;
-
   async deleteSession(id: string): Promise<void> {
     return this.serialize(async () => {
-      this.deletionCount++;
       if (this.drafts.delete(id)) return;
       const db = copyDatabase(await this.read());
       const removed = db.sessions.find((session) => session.id === id);
@@ -641,6 +649,13 @@ export class QuizStore {
         const learning = db.learning ?? { imported: false, scopes: {} };
         db.learning = {
           ...learning,
+          exposures: {
+            ...learning.exposures,
+            [key]: [
+              ...(learning.exposures?.[key] ?? []),
+              ...(db.facts?.[id]?.exposures ?? []),
+            ],
+          },
           scopes: {
             ...learning.scopes,
             [key]: [
@@ -668,6 +683,7 @@ export class QuizStore {
     operation: (
       current: QuizSession,
       sessions: QuizSession[],
+      evidence: QuizEvidenceIndex,
     ) => { session: QuizSession; others?: QuizSession[] } | string | undefined,
     guard: {
       token?: string;
@@ -696,17 +712,37 @@ export class QuizStore {
       }
       if (guard.revision !== undefined && current.revision !== guard.revision)
         throw new Error('Stale quiz revision');
-      const result = operation(current, this.sessionsIn(db));
+      const result = operation(
+        current,
+        this.sessionsIn(db),
+        this.evidenceIn(db),
+      );
       if (!result || typeof result === 'string') return result;
       const pendingDrafts = new Map(this.drafts);
       let durableChanged = false;
       for (const session of [result.session, ...(result.others ?? [])]) {
         const memory = pendingDrafts.get(session.id);
-        if (memory) pendingDrafts.set(session.id, { ...memory, session });
+        if (memory)
+          pendingDrafts.set(session.id, {
+            ...memory,
+            session,
+            facts: advanceQuizFacts(
+              memory.facts,
+              memory.session,
+              session,
+              session.id === id ? guard.event : undefined,
+            ),
+          });
         else {
           const index = db.sessions.findIndex((item) => item.id === session.id);
           if (index < 0) throw new Error('Quiz session disappeared');
           if (db.sessions[index] !== session) durableChanged = true;
+          (db.facts ??= {})[session.id] = advanceQuizFacts(
+            db.facts![session.id]!,
+            db.sessions[index],
+            session,
+            session.id === id ? guard.event : undefined,
+          );
           db.sessions[index] = session;
         }
       }
@@ -754,8 +790,18 @@ export class QuizStore {
     scope: QuizScope | undefined,
     at = new Date().toISOString(),
   ): Promise<QuizSession | undefined> {
-    return (await this.transact(id, (current, sessions) =>
-      changeQuizScope(current, scope, sessions, at),
+    return (await this.transact(id, (current, sessions, evidence) =>
+      changeQuizScope(
+        current,
+        scope,
+        sessions,
+        at,
+        new Set(
+          evidence
+            .session(current.id)
+            .attempts.flatMap((attempt) => attempt.concepts),
+        ),
+      ),
     )) as QuizSession | undefined;
   }
 
@@ -765,12 +811,13 @@ export class QuizStore {
     update: (
       current: QuizSession,
       sessions: QuizSession[],
+      evidence: QuizEvidenceIndex,
     ) => QuizSession | string,
   ): Promise<QuizSession | string | undefined> {
     return this.transact(
       id,
-      (current, sessions) => {
-        const next = update(current, sessions);
+      (current, sessions, evidence) => {
+        const next = update(current, sessions, evidence);
         return typeof next === 'string' ? next : { session: next };
       },
       { token: agentToken },
@@ -810,26 +857,31 @@ export class QuizStore {
     event: QuizEvent,
     key: string,
     fingerprint: string,
-    atCommit: (current: QuizSession, sessions: QuizSession[]) => QuizSession = (
-      current,
-    ) => current,
+    atCommit: (
+      current: QuizSession,
+      sessions: QuizSession[],
+      evidence: QuizEvidenceIndex,
+    ) => QuizSession = (current) => current,
     alsoCommit: (
       current: QuizSession,
       sessions: QuizSession[],
+      evidence: QuizEvidenceIndex,
     ) => QuizSession[] = () => [],
   ): Promise<QuizSession> {
     const result = await this.transact(
       operation.id,
-      (current, sessions) => {
+      (current, sessions, evidence) => {
         const session = atCommit(
           applyQuizRevision(current, operation.changes),
           sessions,
+          evidence,
         );
         return {
           session,
           others: alsoCommit(
             session,
             sessions.map((item) => (item.id === session.id ? session : item)),
+            evidence,
           ),
         };
       },

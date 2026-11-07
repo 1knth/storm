@@ -29,18 +29,13 @@ import {
   focusLessonMap,
   isLessonMapUpdate,
 } from '../shared/lessonMap';
-import type { LearnerAttempt } from '../shared/learnerModel';
+import { masteryEvidence, masteryShortfall } from '../shared/mastery';
 import {
-  masteryEvidence,
-  masteryShortfall,
-  type MasteryExposure,
-} from '../shared/mastery';
-import { learnerScopeKey, type LearnerStore } from './learnerStore';
-import {
-  gradedQuestions,
-  fingerprintOf,
-  sessionEvidence,
-} from './quizEvidence';
+  learnerScopeKey,
+  learnerScopeSignature,
+  type LearnerStore,
+} from './learnerStore';
+import { fingerprintOf, type PoolEvidence } from './quizEvidence';
 import { quizRevisionChange } from './quizOperations';
 import { QuizStore } from './quizStore';
 import type { TutorNotesFile } from './tutorNotesFile';
@@ -98,51 +93,7 @@ function withLapsedMastery(
   };
 }
 
-type PoolEvidence = {
-  attempts: LearnerAttempt[];
-  exposures: MasteryExposure[];
-};
-
-/**
- * The learner's history in a session's learning pool, excluding that session:
- * saved attempts plus every other pool session's transcript. Transcripts are
- * the durable record, so grades whose recording failed still count. Called
- * with commit-time sessions so concurrent quizzes in the pool are seen.
- */
-function poolFrom(
-  session: QuizSession,
-  sessions: QuizSession[],
-  saved: LearnerAttempt[],
-): PoolEvidence {
-  const pool = learnerScopeKey(session.scope, session.id);
-  const attempts = new Map(
-    saved
-      .filter((attempt) => attempt.sessionId !== session.id)
-      .map((attempt) => [attempt.id, attempt]),
-  );
-  const exposures: MasteryExposure[] = [];
-  for (const other of sessions) {
-    if (
-      other.id === session.id ||
-      learnerScopeKey(other.scope, other.id) !== pool
-    )
-      continue;
-    const evidence = sessionEvidence(other);
-    for (const attempt of evidence.attempts) attempts.set(attempt.id, attempt);
-    exposures.push(...evidence.exposures);
-  }
-  return { attempts: [...attempts.values()], exposures };
-}
-
-/** Whether the learner has been shown this wording anywhere in the pool. */
-const seenInPool = (
-  pool: PoolEvidence,
-  own: QuizSession,
-  fingerprint: string,
-) =>
-  [...sessionEvidence(own).exposures, ...pool.exposures, ...pool.attempts].some(
-    (item) => item.fingerprint === fingerprint,
-  );
+class QuizEvidenceRejected extends Error {}
 
 /** Result of a metadata-only commit, with Storm's reason when it can give one. */
 function metadataResult(
@@ -432,17 +383,6 @@ export class QuizService {
     }
   }
 
-  /** Saved learner-model attempts; an unreadable store falls back to transcripts alone. */
-  private async savedAttempts(session: QuizSession): Promise<LearnerAttempt[]> {
-    try {
-      return await this.store.attempts(
-        learnerScopeKey(session.scope, session.id),
-      );
-    } catch {
-      return [];
-    }
-  }
-
   /**
    * The tutor declares mastery; Storm checks the recorded evidence first.
    * Returns the shortfall for each newly mastered or retained node, if any.
@@ -458,9 +398,7 @@ export class QuizService {
         session.lessonMap?.statuses[id] !== status,
     );
     if (!claimed.length) return undefined;
-    const own = sessionEvidence(session);
-    const attempts = [...pool.attempts, ...own.attempts];
-    const exposures = [...pool.exposures, ...own.exposures];
+    const { attempts, exposures } = pool;
     const short: string[] = [];
     for (const [id, status] of claimed) {
       const evidence = masteryEvidence(id, attempts, exposures);
@@ -478,46 +416,20 @@ export class QuizService {
   /** Lesson maps are display metadata: no revision, event, or Continue gate. */
   private async setLessonMap(
     request: Extract<QuizAgentRequest, { type: 'lesson-map' }>,
-    current: QuizSession,
   ): Promise<QuizResult<QuizSession>> {
     if (!isLessonMapUpdate(request.map))
       return { ok: false, error: 'invalid-input' };
-    const claims = Object.values(request.map.statuses ?? {}).some(
-      (status) => status === 'mastered' || status === 'retained',
-    );
-    const deletions = this.store.deletions;
-    const saved = claims ? await this.savedAttempts(current) : undefined;
     let reason: string | undefined;
     const result = await this.store.transactMetadata(
       request.sessionId,
       request.agentToken,
-      (session, sessions) => {
+      (session, _sessions, evidence) => {
         if (session.status !== 'connected') return 'invalid-state';
-        // Saved attempts were read for the pool at request time.
-        if (
-          saved &&
-          learnerScopeKey(session.scope, session.id) !==
-            learnerScopeKey(current.scope, current.id)
-        ) {
-          reason =
-            'The study scope changed during the request; read status and retry.';
-          return 'invalid-input';
-        }
-        // A quiz deleted meanwhile may have held evidence the earlier read missed.
-        if (saved && this.store.deletions !== deletions) {
-          reason =
-            'A quiz in this learning pool was deleted during the request; retry.';
-          return 'invalid-input';
-        }
-        // Judge the claim against the state being committed, in this and every
-        // other pool session, so a grade that landed meanwhile counts.
-        reason =
-          saved &&
-          this.masteryGate(
-            session,
-            request.map.statuses,
-            poolFrom(session, sessions, saved),
-          );
+        reason = this.masteryGate(
+          session,
+          request.map.statuses,
+          evidence.pool(session),
+        );
         if (reason) return 'invalid-input';
         const map = applyLessonMapUpdate(
           session.lessonMap,
@@ -552,7 +464,7 @@ export class QuizService {
     const result = await this.store.transactMetadata(
       request.sessionId,
       request.agentToken,
-      (session) => {
+      (session, _sessions, evidence) => {
         const log = session.practiceTestLog ?? {
           version: 0,
           completed: [],
@@ -634,9 +546,13 @@ export class QuizService {
             'Give feedback on or skip the current test item before ending the test.',
           );
         const covered = new Set(
-          gradedQuestions(session)
-            .filter((q) => q.testId === test.id)
-            .flatMap((q) => q.learning?.concepts ?? []),
+          evidence
+            .session(session.id)
+            .attempts.filter(
+              (attempt) =>
+                evidence.session(session.id).tests[attempt.id] === test.id,
+            )
+            .flatMap((attempt) => attempt.concepts),
         );
         const uncovered = test.concepts.filter((id) => !covered.has(id));
         if (uncovered.length)
@@ -743,8 +659,7 @@ export class QuizService {
     if (!current) return { ok: false, error: 'not-found' };
     if (request.agentToken !== current.agentToken)
       return { ok: false, error: 'unauthorized' };
-    if (request.type === 'lesson-map')
-      return this.setLessonMap(request, current);
+    if (request.type === 'lesson-map') return this.setLessonMap(request);
     if (request.type === 'practice-test') return this.setPracticeTest(request);
     if (request.type === 'tutor-notes')
       return this.setTutorNotes(request, current);
@@ -846,9 +761,6 @@ export class QuizService {
       return { ok: false, error: 'stale-revision' };
     const next = structuredClone(current);
     const timestamp = this.now();
-    /** Saved attempts read for a test item's freshness check, reused at commit. */
-    let testSaved: LearnerAttempt[] | undefined;
-    const deletions = this.store.deletions;
     const addMessage = (role: 'learner' | 'agent', text: string) =>
       next.transcript.push({
         id: randomUUID(),
@@ -933,22 +845,6 @@ export class QuizService {
                 : undefined;
           if (testFailure)
             return { ok: false, error: 'invalid-input', message: testFailure };
-          // Freshness spans every item the learner has been shown in this
-          // pool, including saved attempts whose quiz has since been deleted.
-          // The commit rechecks against sessions written meanwhile.
-          testSaved = await this.savedAttempts(next);
-          const pool = poolFrom(
-            next,
-            await this.store.list({ includeDrafts: true }),
-            testSaved,
-          );
-          if (seenInPool(pool, next, fingerprint))
-            return {
-              ok: false,
-              error: 'invalid-input',
-              message:
-                'The learner has already seen this item; practice test items must be fresh.',
-            };
         }
         if (request.studyBasis !== undefined) {
           if (
@@ -1436,7 +1332,7 @@ export class QuizService {
         event,
         `${request.sessionId}:${request.idempotencyKey}`,
         fingerprint,
-        (merged, sessions) => {
+        (merged, _sessions, evidence) => {
           // Test conditions were checked against the test open when the
           // request started; if a test opened or closed since, or another pool
           // session showed the same item meanwhile, re-read status.
@@ -1445,23 +1341,19 @@ export class QuizService {
             if (posed?.testId !== merged.practiceTest?.id)
               throw new Error('Practice test changed during the request');
             if (
-              testSaved &&
-              learnerScopeKey(merged.scope, merged.id) !==
-                learnerScopeKey(current.scope, current.id)
+              request.studyBasis &&
+              learnerScopeSignature(merged.scope) !==
+                learnerScopeSignature(current.scope)
             )
-              throw new Error('Study scope changed during the request');
-            if (testSaved && this.store.deletions !== deletions)
-              throw new Error('A pool quiz was deleted during the request');
+              throw new Error('Study scope changed during source preparation');
             if (
               posed?.testId &&
               posed.fingerprint &&
-              seenInPool(
-                poolFrom(merged, sessions, testSaved ?? []),
-                { ...merged, transcript: merged.transcript.slice(0, -1) },
-                posed.fingerprint,
-              )
+              evidence.seen(merged, posed.fingerprint)
             )
-              throw new Error('Practice test item shown elsewhere meanwhile');
+              throw new QuizEvidenceRejected(
+                'The learner has already seen this item; practice test items must be fresh.',
+              );
           }
           if (request.type === 'pose-question') {
             const focused = focusLessonMap(
@@ -1499,6 +1391,8 @@ export class QuizService {
 
       return { ok: true, value: updated };
     } catch (error) {
+      if (error instanceof QuizEvidenceRejected)
+        return { ok: false, error: 'invalid-input', message: error.message };
       return {
         ok: false,
         error:

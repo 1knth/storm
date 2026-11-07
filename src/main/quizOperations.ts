@@ -93,6 +93,7 @@ export function changeQuizScope(
   scope: QuizScope | undefined,
   sessions: QuizSession[],
   at: string,
+  concepts: Set<string>,
 ) {
   const { scope: _previous, ...rest } = current;
   let moved: QuizSession = scope
@@ -103,13 +104,6 @@ export function changeQuizScope(
   const others: QuizSession[] = [];
   if (from !== to) {
     moved = withdrawClaims(moved, undefined, at);
-    const concepts = new Set(
-      current.transcript.flatMap((message) =>
-        message.question?.verdict
-          ? (message.question.learning?.concepts ?? [])
-          : [],
-      ),
-    );
     if (concepts.size)
       for (const other of sessions) {
         const pool = learnerScopeKey(other.scope, other.id);

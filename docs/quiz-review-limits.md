@@ -192,3 +192,17 @@ Attempt facts commit in each session history file with feedback and receipts.
 Legacy learner facts and facts retained after quiz deletion live in a learning
 archive referenced by the same manifest. Learner reads do not replay transcripts
 or write a second projection.
+
+Mastery and test freshness now read a transaction-local index of canonical
+attempts and exposures. Each pool is materialized once per transaction, including
+archived facts for deleted quizzes. Skipped-item exposures survive deletion and
+restart. Feedback, practice-test completion, and scope changes advance the
+canonical facts directly; normal learner reads and metadata operations do not
+reconstruct transcripts. Legacy session histories without the canonical test
+membership index import once on load.
+
+Deletion-counter and pre-read learner-pool race checks are unnecessary because
+evidence reads and the mutation share store serialization. Expected semantic
+revision and idempotency checks remain. Posing still rejects a changed open test
+because its conditions were validated before any asynchronous source preparation;
+source-bound questions also reject a scope change during that preparation.
